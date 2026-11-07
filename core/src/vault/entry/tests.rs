@@ -181,3 +181,96 @@ fn search_data_debug_hides_values() {
 fn search_data_zeroizes_on_drop() {
     assert_zeroize_on_drop::<SearchData>();
 }
+
+// --- Secreto ---
+
+fn secret(password: &str, notes: Option<&str>) -> Result<Secret> {
+    Secret::new(SecretString::from(password), notes.map(SecretString::from))
+}
+
+#[test]
+fn empty_password_is_rejected() {
+    assert_eq!(
+        secret("", None).unwrap_err(),
+        invalid(InvalidEntryField::PasswordEmpty)
+    );
+}
+
+#[test]
+fn password_is_not_trimmed() {
+    assert_eq!(
+        secret(" x ", None).unwrap().password().expose_secret(),
+        " x "
+    );
+}
+
+#[test]
+fn spaces_only_password_is_kept() {
+    assert_eq!(
+        secret("   ", None).unwrap().password().expose_secret(),
+        "   "
+    );
+}
+
+#[test]
+fn password_limit() {
+    assert!(secret(&"p".repeat(MAX_PASSWORD_LEN), None).is_ok());
+    assert_eq!(
+        secret(&"p".repeat(MAX_PASSWORD_LEN + 1), None).unwrap_err(),
+        invalid(InvalidEntryField::PasswordTooLong)
+    );
+}
+
+#[test]
+fn blank_notes_become_none() {
+    for blank in ["", " \n "] {
+        assert!(secret("p", Some(blank)).unwrap().notes().is_none());
+    }
+}
+
+#[test]
+fn notes_are_not_trimmed() {
+    let s = secret("p", Some(" n ")).unwrap();
+    assert_eq!(s.notes().unwrap().expose_secret(), " n ");
+}
+
+#[test]
+fn notes_limit() {
+    assert!(secret("p", Some(&"n".repeat(MAX_NOTES_LEN))).is_ok());
+    assert_eq!(
+        secret("p", Some(&"n".repeat(MAX_NOTES_LEN + 1))).unwrap_err(),
+        invalid(InvalidEntryField::NotesTooLong)
+    );
+}
+
+#[test]
+fn secret_debug_hides_values() {
+    let debug = format!("{:?}", secret("hunter2", Some("pin 1234")).unwrap());
+    assert!(!debug.contains("hunter2"), "{debug}");
+    assert!(!debug.contains("1234"), "{debug}");
+}
+
+// Si `T` implementa `Display`, la constante inherente de `Probe<T>` tiene
+// prioridad sobre la del rasgo y vale `true`.
+trait NoDisplay {
+    const IMPLS_DISPLAY: bool = false;
+}
+impl<T: ?Sized> NoDisplay for T {}
+struct Probe<T: ?Sized>(core::marker::PhantomData<T>);
+#[allow(dead_code)]
+impl<T: ?Sized + fmt::Display> Probe<T> {
+    const IMPLS_DISPLAY: bool = true;
+}
+
+#[test]
+fn secret_does_not_implement_display() {
+    // Control: el truco detecta un tipo que sí implementa `Display`.
+    const { assert!(<Probe<String>>::IMPLS_DISPLAY) };
+    const { assert!(!<Probe<Secret>>::IMPLS_DISPLAY) };
+    const { assert!(!<Probe<SearchData>>::IMPLS_DISPLAY) };
+}
+
+#[test]
+fn secret_zeroizes_on_drop() {
+    assert_zeroize_on_drop::<Secret>();
+}

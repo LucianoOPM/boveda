@@ -7,6 +7,7 @@
 
 use std::fmt;
 
+use secrecy::{ExposeSecret, SecretString};
 use zeroize::{Zeroize, ZeroizeOnDrop, Zeroizing};
 
 use crate::error::{Error, InvalidEntryField, Result};
@@ -15,6 +16,8 @@ use crate::error::{Error, InvalidEntryField, Result};
 pub(crate) const MAX_SERVICE_LEN: usize = 256;
 pub(crate) const MAX_URL_LEN: usize = 2048;
 pub(crate) const MAX_USERNAME_LEN: usize = 256;
+pub(crate) const MAX_PASSWORD_LEN: usize = 1024;
+pub(crate) const MAX_NOTES_LEN: usize = 16384;
 pub(crate) const MAX_TAGS: usize = 32;
 pub(crate) const MAX_TAG_LEN: usize = 64;
 
@@ -169,6 +172,70 @@ fn build_search_data_v1(
         username,
         tags: kept,
     })
+}
+
+/// Secreto de una entrada: contraseña y notas.
+///
+/// No deriva `Clone` ni `PartialEq` para no copiar ni comparar el secreto, y
+/// su `Debug` no muestra los valores. Solo se lee con `expose_secret()`.
+pub(crate) struct Secret {
+    password: SecretString,
+    notes: Option<SecretString>,
+}
+
+// La garantía la dan los campos: `SecretString` borra su contenido al
+// soltarse. Este marcador solo lo hace visible en el tipo.
+impl ZeroizeOnDrop for Secret {}
+
+impl Secret {
+    /// Crea el secreto validándolo con las reglas de la versión de
+    /// estructura actual.
+    pub(crate) fn new(password: SecretString, notes: Option<SecretString>) -> Result<Self> {
+        build_secret_v1(password, notes).map_err(Error::InvalidEntry)
+    }
+
+    pub(crate) fn password(&self) -> &SecretString {
+        &self.password
+    }
+
+    pub(crate) fn notes(&self) -> Option<&SecretString> {
+        self.notes.as_ref()
+    }
+}
+
+impl fmt::Debug for Secret {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        const HIDDEN: &str = "[oculto]";
+        f.debug_struct("Secret")
+            .field("password", &HIDDEN)
+            .field("notes", &self.notes.as_ref().map(|_| HIDDEN))
+            .finish()
+    }
+}
+
+/// Reglas del secreto en la versión de estructura 1.
+///
+/// La contraseña y el contenido de las notas nunca se recortan: los espacios
+/// pueden ser parte del secreto. Unas notas en blanco cuentan como ausentes.
+fn build_secret_v1(
+    password: SecretString,
+    notes: Option<SecretString>,
+) -> std::result::Result<Secret, InvalidEntryField> {
+    let len = password.expose_secret().len();
+    if len == 0 {
+        return Err(InvalidEntryField::PasswordEmpty);
+    }
+    if len > MAX_PASSWORD_LEN {
+        return Err(InvalidEntryField::PasswordTooLong);
+    }
+    let notes = notes.filter(|n| !n.expose_secret().trim().is_empty());
+    if notes
+        .as_ref()
+        .is_some_and(|n| n.expose_secret().len() > MAX_NOTES_LEN)
+    {
+        return Err(InvalidEntryField::NotesTooLong);
+    }
+    Ok(Secret { password, notes })
 }
 
 #[cfg(test)]
