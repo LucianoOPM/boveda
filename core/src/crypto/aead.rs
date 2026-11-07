@@ -22,6 +22,20 @@
 //!
 //! Este módulo solo conoce bytes: no depende del modelo de entrada de
 //! `vault`.
+//!
+//! Una parte cifrada se guarda como `nonce (24) | texto cifrado | etiqueta (16)`.
+//! El texto en claro solo vive en búferes `Zeroizing` con la capacidad
+//! reservada de antemano, para que nunca se reasignen dejando copias.
+
+use std::fmt;
+
+use chacha20poly1305::aead::Generate;
+use chacha20poly1305::{AeadInOut, KeyInit, XChaCha20Poly1305, XNonce};
+use secrecy::ExposeSecret;
+use zeroize::Zeroizing;
+
+use super::keys::{NONCE_LEN, TAG_LEN, VaultKey};
+use crate::error::{Error, Result};
 
 /// Longitud del identificador de entrada. Coincide con
 /// `vault::entry::ENTRY_ID_LEN`; se repite aquí para que `crypto` no dependa
@@ -60,6 +74,103 @@ fn associated_data(
     version_out.copy_from_slice(&entry_schema_version.to_le_bytes());
     part_out[0] = part as u8;
     ad
+}
+
+/// Longitud mínima de una parte cifrada: nonce más etiqueta (texto vacío).
+pub(crate) const MIN_SEALED_LEN: usize = NONCE_LEN + TAG_LEN;
+
+/// Parte cifrada: `nonce (24) | texto cifrado | etiqueta (16)`, tal como se
+/// guarda en el almacenamiento.
+///
+/// No deriva `Debug`: aunque está cifrada, solo muestra su longitud.
+#[derive(Clone, PartialEq, Eq)]
+pub(crate) struct EncryptedPart(Vec<u8>);
+
+impl EncryptedPart {
+    /// Reconstruye una parte leída del almacenamiento. No valida: la
+    /// longitud la comprueba [`open_part`].
+    pub(crate) fn from_bytes(bytes: Vec<u8>) -> Self {
+        Self(bytes)
+    }
+
+    pub(crate) fn as_bytes(&self) -> &[u8] {
+        &self.0
+    }
+}
+
+impl fmt::Debug for EncryptedPart {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("EncryptedPart")
+            .field("len", &self.0.len())
+            .finish()
+    }
+}
+
+/// Crea el cifrador a partir de la llave de bóveda (se borra al soltarlo).
+fn cipher(key: &VaultKey) -> Result<XChaCha20Poly1305> {
+    // La longitud es fija (32 bytes), así que este error no ocurre en la práctica.
+    XChaCha20Poly1305::new_from_slice(key.expose_secret()).map_err(|_| Error::CorruptEntry)
+}
+
+/// Cifra una parte de una entrada con un nonce aleatorio nuevo.
+///
+/// Un fallo del generador aleatorio devuelve [`Error::Random`].
+pub(crate) fn seal_part(
+    key: &VaultKey,
+    id: &[u8; ENTRY_ID_LEN],
+    entry_schema_version: u16,
+    part: Part,
+    plaintext: &[u8],
+) -> Result<EncryptedPart> {
+    let nonce = XNonce::try_generate().map_err(|_| Error::Random)?;
+    let ad = associated_data(id, entry_schema_version, part);
+
+    // Capacidad exacta reservada de antemano: ni la copia del texto en claro
+    // ni la etiqueta hacen que el búfer se reasigne.
+    let capacity = NONCE_LEN
+        .checked_add(plaintext.len())
+        .and_then(|n| n.checked_add(TAG_LEN))
+        .ok_or(Error::CorruptEntry)?;
+    let mut buf = Zeroizing::new(Vec::with_capacity(capacity));
+    buf.extend_from_slice(&nonce);
+    buf.extend_from_slice(plaintext);
+
+    let body = buf.get_mut(NONCE_LEN..).ok_or(Error::CorruptEntry)?;
+    let tag = cipher(key)?
+        .encrypt_inout_detached(&nonce, &ad, body.into())
+        .map_err(|_| Error::CorruptEntry)?;
+    buf.extend_from_slice(&tag);
+
+    // Solo tras cifrar con éxito el contenido sale del búfer `Zeroizing`: si
+    // algo falla antes, el texto en claro se borra al soltarlo.
+    Ok(EncryptedPart(std::mem::take(&mut *buf)))
+}
+
+/// Descifra una parte de una entrada.
+///
+/// Una parte demasiado corta o que no se autentica (llave, id, versión o
+/// parte distintos, o un byte alterado) devuelve [`Error::CorruptEntry`].
+pub(crate) fn open_part(
+    key: &VaultKey,
+    id: &[u8; ENTRY_ID_LEN],
+    entry_schema_version: u16,
+    part: Part,
+    sealed: &EncryptedPart,
+) -> Result<Zeroizing<Vec<u8>>> {
+    if sealed.0.len() < MIN_SEALED_LEN {
+        return Err(Error::CorruptEntry);
+    }
+    let (nonce, body) = sealed.0.split_at(NONCE_LEN);
+    let nonce = XNonce::try_from(nonce).map_err(|_| Error::CorruptEntry)?;
+    let ad = associated_data(id, entry_schema_version, part);
+
+    // Se descifra en un búfer `Zeroizing`; `decrypt_in_place` lo trunca a la
+    // longitud del texto en claro sin reasignar.
+    let mut buf = Zeroizing::new(body.to_vec());
+    cipher(key)?
+        .decrypt_in_place(&nonce, &ad, &mut *buf)
+        .map_err(|_| Error::CorruptEntry)?;
+    Ok(buf)
 }
 
 #[cfg(test)]
