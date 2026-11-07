@@ -4,9 +4,10 @@ App de bandeja que recibe contraseñas del celular y las deja en el portapapeles
 
 ## Comandos (desde desktop/)
 
-- Instalar dependencias del frontend: `npm install`
-- Desarrollo: `npm run tauri dev`
-- Compilación: `npm run tauri build`
+- Gestor de paquetes: bun. No uses npm, yarn ni pnpm ni agregues sus lockfiles.
+- Instalar dependencias del frontend: `bun install`
+- Desarrollo: `bun run tauri dev`
+- Compilación: `bun run tauri build`
 
 ## Reglas
 
