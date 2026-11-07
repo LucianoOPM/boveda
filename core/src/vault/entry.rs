@@ -3,7 +3,7 @@
 //! Cada entrada se divide en dos partes que se cifran por separado: los datos
 //! de búsqueda (se descifran al desbloquear) y el secreto (solo al copiar,
 //! mostrar o enviar). Aquí se definen los tipos validados y su serialización
-//! a texto plano; el cifrado vive en otro módulo.
+//! a texto plano; `sealed` une estos tipos con el cifrado de `crypto::aead`.
 
 use std::fmt;
 
@@ -14,6 +14,7 @@ use crate::error::{Error, InvalidEntryField, Result};
 
 mod flavor;
 mod raw;
+pub(crate) mod sealed;
 
 use flavor::ZeroizingVec;
 use raw::{RawSearchDataV1, RawSecretV1};
