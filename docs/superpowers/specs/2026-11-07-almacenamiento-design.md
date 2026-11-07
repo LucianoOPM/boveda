@@ -47,9 +47,10 @@ Guardar la bóveda en un archivo SQLite administrado por el núcleo: una tabla d
 - La versión es únicamente `format_version` de la cabecera. No se usa `user_version`.
 - Abrir nunca crea ni modifica el archivo: `open` usa `OpenFlags` sin `SQLITE_OPEN_CREATE`. Así, una ruta inexistente da error y no deja un SQLite vacío.
 - Orden al abrir:
+  0. (Agregado en la revisión final.) Antes de abrir con SQLite se leen los primeros 100 bytes del archivo: sin el magic de SQLite, más corto que la cabecera o con otro `application_id` (bytes 68..72, big-endian) da `NotAVault`. Así SQLite nunca toca un archivo ajeno, que podría modificar al revertir su `-journal` o integrar su `-wal`. Los mismos bytes dicen si el archivo está en WAL (bytes 18 y 19), que `open_read_only` rechaza sin abrirlo.
   1. Leer `application_id`. `rusqlite` abre de forma perezosa, así que un archivo que no es SQLite falla en esta primera consulta con `SQLITE_NOTADB` → `Error::NotAVault`. Un `application_id` distinto, incluido `0` (un SQLite vacío o ajeno), también da `NotAVault`.
   2. Pragmas (ver abajo).
-  3. Leer la cabecera y validarla con `VaultHeader::from_parts`. Una `format_version` desconocida da el error que ya existe, `Error::UnsupportedFormatVersion(u16)`, distinto de `NotAVault`.
+  3. Leer `format_version` sola y, si no es la actual, devolver su error antes de leer las demás columnas (una versión futura puede tenerlas distintas). Después, leer la cabecera y validarla con `VaultHeader::from_parts`. Una `format_version` desconocida da el error que ya existe, `Error::UnsupportedFormatVersion(u16)`, distinto de `NotAVault`.
 
 ### Diario y durabilidad
 
