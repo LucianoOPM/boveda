@@ -159,7 +159,16 @@ impl Vault {
             return Err(Error::AlreadyUnlocked);
         }
         let key = self.storage.read_header()?.unlock(password)?;
-        let listing = self.storage.list_entries()?;
+        let (unlocked, report) = Self::load_entries(&self.storage, key)?;
+        self.unlocked = Some(unlocked);
+        Ok(report)
+    }
+
+    /// Lista las entradas vivas de `storage` y descifra sus datos de
+    /// búsqueda con `key`. Las que no se pueden descifrar van al reporte,
+    /// sin fallar. La usan `unlock` y la importación de respaldos.
+    fn load_entries(storage: &Storage, key: VaultKey) -> Result<(Unlocked, UnlockReport)> {
+        let listing = storage.list_entries()?;
 
         let mut corrupt = listing.corrupt;
         let mut entries = Vec::with_capacity(listing.entries.len());
@@ -175,11 +184,11 @@ impl Vault {
             }
         }
 
-        self.unlocked = Some(Unlocked { key, entries });
-        Ok(UnlockReport {
+        let report = UnlockReport {
             corrupt,
             unidentified_corrupt: listing.unidentified_corrupt,
-        })
+        };
+        Ok((Unlocked { key, entries }, report))
     }
 
     /// Bloquea: borra de memoria la llave de bóveda y los datos de búsqueda.
