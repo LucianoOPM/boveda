@@ -8,7 +8,7 @@
 use std::fmt;
 
 use secrecy::{ExposeSecret, SecretString};
-use zeroize::{Zeroize, ZeroizeOnDrop, Zeroizing};
+use zeroize::{ZeroizeOnDrop, Zeroizing};
 
 use crate::error::{Error, InvalidEntryField, Result};
 
@@ -69,7 +69,9 @@ impl EntryId {
 /// Solo se construye con [`SearchData::new`] o al decodificar, así que
 /// siempre cumple las reglas de su versión. Se borra de memoria al soltarse y
 /// su `Debug` no muestra los valores.
-#[derive(PartialEq, Eq, Zeroize, ZeroizeOnDrop)]
+// Sin `Zeroize` público: `zeroize()` la dejaría con el servicio vacío y
+// saltaría la validación. `ZeroizeOnDrop` borra cada campo al soltarse.
+#[derive(PartialEq, Eq, ZeroizeOnDrop)]
 pub struct SearchData {
     service: String,
     url: Option<String>,
