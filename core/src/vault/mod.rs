@@ -314,6 +314,31 @@ impl Vault {
         backup::export(&self.storage, dest)
     }
 
+    /// Importa el respaldo `backup` sobre `dest`, exista o no (un celular
+    /// nuevo no tiene bóveda), y devuelve la bóveda importada desbloqueada
+    /// con su [`UnlockReport`].
+    ///
+    /// `password` es la contraseña maestra del respaldo, que puede ser
+    /// distinta de la actual. Antes de reemplazar nada, una copia temporal
+    /// junto a `dest` se abre en solo lectura, se revisa su integridad, se
+    /// desbloquea y se descifran sus datos de búsqueda. Si algo falla,
+    /// `dest` queda intacta. Las entradas dañadas no impiden importar: se
+    /// reportan como en [`Vault::unlock`].
+    ///
+    /// Quien llama debe soltar antes cualquier `Vault` abierta sobre `dest`
+    /// y, si la importación falla, volver a abrirla con [`Vault::open`].
+    /// Ambas rutas deben ser absolutas (si no, `Storage(Io)`).
+    ///
+    /// Único caso sin vuelta atrás: si falla la apertura final, `dest` ya
+    /// es el respaldo validado; se puede reintentar con [`Vault::open`].
+    pub fn import(
+        backup: &Path,
+        dest: &Path,
+        password: &SecretString,
+    ) -> Result<(Self, UnlockReport)> {
+        backup::import(backup, dest, password)
+    }
+
     /// Cambia la contraseña maestra: verifica `current`, calibra Argon2id y
     /// vuelve a cifrar solo la llave de bóveda, con sal y nonce nuevos.
     ///

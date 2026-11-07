@@ -742,3 +742,27 @@ fn vacuum_into_copies_with_synchronous_full() {
     let one = copy.get_entry(EntryId::from_bytes([1; 16])).unwrap();
     assert_parts(&one, b"b1", b"s1");
 }
+
+#[test]
+fn check_integrity_ok_on_new_vault() {
+    let (_dir, _path, storage) = new_vault();
+    assert_eq!(storage.check_integrity(), Ok(()));
+}
+
+#[test]
+fn check_integrity_detects_damaged_page() {
+    let (_dir, path, mut storage) = new_vault();
+    for i in 1..=3 {
+        storage
+            .insert_entry(&fake_entry(i, b"b", b"s"), T1)
+            .unwrap();
+    }
+    storage.close().unwrap();
+    damage_entries_root_page(&path);
+
+    let storage = Storage::open_read_only(&path).unwrap();
+    assert_eq!(
+        storage.check_integrity(),
+        Err(Error::Storage(StorageErrorKind::Corrupt))
+    );
+}
