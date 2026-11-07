@@ -144,3 +144,76 @@ fn debug_hides_bytes() {
     assert!(!debug.to_lowercase().contains("ab, "), "{debug}");
     assert!(debug.contains("50"), "{debug}");
 }
+
+#[test]
+fn truncated_part_is_rejected() {
+    let mut bytes = seal(b"hola").as_bytes().to_vec();
+    bytes.pop();
+    let part = EncryptedPart::from_bytes(bytes);
+    assert_eq!(
+        open_part(&key(1), &ID, V, Part::Secret, &part).unwrap_err(),
+        Error::CorruptEntry
+    );
+}
+
+#[test]
+fn extended_part_is_rejected() {
+    let mut bytes = seal(b"hola").as_bytes().to_vec();
+    bytes.push(0);
+    let part = EncryptedPart::from_bytes(bytes);
+    assert_eq!(
+        open_part(&key(1), &ID, V, Part::Secret, &part).unwrap_err(),
+        Error::CorruptEntry
+    );
+}
+
+// --- Propiedades ---
+
+mod props {
+    use proptest::collection::vec;
+    use proptest::prelude::*;
+    use proptest::sample::Index;
+
+    use super::*;
+
+    fn part() -> impl Strategy<Value = Part> {
+        prop_oneof![Just(Part::Search), Just(Part::Secret)]
+    }
+
+    proptest! {
+        #[test]
+        fn round_trip_prop(
+            plaintext in vec(any::<u8>(), 0..4096),
+            id in any::<[u8; ENTRY_ID_LEN]>(),
+            version in any::<u16>(),
+            part in part(),
+        ) {
+            let sealed = seal_part(&key(3), &id, version, part, &plaintext).unwrap();
+            let plain = open_part(&key(3), &id, version, part, &sealed).unwrap();
+            prop_assert_eq!(plain.as_slice(), plaintext.as_slice());
+        }
+
+        #[test]
+        fn any_bit_flip_is_detected_prop(
+            plaintext in vec(any::<u8>(), 0..256),
+            pos in any::<Index>(),
+            bit in 0u8..8,
+        ) {
+            // Cualquier posición: nonce, texto cifrado o etiqueta.
+            let mut bytes = seal(&plaintext).as_bytes().to_vec();
+            let i = pos.index(bytes.len());
+            bytes[i] ^= 1 << bit;
+            let part = EncryptedPart::from_bytes(bytes);
+            prop_assert_eq!(
+                open_part(&key(1), &ID, V, Part::Secret, &part).unwrap_err(),
+                Error::CorruptEntry
+            );
+        }
+
+        #[test]
+        fn open_never_panics_prop(bytes in vec(any::<u8>(), 0..128)) {
+            let part = EncryptedPart::from_bytes(bytes);
+            prop_assert!(open_part(&key(1), &ID, V, Part::Secret, &part).is_err());
+        }
+    }
+}
