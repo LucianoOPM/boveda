@@ -1,8 +1,24 @@
 //! Derivación de la llave maestra con Argon2id.
 
-use std::time::Duration;
+use std::time::{Duration, Instant};
+
+use argon2::{Algorithm, Argon2, Params, Version};
+use secrecy::{ExposeSecret, SecretString};
+use zeroize::Zeroizing;
 
 use crate::error::{Error, Result};
+
+/// Longitud de la sal en bytes.
+pub(crate) const SALT_LEN: usize = 16;
+
+/// Longitud de la llave derivada en bytes.
+pub(crate) const DERIVED_KEY_LEN: usize = 32;
+
+/// Llave derivada de la contraseña maestra; se borra de memoria al soltarla.
+pub(crate) type DerivedKey = Zeroizing<[u8; DERIVED_KEY_LEN]>;
+
+/// Tiempo objetivo de una derivación en el dispositivo.
+const CALIBRATION_TARGET: Duration = Duration::from_millis(500);
 
 /// Parámetros de Argon2id guardados en la cabecera de la bóveda.
 ///
@@ -95,6 +111,52 @@ fn calibrate_with(
             None => return Ok(current),
         }
     }
+}
+
+/// Mide en este dispositivo y elige parámetros que tarden unos 0.5 s.
+///
+/// Solo se usa al crear la bóveda o al cambiar la contraseña maestra.
+pub(crate) fn calibrate() -> Result<KdfParams> {
+    // Contraseña y sal de prueba: solo importa cuánto tarda la derivación.
+    let password = SecretString::from("calibrate");
+    let salt = [0u8; SALT_LEN];
+    calibrate_with(CALIBRATION_TARGET, |params| {
+        let start = Instant::now();
+        derive_key(&password, &salt, params)?;
+        Ok(start.elapsed())
+    })
+}
+
+/// Deriva la llave que cifra la llave de bóveda.
+///
+/// Rechaza parámetros fuera de los límites de [`KdfParams::validate`].
+pub(crate) fn derive_key(
+    password: &SecretString,
+    salt: &[u8; SALT_LEN],
+    params: &KdfParams,
+) -> Result<DerivedKey> {
+    params.validate()?;
+    let argon2_params = Params::new(
+        params.memory_kib,
+        params.iterations,
+        params.parallelism,
+        Some(DERIVED_KEY_LEN),
+    )
+    .map_err(|_| Error::InvalidKdfParams)?;
+    let argon2 = Argon2::new(Algorithm::Argon2id, Version::V0x13, argon2_params);
+
+    let mut key = Zeroizing::new([0u8; DERIVED_KEY_LEN]);
+    argon2
+        .hash_password_into(password.expose_secret().as_bytes(), salt, key.as_mut())
+        .map_err(|_| Error::InvalidKdfParams)?;
+    Ok(key)
+}
+
+/// Genera una sal nueva con el generador del sistema.
+pub(crate) fn generate_salt() -> Result<[u8; SALT_LEN]> {
+    let mut salt = [0u8; SALT_LEN];
+    getrandom::fill(&mut salt).map_err(|_| Error::Random)?;
+    Ok(salt)
 }
 
 #[cfg(test)]
@@ -205,5 +267,59 @@ mod tests {
     fn calibrate_propagates_measure_error() {
         let params = calibrate_with(Duration::from_millis(500), |_| Err(Error::InvalidKdfParams));
         assert_eq!(params, Err(Error::InvalidKdfParams));
+    }
+
+    fn password(text: &str) -> SecretString {
+        SecretString::from(text)
+    }
+
+    #[test]
+    fn same_inputs_derive_same_key() {
+        let salt = [7u8; SALT_LEN];
+        let first = derive_key(&password("correcta"), &salt, &KdfParams::MIN).unwrap();
+        let second = derive_key(&password("correcta"), &salt, &KdfParams::MIN).unwrap();
+        assert_eq!(*first, *second);
+    }
+
+    #[test]
+    fn different_salt_password_or_params_derive_different_keys() {
+        let salt = [7u8; SALT_LEN];
+        let base = derive_key(&password("correcta"), &salt, &KdfParams::MIN).unwrap();
+
+        let other_salt = derive_key(&password("correcta"), &[8u8; SALT_LEN], &KdfParams::MIN);
+        let other_password = derive_key(&password("incorrecta"), &salt, &KdfParams::MIN);
+        let more_iterations = KdfParams {
+            iterations: 4,
+            ..KdfParams::MIN
+        };
+        let other_params = derive_key(&password("correcta"), &salt, &more_iterations);
+
+        for other in [other_salt, other_password, other_params] {
+            assert_ne!(*base, *other.unwrap());
+        }
+    }
+
+    #[test]
+    fn derive_key_rejects_params_below_minimum() {
+        let weak = KdfParams {
+            memory_kib: 8 * MIB,
+            ..KdfParams::MIN
+        };
+        let result = derive_key(&password("correcta"), &[0u8; SALT_LEN], &weak);
+        assert_eq!(result.err(), Some(Error::InvalidKdfParams));
+    }
+
+    #[test]
+    fn generated_salts_are_different() {
+        assert_ne!(generate_salt().unwrap(), generate_salt().unwrap());
+    }
+
+    /// Mide de verdad en este equipo: tarda varios segundos, por eso se
+    /// ejecuta a mano con `cargo test -p vault-core -- --ignored`.
+    #[test]
+    #[ignore = "lenta: mide Argon2id real varias veces"]
+    fn calibrate_on_this_device_stays_within_bounds() {
+        let params = calibrate().unwrap();
+        assert_eq!(params.validate(), Ok(()));
     }
 }
