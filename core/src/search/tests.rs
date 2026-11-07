@@ -291,3 +291,38 @@ proptest::proptest! {
         let _ = search(&entries, &query);
     }
 }
+
+// --- Hallazgos de la revisión final ----------------------------------
+
+#[test]
+fn scheme_inside_query_string_is_not_a_scheme() {
+    assert_eq!(
+        domain("banco.com/login?next=https://otro.com"),
+        Some("banco.com")
+    );
+    assert_eq!(domain("banco.com?r=https://otro.com"), Some("banco.com"));
+    assert_eq!(
+        domain("https://banco.com/login?next=https://otro.com"),
+        Some("banco.com")
+    );
+}
+
+#[test]
+fn long_pasted_query_is_fast_with_many_entries() {
+    let entries: Vec<EntrySummary> = (0..2000)
+        .map(|i| {
+            entry(
+                &format!("servicio{i}"),
+                Some("https://accounts.example.com/x"),
+                Some("usuario@example.com"),
+                &["trabajo", "correo"],
+                None,
+            )
+        })
+        .collect();
+    let query = "a".repeat(5000);
+    let start = std::time::Instant::now();
+    assert!(search(&entries, &query).is_empty());
+    let elapsed = start.elapsed();
+    assert!(elapsed.as_millis() < 500, "tardó {elapsed:?}");
+}

@@ -59,8 +59,14 @@ fn lowercase(text: &str) -> impl Iterator<Item = char> + '_ {
 /// Quita el esquema (`algo://`) y las `/` iniciales, corta en el primer `/`,
 /// `?` o `#`, se queda con lo que sigue a la última `@` (así `usuario:clave@`
 /// nunca entra en la búsqueda) y quita el puerto. Acepta URLs sin esquema.
+///
+/// Un `://` solo es esquema si no hay `/`, `?` ni `#` antes: en
+/// `banco.com/login?next=https://otro.com` el dominio es `banco.com`.
 fn domain(url: &str) -> Option<&str> {
-    let rest = url.split_once("://").map_or(url, |(_, rest)| rest);
+    let rest = match url.find("://") {
+        Some(i) if !url[..i].contains(['/', '?', '#']) => &url[i + 3..],
+        _ => url,
+    };
     let rest = rest.trim_start_matches('/');
     let authority = rest.split(['/', '?', '#']).next().unwrap_or("");
     let host = authority.rsplit('@').next().unwrap_or("");
@@ -202,7 +208,11 @@ fn typo_fallback<'a>(entries: &'a [EntrySummary], query: &str) -> Vec<&'a EntryS
         .iter()
         .filter_map(|entry| {
             let folded: Vec<Zeroizing<String>> = fields(entry.search()).map(fold).collect();
-            let field_words: Vec<&str> = folded.iter().flat_map(|f| words(f)).collect();
+            let field_words: Vec<(&str, usize)> = folded
+                .iter()
+                .flat_map(|f| words(f))
+                .map(|w| (w, w.chars().count()))
+                .collect();
             query_words
                 .iter()
                 .map(|(q, rule)| match rule {
@@ -210,7 +220,12 @@ fn typo_fallback<'a>(entries: &'a [EntrySummary], query: &str) -> Vec<&'a EntryS
                         let n = q.chars().count();
                         field_words
                             .iter()
-                            .map(|w| {
+                            // La distancia es al menos la diferencia de largos:
+                            // si `m + limit < n`, ni la palabra ni su inicio
+                            // pueden coincidir. Evita que un texto pegado muy
+                            // largo cueste O(n·m) por cada palabra.
+                            .filter(|(_, m)| m + limit >= n)
+                            .map(|(w, _)| {
                                 strsim::osa_distance(q, w)
                                     .min(strsim::osa_distance(q, prefix(w, n)))
                             })
