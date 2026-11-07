@@ -458,3 +458,87 @@ fn huge_length_prefix_is_corrupt() {
         Error::CorruptEntry
     );
 }
+
+// --- Propiedades ---
+
+mod props {
+    use proptest::collection::vec;
+    use proptest::option;
+    use proptest::prelude::*;
+
+    use super::*;
+
+    /// Texto arbitrario o palabras con espacios y mayúsculas mezcladas, para
+    /// ejercitar el recorte y los duplicados de etiquetas.
+    fn text() -> impl Strategy<Value = String> {
+        prop_oneof![any::<String>(), "[ \t]{0,3}[a-zA-ZñÑ]{1,8}[ \t]{0,3}"]
+    }
+
+    fn as_strs(tags: &[String]) -> Vec<&str> {
+        tags.iter().map(String::as_str).collect()
+    }
+
+    proptest! {
+        #[test]
+        fn search_data_round_trip_prop(
+            service in text(),
+            url in option::of(text()),
+            username in option::of(text()),
+            tags in vec(text(), 0..40),
+        ) {
+            if let Ok(data) =
+                SearchData::new(&service, url.as_deref(), username.as_deref(), &as_strs(&tags))
+            {
+                let bytes = data.encode().unwrap();
+                prop_assert_eq!(SearchData::decode(ENTRY_SCHEMA_VERSION, &bytes).unwrap(), data);
+            }
+        }
+
+        #[test]
+        fn search_data_new_is_idempotent_prop(
+            service in text(),
+            url in option::of(text()),
+            username in option::of(text()),
+            tags in vec(text(), 0..40),
+        ) {
+            if let Ok(data) =
+                SearchData::new(&service, url.as_deref(), username.as_deref(), &as_strs(&tags))
+            {
+                let again = SearchData::new(
+                    data.service(),
+                    data.url(),
+                    data.username(),
+                    &as_strs(data.tags()),
+                )
+                .unwrap();
+                prop_assert_eq!(again, data);
+            }
+        }
+
+        #[test]
+        fn secret_round_trip_prop(password in any::<String>(), notes in option::of(any::<String>())) {
+            if let Ok(original) = Secret::new(
+                SecretString::from(password.as_str()),
+                notes.as_deref().map(SecretString::from),
+            ) {
+                let bytes = original.encode().unwrap();
+                let decoded = Secret::decode(ENTRY_SCHEMA_VERSION, &bytes).unwrap();
+                prop_assert_eq!(
+                    decoded.password().expose_secret(),
+                    original.password().expose_secret()
+                );
+                prop_assert_eq!(
+                    decoded.notes().map(|n| n.expose_secret().to_owned()),
+                    original.notes().map(|n| n.expose_secret().to_owned())
+                );
+            }
+        }
+
+        #[test]
+        fn decode_never_panics_prop(bytes in vec(any::<u8>(), 0..512), version in any::<u16>()) {
+            // Solo importa que termine sin panic.
+            let _ = SearchData::decode(version, &bytes);
+            let _ = Secret::decode(version, &bytes);
+        }
+    }
+}
