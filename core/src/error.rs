@@ -32,6 +32,41 @@ pub enum Error {
     /// El generador de números aleatorios del sistema falló.
     #[error("el generador aleatorio del sistema falló")]
     Random,
+
+    /// La entrada no se pudo leer: versión de estructura desconocida, bytes
+    /// mal formados o contenido que viola las reglas de su versión.
+    #[error("entrada dañada")]
+    CorruptEntry,
+
+    /// Los datos para crear o editar una entrada no cumplen las reglas.
+    #[error("entrada no válida: {0}")]
+    InvalidEntry(InvalidEntryField),
+}
+
+/// Campo de una entrada que no cumple las reglas, y por qué.
+///
+/// Nunca incluye el valor del campo.
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+pub enum InvalidEntryField {
+    #[error("el servicio está vacío")]
+    ServiceEmpty,
+    #[error("el servicio es demasiado largo")]
+    ServiceTooLong,
+    #[error("la URL es demasiado larga")]
+    UrlTooLong,
+    #[error("el usuario es demasiado largo")]
+    UsernameTooLong,
+    #[error("la contraseña está vacía")]
+    PasswordEmpty,
+    #[error("la contraseña es demasiado larga")]
+    PasswordTooLong,
+    #[error("las notas son demasiado largas")]
+    NotesTooLong,
+    #[error("hay demasiadas etiquetas")]
+    TooManyTags,
+    #[error("una etiqueta es demasiado larga")]
+    TagTooLong,
 }
 
 /// Resultado con el [`Error`] del núcleo.
