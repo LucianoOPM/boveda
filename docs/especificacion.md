@@ -96,7 +96,9 @@ Decisiones tomadas el 2026-11-07, antes de implementar las llaves. Fijan el form
 - Identificador: 16 bytes aleatorios del generador del sistema (`getrandom`), guardados como `BLOB`.
 - Cada parte (datos de búsqueda y secreto) se serializa con `serde` + `postcard` y se cifra por separado. Se guarda como `nonce (24 bytes) | texto cifrado con etiqueta`.
 - Al descifrar, el texto plano va en `Zeroizing<Vec<u8>>` antes de deserializar. La contraseña y las notas del secreto son `SecretString` (`secrecy`): `Debug` no muestra su valor y solo se leen con `expose_secret()`.
-- Al cifrar se reserva `len + 16` en el búfer `Zeroizing` antes de `encrypt_in_place`, para que la etiqueta quepa sin reasignar; al descifrar se usa `decrypt_in_place` sobre `Zeroizing<Vec<u8>>` y ese búfer se pasa a la deserialización.
+- Al cifrar se reserva `24 + len + 16` en un búfer `Zeroizing` (nonce, texto y etiqueta), se cifra `[24..]` con `encrypt_inout_detached` y se agrega la etiqueta sin reasignar; el contenido sale del búfer solo tras cifrar con éxito. Al descifrar se copia `[24..]` a un `Zeroizing<Vec<u8>>`, se usa `decrypt_in_place` y ese búfer se pasa a la deserialización. (`encrypt_in_place_detached` está deprecada en `aead` 0.6.)
+- Una parte de menos de 40 bytes (nonce y etiqueta) o que no se autentica cuenta como entrada dañada, igual que una que no se puede deserializar. Esa entrada falla sola: no impide abrir las demás.
+- Las dos partes de una entrada se cifran siempre juntas y con la misma versión de estructura.
 - Campos y reglas de la versión de estructura 1 (decididos el 2026-11-07; detalle en `docs/superpowers/specs/2026-11-07-modelo-entrada-design.md`):
   - Obligatorios: servicio y contraseña. Opcionales: URL, usuario, etiquetas y notas. Las entradas de solo notas quedan fuera del MVP.
   - El servicio, la URL, el usuario y las etiquetas se recortan; una URL o un usuario en blanco cuentan como ausentes. La contraseña y el contenido de las notas nunca se recortan; unas notas en blanco cuentan como ausentes.
@@ -106,12 +108,12 @@ Decisiones tomadas el 2026-11-07, antes de implementar las llaves. Fijan el form
   - Limitación conocida del MVP: sin normalización Unicode (NFC), una palabra con acentos compuestos y descompuestos cuenta como dos etiquetas distintas.
 - Dato autenticado de cada parte, binario de ancho fijo sin separadores (28 bytes):
 
-  | Campo | Tamaño | Valor |
-  | --- | --- | --- |
-  | Etiqueta | 9 bytes | ASCII `boveda-v1` |
-  | Identificador | 16 bytes | id de la entrada |
-  | Versión de estructura | 2 bytes | `u16` little-endian |
-  | Parte | 1 byte | `1` = datos de búsqueda, `2` = secreto |
+  | Offset | Campo | Tamaño | Valor |
+  | --- | --- | --- | --- |
+  | 0–8 | Etiqueta | 9 bytes | ASCII `boveda-v1` |
+  | 9–24 | Identificador | 16 bytes | id de la entrada |
+  | 25–26 | Versión de estructura | 2 bytes | `u16` little-endian |
+  | 27 | Parte | 1 byte | `1` = datos de búsqueda, `2` = secreto |
 
   Así se rechaza mover un secreto a otra entrada y también intercambiar las dos partes de una misma entrada.
 - **Fuera del modelo de amenazas de la v1:** volver una entrada a una versión anterior (rollback). Quien pueda escribir el archivo puede reemplazar ambas partes de una entrada por una copia vieja y válida de la misma entrada, y no se detecta.

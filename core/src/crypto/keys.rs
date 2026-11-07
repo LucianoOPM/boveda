@@ -18,7 +18,7 @@ pub(crate) const VAULT_KEY_LEN: usize = 32;
 pub(crate) const NONCE_LEN: usize = 24;
 
 /// Longitud de la etiqueta de autenticación de Poly1305.
-const TAG_LEN: usize = 16;
+pub(crate) const TAG_LEN: usize = 16;
 
 /// Longitud de la llave de bóveda cifrada: llave más etiqueta.
 pub(crate) const ENCRYPTED_KEY_LEN: usize = VAULT_KEY_LEN + TAG_LEN;
