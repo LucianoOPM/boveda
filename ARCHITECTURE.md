@@ -27,8 +27,9 @@ boveda/
 │   ├── CLAUDE.md
 │   ├── src/
 │   │   ├── lib.rs
+│   │   ├── error.rs        # tipo Error (thiserror), sin secretos
 │   │   ├── crypto/         # kdf.rs (Argon2), keys.rs, aead.rs
-│   │   ├── vault/          # mod.rs (API), entry.rs, storage.rs, backup.rs
+│   │   ├── vault/          # mod.rs (API), header.rs, entry.rs, storage.rs, backup.rs
 │   │   ├── search.rs
 │   │   └── protocol/       # identity.rs, pairing.rs, message.rs, transport.rs
 │   └── tests/
@@ -84,8 +85,8 @@ Los miembros del workspace se agregan conforme existen: `core` en la etapa 1, `m
 
 | Módulo | Responsabilidad |
 | --- | --- |
-| `crypto/` | Argon2id, llave de bóveda, cifrado XChaCha20-Poly1305 |
-| `vault/` | API de la bóveda, modelo de entrada, almacenamiento SQLite, respaldos |
+| `crypto/` | Argon2id (`kdf.rs`); generar la llave de bóveda, derivar la llave maestra y cifrar o descifrar con ella la llave de bóveda (`keys.rs`); cifrado XChaCha20-Poly1305 |
+| `vault/` | API de la bóveda; cabecera: codificarla como dato autenticado, leerla y validarla (`header.rs`); modelo de entrada, almacenamiento SQLite, respaldos |
 | `search.rs` | Búsqueda tolerante a errores sobre los datos de búsqueda |
 | `protocol/` | Identidades X25519, emparejamiento y envío con Noise (`snow`), descubrimiento mDNS |
 
