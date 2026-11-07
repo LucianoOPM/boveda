@@ -1,4 +1,5 @@
-//! Bóveda: cabecera y, más adelante, la API pública `Vault`, las entradas,
-//! el almacenamiento y los respaldos.
+//! Bóveda: cabecera, entradas y, más adelante, la API pública `Vault`, el
+//! almacenamiento y los respaldos.
 
+pub(crate) mod entry;
 pub(crate) mod header;

@@ -1,6 +1,6 @@
 # Roadmap al MVP: gestor de contraseñas
 
-Actualizado: 2026-11-06
+Actualizado: 2026-11-07
 
 Cuatro etapas llevan del repositorio vacío al MVP; cada una termina en algo que ya funciona y tiene un criterio claro para darla por cerrada.
 
@@ -25,7 +25,7 @@ Resultado: el crate `vault-core` crea, abre y respalda una bóveda cifrada, prob
 
 - [x] Repositorio con workspace de Cargo, crate `vault-core` e integración continua que ejecute `cargo test`, `clippy`, `cargo audit` y `cargo deny`.
 - [x] Llaves: Argon2id calibrado a unos 0.5 s, llave de bóveda de 256 bits, y funciones para cifrarla y descifrarla con la llave derivada.
-- [ ] Modelo de entrada con número de versión, separado en datos de búsqueda (servicio, URL, usuario, etiquetas) y secreto (contraseña, notas).
+- [x] Modelo de entrada con número de versión, separado en datos de búsqueda (servicio, URL, usuario, etiquetas) y secreto (contraseña, notas).
 - [ ] Cifrado por entrada con XChaCha20-Poly1305, el identificador como dato autenticado y `zeroize` para los secretos.
 - [ ] Almacenamiento SQLite: tabla de cabecera y tabla de entradas con fecha de modificación y marca de eliminada.
 - [ ] API de la bóveda: crear, desbloquear, bloquear, agregar, editar, eliminar, revelar secreto y cambiar contraseña maestra.
