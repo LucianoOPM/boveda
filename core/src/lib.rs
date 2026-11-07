@@ -11,4 +11,4 @@ mod crypto;
 mod error;
 mod vault;
 
-pub use error::{Error, InvalidEntryField, Result};
+pub use error::{Error, InvalidEntryField, Result, StorageErrorKind};
