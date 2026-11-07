@@ -1,6 +1,6 @@
 # Especificación: gestor de contraseñas móvil con envío a PC
 
-Actualizado: 2026-11-06
+Actualizado: 2026-11-07
 
 ## Resumen y alcance
 
@@ -76,6 +76,48 @@ El identificador de la entrada va ligado al cifrado como dato autenticado, para 
 **Errores.** Una contraseña maestra incorrecta hace fallar el descifrado de la llave de bóveda y la app solo muestra "Contraseña incorrecta". Una entrada corrupta se marca como dañada sin bloquear el resto.
 
 **Respaldos.** Exportación del archivo de bóveda cifrado, que puede guardarse en la PC o en la nube porque es ilegible sin la contraseña maestra, e importación en un celular nuevo.
+
+## Formato de la bóveda
+
+Decisiones tomadas el 2026-11-07, antes de implementar las llaves. Fijan el formato en disco: cambiar cualquiera de ellas sube la versión del formato e incluye una migración.
+
+**Cabecera y llaves.**
+
+- `calibrate()` mide en el dispositivo y elige los parámetros de Argon2id para tardar unos 0.5 s, sin bajar nunca de 64 MiB de memoria, 3 iteraciones y paralelismo 1. Las pruebas usan exactamente esos mínimos.
+- La cabecera guarda por separado (no como cadena PHC): versión del formato, algoritmo de derivación, memoria, iteraciones, paralelismo, sal de 16 bytes y la llave de bóveda cifrada con su nonce.
+- Al cifrar la llave de bóveda, los campos de la cabecera (versión, algoritmo, parámetros y sal) van como dato autenticado, en binario de ancho fijo y little-endian: `versión (u16) | algoritmo (u8) | memoria en KiB (u32) | iteraciones (u32) | paralelismo (u32) | sal (16 bytes)`. El algoritmo `1` es Argon2id versión 0x13. Alterar cualquier parámetro de la cabecera hace fallar el descifrado.
+- En el `Cargo.toml` de la raíz, `[profile.dev.package.argon2]` y `[profile.dev.package.blake2]` llevan `opt-level = 3` para que las pruebas en modo debug no sean lentas. Se agregan junto con la dependencia `argon2`.
+
+**Entradas.**
+
+- Identificador: 16 bytes aleatorios del generador del sistema (`getrandom`), guardados como `BLOB`.
+- Cada parte (datos de búsqueda y secreto) se serializa con `serde` + `postcard` y se cifra por separado. Se guarda como `nonce (24 bytes) | texto cifrado con etiqueta`.
+- Al descifrar, el texto plano va en `Zeroizing<Vec<u8>>` antes de deserializar. Los tipos que contienen secretos implementan `ZeroizeOnDrop`.
+- Dato autenticado de cada parte, binario de ancho fijo sin separadores (28 bytes):
+
+  | Campo | Tamaño | Valor |
+  | --- | --- | --- |
+  | Etiqueta | 9 bytes | ASCII `boveda-v1` |
+  | Identificador | 16 bytes | id de la entrada |
+  | Versión de estructura | 2 bytes | `u16` little-endian |
+  | Parte | 1 byte | `1` = datos de búsqueda, `2` = secreto |
+
+  Así se rechaza mover un secreto a otra entrada y también intercambiar las dos partes de una misma entrada.
+- **Fuera del modelo de amenazas de la v1:** volver una entrada a una versión anterior (rollback). Quien pueda escribir el archivo puede reemplazar ambas partes de una entrada por una copia vieja y válida de la misma entrada, y no se detecta.
+
+**Almacenamiento.** La tabla de entradas guarda, además de las partes cifradas, `modified_at`, `last_used_at` y la marca de eliminada, en claro. `last_used_at` ordena las usadas recientemente cuando no hay texto de búsqueda; revela cuándo se usó una entrada, pero no cuál es.
+
+**API.** Una sola estructura `Vault` con la llave en `Option<Zeroizing<[u8; 32]>>`. Las operaciones con la bóveda bloqueada devuelven `Error::Locked`. `lock()` borra de memoria la llave de bóveda y los datos de búsqueda descifrados. Como `rusqlite::Connection` no es `Sync`, el `Mutex` vive en la fachada de `mobile/rust`, no en el núcleo.
+
+**Entradas dañadas.** `unlock()` devuelve las entradas válidas y la lista de identificadores de las que no se pudieron descifrar, sin fallar por ellas. `reveal()` sobre una entrada con el secreto dañado devuelve un error de entrada dañada. Ambos casos tienen su prueba: alterar un byte de una sola entrada y comprobar que el resto abre, y que `reveal()` de la dañada devuelve ese error.
+
+**Respaldos.**
+
+- Exportar es una copia consistente del archivo SQLite con `VACUUM INTO`, con la cabecera incluida: un respaldo es una bóveda que abre con la misma contraseña maestra. La copia de la llave en el Keystore no viaja; al restaurar se vuelve a activar la huella.
+- Importar solo reemplaza la bóveda actual después de abrir la importada con la contraseña y validar su versión de formato. Si algo falla, la bóveda actual queda intacta.
+- Al restaurar un respaldo se regenera la identidad del dispositivo, porque la llave privada del celular viaja dentro de la bóveda. Aplica a partir de la etapa 3.
+
+**Búsqueda (pospuesta hasta su punto del roadmap).** `nucleo-matcher` como buscador principal y `strsim` como respaldo cuando no haya resultados. `nucleo-matcher` tiene licencia MPL-2.0, que ya está permitida en `deny.toml`.
 
 ## Emparejamiento y envío
 

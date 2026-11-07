@@ -61,6 +61,7 @@ Resultado: tocas "Enviar a PC" en el celular, pones la huella y pegas la contras
 - [ ] Servidor en la PC: escucha solo en redes privadas, anuncio por mDNS, confirmación al emparejar y rechazo de dispositivos no emparejados.
 - [ ] Portapapeles: escribir con `arboard` excluido del historial y la nube, notificación, y borrado a los 30 s solo si sigue la misma contraseña.
 - [ ] Android: escanear el QR y guardar la llave privada del celular dentro de la bóveda.
+- [ ] Al restaurar un respaldo, regenerar la identidad del celular y pedir emparejar de nuevo (ver "Formato de la bóveda" en la especificación).
 - [ ] Android: enviar con huella obligatoria, buscando la PC por última IP, luego mDNS y luego IP manual.
 - [ ] Android: aviso si no se encuentra la PC, con la opción de copiar localmente.
 - [ ] Lista de dispositivos emparejados y revocación en ambas apps.
