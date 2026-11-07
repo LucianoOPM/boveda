@@ -23,7 +23,7 @@ Cada criterio (hexágono) cierra su etapa; no se empieza la siguiente hasta cump
 
 Resultado: el crate `vault-core` crea, abre y respalda una bóveda cifrada, probado de punta a punta sin ninguna interfaz.
 
-- [ ] Repositorio con workspace de Cargo, crate `vault-core` e integración continua que ejecute `cargo test`, `clippy`, `cargo audit` y `cargo deny`.
+- [x] Repositorio con workspace de Cargo, crate `vault-core` e integración continua que ejecute `cargo test`, `clippy`, `cargo audit` y `cargo deny`.
 - [ ] Llaves: Argon2id calibrado a unos 0.5 s, llave de bóveda de 256 bits, y funciones para cifrarla y descifrarla con la llave derivada.
 - [ ] Modelo de entrada con número de versión, separado en datos de búsqueda (servicio, URL, usuario, etiquetas) y secreto (contraseña, notas).
 - [ ] Cifrado por entrada con XChaCha20-Poly1305, el identificador como dato autenticado y `zeroize` para los secretos.
