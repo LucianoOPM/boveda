@@ -163,6 +163,19 @@ fn take_all<'a, T: serde::Deserialize<'a>>(bytes: &'a [u8]) -> Result<T> {
     }
 }
 
+/// Datos de búsqueda ya normalizados y validados, prestados de la entrada.
+///
+/// Validar sobre texto prestado garantiza que ninguna ruta de error deje
+/// copias del texto en memoria sin borrar: solo se reserva memoria cuando ya
+/// no queda nada que pueda fallar.
+struct SearchFieldsV1<'a> {
+    service: &'a str,
+    url: Option<&'a str>,
+    username: Option<&'a str>,
+    /// Solo punteros al texto de la entrada.
+    tags: Vec<&'a str>,
+}
+
 /// Recorta un campo opcional: vacío o solo espacios cuenta como ausente.
 ///
 /// Devuelve `Err(too_long)` si el valor recortado supera `max` bytes.
@@ -170,25 +183,32 @@ fn optional_field_v1(
     value: Option<&str>,
     max: usize,
     too_long: InvalidEntryField,
-) -> std::result::Result<Option<String>, InvalidEntryField> {
+) -> std::result::Result<Option<&str>, InvalidEntryField> {
     match value.map(str::trim) {
         None | Some("") => Ok(None),
         Some(v) if v.len() > max => Err(too_long),
-        // `to_owned` reserva exactamente la longitud del texto.
-        Some(v) => Ok(Some(v.to_owned())),
+        Some(v) => Ok(Some(v)),
     }
+}
+
+/// Compara dos etiquetas sin distinguir mayúsculas y sin reservar memoria
+/// (a diferencia de `to_lowercase`, que puede reasignar y dejar copias).
+fn same_tag_ignoring_case(a: &str, b: &str) -> bool {
+    a.chars()
+        .flat_map(char::to_lowercase)
+        .eq(b.chars().flat_map(char::to_lowercase))
 }
 
 /// Reglas de los datos de búsqueda en la versión de estructura 1.
 ///
 /// Las comparten `new()` y la decodificación de entradas v1: una versión
 /// nueva agrega su propia función sin tocar esta.
-fn build_search_data_v1(
-    service: &str,
-    url: Option<&str>,
-    username: Option<&str>,
-    tags: &[&str],
-) -> std::result::Result<SearchData, InvalidEntryField> {
+fn validate_search_v1<'a>(
+    service: &'a str,
+    url: Option<&'a str>,
+    username: Option<&'a str>,
+    tags: &[&'a str],
+) -> std::result::Result<SearchFieldsV1<'a>, InvalidEntryField> {
     let service = service.trim();
     if service.is_empty() {
         return Err(InvalidEntryField::ServiceEmpty);
@@ -204,10 +224,8 @@ fn build_search_data_v1(
     )?;
 
     // Duplicados sin distinguir mayúsculas: se conserva la primera forma
-    // escrita y el orden. Las claves en minúsculas también son datos del
-    // usuario, así que se borran al soltarse.
-    let mut seen: Vec<Zeroizing<String>> = Vec::new();
-    let mut kept: Vec<String> = Vec::new();
+    // escrita y el orden.
+    let mut kept: Vec<&'a str> = Vec::new();
     for tag in tags.iter().map(|t| t.trim()) {
         if tag.is_empty() {
             continue;
@@ -215,22 +233,39 @@ fn build_search_data_v1(
         if tag.len() > MAX_TAG_LEN {
             return Err(InvalidEntryField::TagTooLong);
         }
-        let key = Zeroizing::new(tag.to_lowercase());
-        if seen.contains(&key) {
+        if kept.iter().any(|k| same_tag_ignoring_case(k, tag)) {
             continue;
         }
         if kept.len() == MAX_TAGS {
             return Err(InvalidEntryField::TooManyTags);
         }
-        seen.push(key);
-        kept.push(tag.to_owned());
+        kept.push(tag);
     }
 
-    Ok(SearchData {
-        service: service.to_owned(),
+    Ok(SearchFieldsV1 {
+        service,
         url,
         username,
         tags: kept,
+    })
+}
+
+/// Valida con las reglas v1 y, solo si todo es válido, copia el texto.
+fn build_search_data_v1(
+    service: &str,
+    url: Option<&str>,
+    username: Option<&str>,
+    tags: &[&str],
+) -> std::result::Result<SearchData, InvalidEntryField> {
+    let fields = validate_search_v1(service, url, username, tags)?;
+    // `to_owned` reserva exactamente la longitud del texto. A partir de aquí
+    // nada falla: cada copia termina dentro de `SearchData`, que se borra al
+    // soltarse.
+    Ok(SearchData {
+        service: fields.service.to_owned(),
+        url: fields.url.map(str::to_owned),
+        username: fields.username.map(str::to_owned),
+        tags: fields.tags.into_iter().map(str::to_owned).collect(),
     })
 }
 

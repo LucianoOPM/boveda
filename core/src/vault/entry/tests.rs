@@ -542,3 +542,46 @@ mod props {
         }
     }
 }
+
+// --- Arreglos de la revisión final: sin copias antes de validar ---
+
+/// `inner` es un subslice de `outer` (mismo búfer, sin copia).
+fn borrows_from(outer: &str, inner: &str) -> bool {
+    let range = outer.as_bytes().as_ptr_range();
+    range.contains(&inner.as_ptr()) || inner.is_empty()
+}
+
+#[test]
+fn validation_borrows_inputs_without_copying() {
+    let service = " GitHub ";
+    let url = " https://github.com ";
+    let username = " alice ";
+    let tags = [" a ", "A", "b"];
+    let fields = validate_search_v1(service, Some(url), Some(username), &tags).unwrap();
+    assert!(borrows_from(service, fields.service));
+    assert!(borrows_from(url, fields.url.unwrap()));
+    assert!(borrows_from(username, fields.username.unwrap()));
+    assert_eq!(fields.tags, ["a", "b"]);
+    assert!(borrows_from(tags[0], fields.tags[0]));
+    assert!(borrows_from(tags[2], fields.tags[1]));
+}
+
+#[test]
+fn validation_errors_after_earlier_fields_are_reported() {
+    // La URL y el usuario son válidos; la etiqueta posterior falla.
+    let long_tag = "t".repeat(MAX_TAG_LEN + 1);
+    assert_eq!(
+        validate_search_v1("s", Some("u"), Some("n"), &[&long_tag]).err(),
+        Some(InvalidEntryField::TagTooLong)
+    );
+}
+
+#[test]
+fn same_tag_ignoring_case_handles_length_changes() {
+    // 'Ⱥ' ocupa 2 bytes y su minúscula 'ⱥ', 3.
+    assert!(same_tag_ignoring_case("Ⱥ", "ⱥ"));
+    assert!(same_tag_ignoring_case("Trabajo", "TRABAJO"));
+    assert!(!same_tag_ignoring_case("Médico", "Medico"));
+    assert!(!same_tag_ignoring_case("ab", "abc"));
+    assert_eq!(tags_of(&["Ⱥx", "ⱥX"]).unwrap(), ["Ⱥx"]);
+}
