@@ -1,0 +1,23 @@
+# Workspace de Bóveda.
+# Los miembros se agregan conforme existen (ver ARCHITECTURE.md):
+#   etapa 1: "core"
+#   etapa 2: "mobile/rust"        (después de flutter_rust_bridge_codegen integrate)
+#   etapa 3: "desktop/src-tauri"  (después de crear el proyecto de Tauri)
+[workspace]
+resolver = "3"
+members = ["core"]
+
+[workspace.package]
+edition = "2024"
+rust-version = "1.85"
+publish = false
+
+# Argon2 con 64 MiB es muy lento sin optimizar; optimizar las dependencias
+# mantiene las pruebas en modo debug en tiempos razonables.
+[profile.dev.package."*"]
+opt-level = 2
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true

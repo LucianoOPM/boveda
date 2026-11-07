@@ -1,0 +1,69 @@
+# =====================================================================
+# Bóveda: .gitignore de la raíz
+# Flutter (mobile/) y Tauri (desktop/) generan además su propio
+# .gitignore; las reglas de aquí cubren lo común y sirven de respaldo.
+# =====================================================================
+
+# --- Secretos: nunca subir bóvedas, respaldos ni llaves reales -------
+# Las bóvedas de ejemplo de core/tests/fixtures/ sí se suben (ver abajo).
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+*.vault
+*.backup
+*.bak
+*.key
+*.pem
+*.p12
+*.pfx
+*.jks
+*.keystore
+key.properties
+.env
+.env.*
+!core/tests/fixtures/
+!core/tests/fixtures/**
+
+# --- Rust ------------------------------------------------------------
+# Un solo target/ para todo el workspace (incluye la compilación de Tauri).
+/target/
+**/*.rs.bk
+*.pdb
+*.profraw
+*.profdata
+
+# --- Flutter / Dart (mobile/) ----------------------------------------
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+.pub-cache/
+.pub/
+build/
+local.properties
+.gradle/
+.cxx/
+.externalNativeBuild/
+*.apk
+*.aab
+
+# --- Node / Tauri (desktop/) -----------------------------------------
+node_modules/
+dist/
+desktop/src-tauri/gen/schemas/
+
+# --- Claude Code -----------------------------------------------------
+# .claude/ se versiona (settings, skills, rules); lo local, no.
+.claude/settings.local.json
+
+# --- Editores y sistema ----------------------------------------------
+.idea/
+.vscode/
+*.iml
+*.swp
+*.log
+Thumbs.db
+desktop.ini
+.DS_Store

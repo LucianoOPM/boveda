@@ -1,0 +1,15 @@
+# Finales de línea LF en el repositorio; los scripts de Windows conservan CRLF.
+* text=auto eol=lf
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.ps1 text eol=crlf
+
+# Bóvedas de ejemplo: binarias, sin conversión de ningún tipo.
+core/tests/fixtures/** binary
+
+*.png binary
+*.ico binary
+*.icns binary
+*.jpg binary
+*.webp binary
+*.jar binary
