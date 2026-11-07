@@ -56,24 +56,36 @@ impl VaultHeader {
     /// Devuelve también la llave de bóveda en claro para usarla de inmediato.
     pub(crate) fn create(password: &SecretString, params: KdfParams) -> Result<(Self, VaultKey)> {
         params.validate()?;
-        let salt = kdf::generate_salt()?;
         let vault_key = keys::generate_vault_key()?;
+        let header = Self::rekey(&vault_key, password, params)?;
+        Ok((header, vault_key))
+    }
+
+    /// Crea una cabecera para una llave de bóveda existente, con sal y nonce
+    /// nuevos. La usa el cambio de contraseña maestra: las entradas no se
+    /// vuelven a cifrar.
+    pub(crate) fn rekey(
+        vault_key: &VaultKey,
+        password: &SecretString,
+        params: KdfParams,
+    ) -> Result<Self> {
+        params.validate()?;
+        let salt = kdf::generate_salt()?;
 
         // La llave cifrada no forma parte del dato autenticado, así que se
         // puede calcular antes de tenerla.
         let associated_data =
             encode_associated_data(FORMAT_VERSION, KdfAlgorithm::Argon2idV13, &params, &salt);
         let encrypted_key =
-            keys::seal_vault_key(&vault_key, password, &salt, &params, &associated_data)?;
+            keys::seal_vault_key(vault_key, password, &salt, &params, &associated_data)?;
 
-        let header = Self {
+        Ok(Self {
             format_version: FORMAT_VERSION,
             algorithm: KdfAlgorithm::Argon2idV13,
             params,
             salt,
             encrypted_key,
-        };
-        Ok((header, vault_key))
+        })
     }
 
     /// Reconstruye una cabecera leída del almacenamiento y valida la versión

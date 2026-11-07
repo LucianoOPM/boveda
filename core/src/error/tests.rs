@@ -2,14 +2,13 @@
 
 use super::*;
 
-const ALL_STORAGE_KINDS: [StorageErrorKind; 8] = [
+const ALL_STORAGE_KINDS: [StorageErrorKind; 7] = [
     StorageErrorKind::Io,
     StorageErrorKind::Busy,
     StorageErrorKind::Corrupt,
     StorageErrorKind::ReadOnly,
     StorageErrorKind::HotJournal,
     StorageErrorKind::JournalMode,
-    StorageErrorKind::AlreadyExists,
     StorageErrorKind::Other,
 ];
 
@@ -34,4 +33,19 @@ fn every_storage_kind_has_a_distinct_message() {
             "mensaje repetido: {message}"
         );
     }
+}
+
+#[test]
+fn already_exists_message_is_fixed() {
+    assert_eq!(Error::AlreadyExists.to_string(), "el archivo ya existe");
+}
+
+#[test]
+fn new_vault_error_messages_are_fixed() {
+    assert_eq!(Error::Locked.to_string(), "la bóveda está bloqueada");
+    assert_eq!(
+        Error::AlreadyUnlocked.to_string(),
+        "la bóveda ya está desbloqueada"
+    );
+    assert_eq!(Error::Clock.to_string(), "la hora del sistema no es válida");
 }

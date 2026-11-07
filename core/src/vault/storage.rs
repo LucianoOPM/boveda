@@ -63,7 +63,7 @@ pub(crate) struct Storage {
 impl Storage {
     /// Crea un archivo de bóveda nuevo con su esquema y su cabecera.
     ///
-    /// Falla con `Storage(AlreadyExists)` si la ruta ya existe, sin tocarla.
+    /// Falla con `Error::AlreadyExists` si la ruta ya existe, sin tocarla.
     /// Si algo falla después de crear el archivo, lo borra.
     pub(crate) fn create(path: &Path, header: &VaultHeader) -> Result<Self> {
         // `create_new` falla de forma atómica si la ruta ya existe.
@@ -72,7 +72,7 @@ impl Storage {
             .create_new(true)
             .open(path)
             .map_err(|e| match e.kind() {
-                io::ErrorKind::AlreadyExists => Error::Storage(StorageErrorKind::AlreadyExists),
+                io::ErrorKind::AlreadyExists => Error::AlreadyExists,
                 _ => Error::Storage(StorageErrorKind::Io),
             })?;
 
@@ -151,6 +151,10 @@ impl Storage {
     /// No fija pragmas (cambiar `journal_mode` es escribir): solo comprueba
     /// que el modo sea `delete`. Un archivo en WAL o con un `-journal`
     /// caliente se rechaza y nunca se repara.
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "lo usará la importación de respaldos")
+    )]
     pub(crate) fn open_read_only(path: &Path) -> Result<Self> {
         // Leer una base en WAL, aun en solo lectura, crea los archivos `-wal`
         // y `-shm`. Por eso el modo se revisa en la cabecera del archivo
@@ -178,6 +182,10 @@ impl Storage {
     }
 
     /// Cierra la conexión sin perder un error al cerrar.
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "lo usará la importación de respaldos")
+    )]
     pub(crate) fn close(self) -> Result<()> {
         self.conn.close().map_err(|(_, e)| map_sqlite_error(e))
     }
@@ -375,6 +383,14 @@ impl Storage {
 
     /// Ejecuta una escritura en su propia transacción `IMMEDIATE` y devuelve
     /// cuántas filas cambió.
+    /// Solo para pruebas: hace que toda escritura posterior falle.
+    #[cfg(test)]
+    pub(crate) fn deny_writes_for_test(&self) {
+        self.conn
+            .pragma_update(None, "query_only", true)
+            .expect("query_only");
+    }
+
     fn write(&mut self, sql: &str, params: impl rusqlite::Params) -> Result<usize> {
         let tx = self
             .conn

@@ -271,6 +271,25 @@ fn secret_does_not_implement_display() {
     const { assert!(!<Probe<SearchData>>::IMPLS_DISPLAY) };
 }
 
+// Mismo truco para `Zeroize`: `SearchData` es público y `zeroize()` lo
+// dejaría con el servicio vacío, saltándose la validación de `new()`.
+trait NoZeroize {
+    const IMPLS_ZEROIZE: bool = false;
+}
+impl<T: ?Sized> NoZeroize for T {}
+struct ZeroizeProbe<T: ?Sized>(core::marker::PhantomData<T>);
+#[allow(dead_code)]
+impl<T: ?Sized + zeroize::Zeroize> ZeroizeProbe<T> {
+    const IMPLS_ZEROIZE: bool = true;
+}
+
+#[test]
+fn search_data_does_not_implement_zeroize() {
+    // Control: el truco detecta un tipo que sí implementa `Zeroize`.
+    const { assert!(<ZeroizeProbe<String>>::IMPLS_ZEROIZE) };
+    const { assert!(!<ZeroizeProbe<SearchData>>::IMPLS_ZEROIZE) };
+}
+
 #[test]
 fn secret_zeroizes_on_drop() {
     assert_zeroize_on_drop::<Secret>();
