@@ -57,6 +57,18 @@ pub enum Error {
     #[error("error de almacenamiento: {0}")]
     Storage(StorageErrorKind),
 
+    /// La bóveda está bloqueada: hay que desbloquearla antes.
+    #[error("la bóveda está bloqueada")]
+    Locked,
+
+    /// `unlock` sobre una bóveda ya desbloqueada.
+    #[error("la bóveda ya está desbloqueada")]
+    AlreadyUnlocked,
+
+    /// El reloj del sistema marca una fecha anterior a 1970 o fuera de rango.
+    #[error("la hora del sistema no es válida")]
+    Clock,
+
     /// `create` sobre una ruta que ya existe. No incluye la ruta.
     #[error("el archivo ya existe")]
     AlreadyExists,
