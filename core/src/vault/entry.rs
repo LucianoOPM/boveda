@@ -12,6 +12,8 @@ use zeroize::{Zeroize, ZeroizeOnDrop, Zeroizing};
 
 use crate::error::{Error, InvalidEntryField, Result};
 
+mod flavor;
+
 // Límites de la v1, en bytes UTF-8 sobre el valor ya normalizado.
 pub(crate) const MAX_SERVICE_LEN: usize = 256;
 pub(crate) const MAX_URL_LEN: usize = 2048;

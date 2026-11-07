@@ -1,5 +1,6 @@
 //! Pruebas unitarias de `vault/entry.rs`.
 
+use super::flavor::ZeroizingVec;
 use super::*;
 
 // --- Identificador ---
@@ -273,4 +274,31 @@ fn secret_does_not_implement_display() {
 #[test]
 fn secret_zeroizes_on_drop() {
     assert_zeroize_on_drop::<Secret>();
+}
+
+// --- Flavor de serialización ---
+
+#[test]
+fn flavor_keeps_content_across_growth() {
+    use postcard::ser_flavors::Flavor;
+
+    let expected: Vec<u8> = (0..115u8).collect();
+    let mut flavor = ZeroizingVec::with_capacity(1);
+    let mut offset = 0;
+    for len in [1, 3, 10, 100] {
+        flavor.try_extend(&expected[offset..offset + len]).unwrap();
+        offset += len;
+    }
+    flavor.try_push(expected[offset]).unwrap();
+    assert_eq!(flavor.finalize().unwrap().as_slice(), expected.as_slice());
+}
+
+#[test]
+fn flavor_serializes_like_to_allocvec() {
+    let value = ("abc", Some(7u32), [1u8, 2]);
+    let ours = postcard::serialize_with_flavor(&value, ZeroizingVec::with_capacity(1)).unwrap();
+    assert_eq!(
+        ours.as_slice(),
+        postcard::to_allocvec(&value).unwrap().as_slice()
+    );
 }
