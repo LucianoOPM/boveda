@@ -614,3 +614,91 @@ fn delete_corrupt_entry() {
     vault.delete(b).unwrap();
     assert!(relock(&mut vault).corrupt.is_empty());
 }
+
+// --- change_master_password --------------------------------------------
+
+/// La fila de `header` completa: sal, nonce y llave cifrada.
+fn header_row(path: &Path) -> (Vec<u8>, Vec<u8>, Vec<u8>) {
+    raw(path)
+        .query_row(
+            "SELECT salt, key_nonce, encrypted_key FROM header WHERE id = 1",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        )
+        .unwrap()
+}
+
+#[test]
+fn change_password_keeps_entries() {
+    let (_dir, path, mut vault) = new_vault();
+    let a = add_sample(&mut vault, "a");
+    let b = add_sample(&mut vault, "b");
+    let rows_before = (row_bytes(&path, a), row_bytes(&path, b));
+    let before = snapshot(&vault);
+
+    vault
+        .change_master_password_with_params(
+            &password("correcta"),
+            &password("nueva"),
+            KdfParams::MIN,
+        )
+        .unwrap();
+    vault.lock();
+
+    assert_eq!(
+        vault.unlock(&password("correcta")).err(),
+        Some(Error::WrongPassword)
+    );
+    vault.unlock(&password("nueva")).unwrap();
+    assert_eq!(snapshot(&vault), before);
+    assert_eq!((row_bytes(&path, a), row_bytes(&path, b)), rows_before);
+}
+
+#[test]
+fn change_password_wrong_current() {
+    let (_dir, path, mut vault) = new_vault();
+    let before = header_row(&path);
+    assert_eq!(
+        vault
+            .change_master_password_with_params(
+                &password("incorrecta"),
+                &password("nueva"),
+                KdfParams::MIN,
+            )
+            .err(),
+        Some(Error::WrongPassword)
+    );
+    assert_eq!(header_row(&path), before);
+}
+
+#[test]
+fn change_password_locked() {
+    let (_dir, _path, mut vault) = new_vault();
+    vault.lock();
+    assert_eq!(
+        vault
+            .change_master_password_with_params(
+                &password("correcta"),
+                &password("nueva"),
+                KdfParams::MIN,
+            )
+            .err(),
+        Some(Error::Locked)
+    );
+}
+
+#[test]
+fn change_password_to_same() {
+    let (_dir, path, mut vault) = new_vault();
+    let before = header_row(&path);
+    vault
+        .change_master_password_with_params(
+            &password("correcta"),
+            &password("correcta"),
+            KdfParams::MIN,
+        )
+        .unwrap();
+    assert_ne!(header_row(&path).0, before.0);
+    vault.lock();
+    assert!(vault.unlock(&password("correcta")).is_ok());
+}

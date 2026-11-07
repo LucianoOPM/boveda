@@ -167,3 +167,18 @@ fn from_parts_rejects_unknown_version_algorithm_or_params() {
         Some(Error::InvalidKdfParams)
     );
 }
+
+#[test]
+fn rekey_keeps_vault_key() {
+    let (old, vault_key) = new_header();
+    let new = VaultHeader::rekey(&vault_key, &password("nueva"), KdfParams::MIN).unwrap();
+
+    let unlocked = new.unlock(&password("nueva")).unwrap();
+    assert_eq!(unlocked.expose_secret(), vault_key.expose_secret());
+    assert!(matches!(
+        new.unlock(&password("correcta")),
+        Err(Error::WrongPassword)
+    ));
+    assert_ne!(new.salt(), old.salt());
+    assert_ne!(new.encrypted_key().nonce, old.encrypted_key().nonce);
+}

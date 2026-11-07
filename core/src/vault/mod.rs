@@ -267,6 +267,49 @@ impl Vault {
         Ok(secret)
     }
 
+    /// Cambia la contraseña maestra: verifica `current`, calibra Argon2id y
+    /// vuelve a cifrar solo la llave de bóveda, con sal y nonce nuevos.
+    ///
+    /// No toca la llave de bóveda ni las entradas. Con `current` incorrecta
+    /// devuelve [`Error::WrongPassword`] sin calibrar ni cambiar nada.
+    // Temporal: se quita al hacer público el módulo `vault`.
+    #[cfg_attr(test, allow(dead_code))]
+    pub fn change_master_password(
+        &mut self,
+        current: &SecretString,
+        new: &SecretString,
+    ) -> Result<()> {
+        self.verify_current(current)?;
+        let params = kdf::calibrate()?;
+        self.rekey_with_params(new, params)
+    }
+
+    /// Como [`Vault::change_master_password`], con parámetros fijos.
+    pub(crate) fn change_master_password_with_params(
+        &mut self,
+        current: &SecretString,
+        new: &SecretString,
+        params: KdfParams,
+    ) -> Result<()> {
+        self.verify_current(current)?;
+        self.rekey_with_params(new, params)
+    }
+
+    /// Comprueba la contraseña actual con la cabecera guardada. La llave
+    /// obtenida se suelta (y se borra) de inmediato.
+    fn verify_current(&self, current: &SecretString) -> Result<()> {
+        self.unlocked()?;
+        self.storage.read_header()?.unlock(current)?;
+        Ok(())
+    }
+
+    /// Vuelve a cifrar la llave de bóveda en memoria y reemplaza la cabecera
+    /// en una sola transacción.
+    fn rekey_with_params(&mut self, new: &SecretString, params: KdfParams) -> Result<()> {
+        let header = VaultHeader::rekey(&self.unlocked()?.key, new, params)?;
+        self.storage.replace_header(&header)
+    }
+
     fn unlocked(&self) -> Result<&Unlocked> {
         self.unlocked.as_ref().ok_or(Error::Locked)
     }
