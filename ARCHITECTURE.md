@@ -127,7 +127,7 @@ Sin dependencias de interfaz ni de plataforma.
 | Núcleo en Rust compartido | La parte delicada se escribe y prueba una sola vez |
 | Crate puente separado | Los detalles de flutter_rust_bridge no contaminan el núcleo |
 | Dos llaves (maestra y de bóveda) | Cambiar la contraseña maestra y usar huella sin recifrar entradas |
-| Borrado de memoria garantizado solo dentro de `vault-core` | El núcleo guarda secretos y texto plano en `SecretString`/`Zeroizing` y evita reasignaciones que dejen copias; fuera del núcleo es de mejor esfuerzo, porque Dart no permite borrar sus cadenas |
+| Borrado de memoria garantizado solo dentro de `vault-core` | El núcleo guarda secretos y texto plano en `SecretString`/`Zeroizing` y evita reasignaciones que dejen copias; fuera del núcleo es de mejor esfuerzo, porque Dart no permite borrar sus cadenas. Excepción documentada: las copias internas de `nucleo-matcher` y `strsim` durante la búsqueda (datos de búsqueda, no secretos) |
 | Entrada cifrada en dos partes | Búsqueda rápida sin exponer contraseñas en memoria |
 | Fecha de modificación y marca de eliminada | Preparan la sincronización futura sin migrar datos |
 | Noise (`snow`) | Protocolo estudiado para el intercambio de llaves y el canal cifrado |
