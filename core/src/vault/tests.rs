@@ -4,11 +4,12 @@ use std::fs;
 use std::path::PathBuf;
 use std::time::{Duration, UNIX_EPOCH};
 
-use secrecy::{ExposeSecret, SecretString};
+use secrecy::ExposeSecret;
 use zeroize::ZeroizeOnDrop;
 
 use super::*;
 use crate::crypto::kdf::KdfParams;
+use crate::vault::test_support::*;
 
 #[test]
 fn clock_before_epoch_is_an_error() {
@@ -33,43 +34,10 @@ fn now_is_after_2026() {
 
 // --- Utilitarios ------------------------------------------------------
 
-fn password(text: &str) -> SecretString {
-    SecretString::from(text)
-}
-
-/// Directorio temporal (debe vivir toda la prueba) y una ruta que no existe.
-fn temp_path() -> (tempfile::TempDir, PathBuf) {
-    let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("boveda.db");
-    (dir, path)
-}
-
 fn new_vault() -> (tempfile::TempDir, PathBuf, Vault) {
     let (dir, path) = temp_path();
     let vault = Vault::create_with_params(&path, &password("correcta"), KdfParams::MIN).unwrap();
     (dir, path, vault)
-}
-
-/// Datos de búsqueda y secreto de ejemplo; la contraseña es `clave-{service}`.
-fn sample(service: &str) -> (SearchData, Secret) {
-    let search = SearchData::new(
-        service,
-        Some(&format!("https://{service}.example")),
-        Some("usuario@example.com"),
-        &["trabajo", "correo"],
-    )
-    .unwrap();
-    let secret = Secret::new(
-        password(&format!("clave-{service}")),
-        Some(password("notas de prueba")),
-    )
-    .unwrap();
-    (search, secret)
-}
-
-/// Conexión directa, para leer y alterar filas.
-fn raw(path: &Path) -> rusqlite::Connection {
-    rusqlite::Connection::open(path).unwrap()
 }
 
 /// Servicio, URL, usuario y etiquetas de cada entrada, por id.
@@ -248,24 +216,6 @@ fn unlock_storage_failure_keeps_locked() {
 }
 
 // --- edit, delete y reveal ---------------------------------------------
-
-/// Invierte un bit dentro del texto cifrado de `column` (`search` o `secret`).
-fn tamper(path: &Path, id: EntryId, column: &str) {
-    let conn = raw(path);
-    let mut blob: Vec<u8> = conn
-        .query_row(
-            &format!("SELECT {column} FROM entries WHERE id = ?1"),
-            [id.as_bytes().as_slice()],
-            |r| r.get(0),
-        )
-        .unwrap();
-    blob[30] ^= 1;
-    conn.execute(
-        &format!("UPDATE entries SET {column} = ?1 WHERE id = ?2"),
-        rusqlite::params![blob, id.as_bytes().as_slice()],
-    )
-    .unwrap();
-}
 
 /// `search`, `secret`, `modified_at` y `last_used_at` de la fila.
 type RowBytes = (Option<Vec<u8>>, Option<Vec<u8>>, i64, Option<i64>);

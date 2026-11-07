@@ -1,0 +1,123 @@
+//! Ayudantes compartidos por las pruebas unitarias de `vault` (`storage`,
+//! la API `Vault` y `backup`). Solo existe con `cfg(test)`.
+
+use std::fs;
+use std::path::{Path, PathBuf};
+
+use secrecy::SecretString;
+
+use super::entry::{EntryId, SearchData, Secret};
+
+pub(crate) fn password(text: &str) -> SecretString {
+    SecretString::from(text)
+}
+
+/// Directorio temporal (debe vivir toda la prueba) y una ruta que no existe.
+pub(crate) fn temp_path() -> (tempfile::TempDir, PathBuf) {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("boveda.db");
+    (dir, path)
+}
+
+/// Conexión directa, para leer pragmas y escribir o alterar filas.
+pub(crate) fn raw(path: &Path) -> rusqlite::Connection {
+    rusqlite::Connection::open(path).unwrap()
+}
+
+/// Ruta con un sufijo agregado al nombre del archivo (`-journal`, `-wal`...).
+pub(crate) fn sibling(path: &Path, suffix: &str) -> PathBuf {
+    let mut name = path.as_os_str().to_owned();
+    name.push(suffix);
+    PathBuf::from(name)
+}
+
+pub(crate) fn contains(haystack: &[u8], needle: &[u8]) -> bool {
+    haystack.windows(needle.len()).any(|w| w == needle)
+}
+
+/// Datos de búsqueda y secreto de ejemplo; la contraseña es `clave-{service}`.
+pub(crate) fn sample(service: &str) -> (SearchData, Secret) {
+    let search = SearchData::new(
+        service,
+        Some(&format!("https://{service}.example")),
+        Some("usuario@example.com"),
+        &["trabajo", "correo"],
+    )
+    .unwrap();
+    let secret = Secret::new(
+        password(&format!("clave-{service}")),
+        Some(password("notas de prueba")),
+    )
+    .unwrap();
+    (search, secret)
+}
+
+/// Invierte un bit dentro del texto cifrado de `column` (`search` o `secret`).
+pub(crate) fn tamper(path: &Path, id: EntryId, column: &str) {
+    let conn = raw(path);
+    let mut blob: Vec<u8> = conn
+        .query_row(
+            &format!("SELECT {column} FROM entries WHERE id = ?1"),
+            [id.as_bytes().as_slice()],
+            |r| r.get(0),
+        )
+        .unwrap();
+    blob[30] ^= 1;
+    conn.execute(
+        &format!("UPDATE entries SET {column} = ?1 WHERE id = ?2"),
+        rusqlite::params![blob, id.as_bytes().as_slice()],
+    )
+    .unwrap();
+}
+
+/// Copia `src` a `dst` en mitad de una transacción que ya escribió páginas
+/// en el archivo, junto con su `-journal`: la copia queda con un diario
+/// caliente, como tras un corte de energía.
+pub(crate) fn make_hot_journal_copy(src: &Path, dst: &Path) {
+    let conn = raw(src);
+    conn.pragma_update(None, "cache_size", 1).unwrap();
+    conn.execute_batch("BEGIN IMMEDIATE").unwrap();
+    let part = vec![0xAB_u8; 4096];
+    for i in 0..200_u32 {
+        let mut id = [0_u8; 16];
+        id[..4].copy_from_slice(&i.to_le_bytes());
+        conn.execute(
+            "INSERT INTO entries (id, entry_schema_version, search, secret, modified_at) \
+             VALUES (?1, 1, ?2, ?2, 0)",
+            rusqlite::params![id.as_slice(), part.as_slice()],
+        )
+        .unwrap();
+    }
+    fs::copy(src, dst).unwrap();
+    fs::copy(sibling(src, "-journal"), sibling(dst, "-journal")).unwrap();
+    conn.execute_batch("ROLLBACK").unwrap();
+    drop(conn);
+
+    let journal = fs::metadata(sibling(dst, "-journal")).unwrap();
+    assert!(journal.len() > 512, "el diario copiado no está caliente");
+}
+
+/// Daña la página raíz de `entries`: llena sus 8 primeros bytes con `0xFF`.
+/// La cabecera (otra página) sigue legible.
+pub(crate) fn damage_entries_root_page(path: &Path) {
+    let (page_size, root_page): (i64, i64) = {
+        let conn = raw(path);
+        let page_size = conn
+            .pragma_query_value(None, "page_size", |row| row.get(0))
+            .unwrap();
+        let root_page = conn
+            .query_row(
+                "SELECT rootpage FROM sqlite_schema WHERE name = 'entries'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        (page_size, root_page)
+    };
+    assert!(root_page > 1);
+
+    let mut bytes = fs::read(path).unwrap();
+    let offset = usize::try_from((root_page - 1) * page_size).unwrap();
+    bytes[offset..offset + 8].fill(0xFF);
+    fs::write(path, bytes).unwrap();
+}

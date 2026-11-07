@@ -18,6 +18,8 @@ use crate::crypto::keys::VaultKey;
 pub(crate) mod entry;
 pub(crate) mod header;
 pub(crate) mod storage;
+#[cfg(test)]
+pub(crate) mod test_support;
 
 pub use crate::error::{Error, InvalidEntryField, Result, StorageErrorKind};
 use entry::sealed::SealedEntry;
