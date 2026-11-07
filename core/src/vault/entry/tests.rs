@@ -1,6 +1,6 @@
 //! Pruebas unitarias de `vault/entry.rs`.
 
-use super::flavor::ZeroizingVec;
+use super::raw::{RawSearchDataV1, RawSecretV1};
 use super::*;
 
 // --- Identificador ---
@@ -300,5 +300,161 @@ fn flavor_serializes_like_to_allocvec() {
     assert_eq!(
         ours.as_slice(),
         postcard::to_allocvec(&value).unwrap().as_slice()
+    );
+}
+
+// --- Serialización con versión de estructura ---
+
+fn full_search_data() -> SearchData {
+    SearchData::new(
+        "Banco Ñandú",
+        Some("https://ejemplo.mx"),
+        Some("álvaro"),
+        &["finanzas", "日本"],
+    )
+    .unwrap()
+}
+
+#[test]
+fn search_data_v1_bytes_are_fixed() {
+    let data = SearchData::new("a", None, Some("b"), &["x"]).unwrap();
+    assert_eq!(
+        data.encode().unwrap().as_slice(),
+        [0x01, 0x61, 0x00, 0x01, 0x01, 0x62, 0x01, 0x01, 0x78]
+    );
+}
+
+#[test]
+fn secret_v1_bytes_are_fixed() {
+    assert_eq!(
+        secret("p", None).unwrap().encode().unwrap().as_slice(),
+        [0x01, 0x70, 0x00]
+    );
+}
+
+#[test]
+fn search_data_round_trips() {
+    let data = full_search_data();
+    let bytes = data.encode().unwrap();
+    assert_eq!(
+        SearchData::decode(ENTRY_SCHEMA_VERSION, &bytes).unwrap(),
+        data
+    );
+}
+
+#[test]
+fn secret_round_trips() {
+    let original = secret("contraseña segura", Some("PIN: 1234\nañadido")).unwrap();
+    let bytes = original.encode().unwrap();
+    let decoded = Secret::decode(ENTRY_SCHEMA_VERSION, &bytes).unwrap();
+    assert_eq!(
+        decoded.password().expose_secret(),
+        original.password().expose_secret()
+    );
+    assert_eq!(
+        decoded.notes().unwrap().expose_secret(),
+        original.notes().unwrap().expose_secret()
+    );
+}
+
+#[test]
+fn unknown_schema_version_is_corrupt() {
+    let data = full_search_data().encode().unwrap();
+    let sec = secret("p", None).unwrap().encode().unwrap();
+    for version in [0, 2, u16::MAX] {
+        assert_eq!(
+            SearchData::decode(version, &data).unwrap_err(),
+            Error::CorruptEntry
+        );
+        assert_eq!(
+            Secret::decode(version, &sec).unwrap_err(),
+            Error::CorruptEntry
+        );
+    }
+}
+
+#[test]
+fn trailing_bytes_are_corrupt() {
+    let mut data = full_search_data().encode().unwrap();
+    data.push(0x00);
+    assert_eq!(
+        SearchData::decode(ENTRY_SCHEMA_VERSION, &data).unwrap_err(),
+        Error::CorruptEntry
+    );
+    let mut sec = secret("p", None).unwrap().encode().unwrap();
+    sec.push(0x00);
+    assert_eq!(
+        Secret::decode(ENTRY_SCHEMA_VERSION, &sec).unwrap_err(),
+        Error::CorruptEntry
+    );
+}
+
+#[test]
+fn truncated_bytes_are_corrupt() {
+    let data = full_search_data().encode().unwrap();
+    assert_eq!(
+        SearchData::decode(ENTRY_SCHEMA_VERSION, &data[..data.len() - 1]).unwrap_err(),
+        Error::CorruptEntry
+    );
+    let sec = secret("p", Some("n")).unwrap().encode().unwrap();
+    assert_eq!(
+        Secret::decode(ENTRY_SCHEMA_VERSION, &sec[..sec.len() - 1]).unwrap_err(),
+        Error::CorruptEntry
+    );
+}
+
+fn raw_search(service: &str, url: Option<&str>, tags: Vec<&str>) -> Vec<u8> {
+    postcard::to_allocvec(&RawSearchDataV1 {
+        service,
+        url,
+        username: None,
+        tags,
+    })
+    .unwrap()
+}
+
+#[test]
+fn rule_violating_bytes_do_not_produce_entry() {
+    let blank = raw_search("  ", None, vec![]);
+    assert_eq!(
+        SearchData::decode(ENTRY_SCHEMA_VERSION, &blank).unwrap_err(),
+        Error::CorruptEntry
+    );
+
+    let many = distinct_tags(MAX_TAGS + 1);
+    let many = raw_search("s", None, many.iter().map(String::as_str).collect());
+    assert_eq!(
+        SearchData::decode(ENTRY_SCHEMA_VERSION, &many).unwrap_err(),
+        Error::CorruptEntry
+    );
+
+    let long = "p".repeat(MAX_PASSWORD_LEN + 1);
+    let long = postcard::to_allocvec(&RawSecretV1 {
+        password: &long,
+        notes: None,
+    })
+    .unwrap();
+    assert_eq!(
+        Secret::decode(ENTRY_SCHEMA_VERSION, &long).unwrap_err(),
+        Error::CorruptEntry
+    );
+}
+
+#[test]
+fn decode_normalizes_like_new() {
+    let bytes = raw_search(" GitHub ", Some(" "), vec!["a", "A"]);
+    let data = SearchData::decode(ENTRY_SCHEMA_VERSION, &bytes).unwrap();
+    assert_eq!(data.service(), "GitHub");
+    assert_eq!(data.url(), None);
+    assert_eq!(data.tags(), ["a"]);
+}
+
+#[test]
+fn huge_length_prefix_is_corrupt() {
+    // servicio "a", sin URL, sin usuario, número de etiquetas = u32::MAX.
+    let bytes = [0x01, 0x61, 0x00, 0x00, 0xFF, 0xFF, 0xFF, 0xFF, 0x0F];
+    assert_eq!(
+        SearchData::decode(ENTRY_SCHEMA_VERSION, &bytes).unwrap_err(),
+        Error::CorruptEntry
     );
 }

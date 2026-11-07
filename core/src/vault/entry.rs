@@ -13,6 +13,19 @@ use zeroize::{Zeroize, ZeroizeOnDrop, Zeroizing};
 use crate::error::{Error, InvalidEntryField, Result};
 
 mod flavor;
+mod raw;
+
+use flavor::ZeroizingVec;
+use raw::{RawSearchDataV1, RawSecretV1};
+
+/// Versión de estructura con la que se escriben las entradas nuevas.
+///
+/// Se guarda en claro junto a cada entrada; no confundir con la versión de
+/// formato de la cabecera (`format_version`).
+pub(crate) const ENTRY_SCHEMA_VERSION: u16 = 1;
+
+/// Capacidad inicial del búfer de serialización; crece si hace falta.
+const ENCODE_INITIAL_CAPACITY: usize = 256;
 
 // Límites de la v1, en bytes UTF-8 sobre el valor ya normalizado.
 pub(crate) const MAX_SERVICE_LEN: usize = 256;
@@ -75,6 +88,34 @@ impl SearchData {
         build_search_data_v1(service, url, username, tags).map_err(Error::InvalidEntry)
     }
 
+    /// Serializa con la versión de estructura actual.
+    pub(crate) fn encode(&self) -> Result<Zeroizing<Vec<u8>>> {
+        let raw = RawSearchDataV1 {
+            service: &self.service,
+            url: self.url.as_deref(),
+            username: self.username.as_deref(),
+            // Solo punteros al texto: no es una copia de los datos.
+            tags: self.tags.iter().map(String::as_str).collect(),
+        };
+        encode_with_zeroizing(&raw)
+    }
+
+    /// Deserializa unos bytes escritos con `entry_schema_version`, aplicando
+    /// las reglas de esa versión.
+    ///
+    /// Una versión desconocida, bytes mal formados o sobrantes, o un contenido
+    /// que viola las reglas devuelven [`Error::CorruptEntry`].
+    pub(crate) fn decode(entry_schema_version: u16, bytes: &[u8]) -> Result<Self> {
+        match entry_schema_version {
+            1 => {
+                let raw: RawSearchDataV1 = take_all(bytes)?;
+                build_search_data_v1(raw.service, raw.url, raw.username, &raw.tags)
+                    .map_err(|_| Error::CorruptEntry)
+            }
+            _ => Err(Error::CorruptEntry),
+        }
+    }
+
     pub(crate) fn service(&self) -> &str {
         &self.service
     }
@@ -102,6 +143,23 @@ impl fmt::Debug for SearchData {
             .field("username", &self.username.as_ref().map(|_| HIDDEN))
             .field("tags", &self.tags.len())
             .finish()
+    }
+}
+
+/// Serializa con postcard dentro de un búfer que se borra al crecer y al
+/// soltarse.
+fn encode_with_zeroizing<T: serde::Serialize>(raw: &T) -> Result<Zeroizing<Vec<u8>>> {
+    // Solo falla si el tamaño desborda `usize`; no ocurre con los límites v1.
+    postcard::serialize_with_flavor(raw, ZeroizingVec::with_capacity(ENCODE_INITIAL_CAPACITY))
+        .map_err(|_| Error::CorruptEntry)
+}
+
+/// Deserializa `bytes` completo: un error o bytes sobrantes son
+/// [`Error::CorruptEntry`].
+fn take_all<'a, T: serde::Deserialize<'a>>(bytes: &'a [u8]) -> Result<T> {
+    match postcard::take_from_bytes(bytes) {
+        Ok((value, [])) => Ok(value),
+        _ => Err(Error::CorruptEntry),
     }
 }
 
@@ -194,6 +252,32 @@ impl Secret {
     /// estructura actual.
     pub(crate) fn new(password: SecretString, notes: Option<SecretString>) -> Result<Self> {
         build_secret_v1(password, notes).map_err(Error::InvalidEntry)
+    }
+
+    /// Serializa con la versión de estructura actual.
+    pub(crate) fn encode(&self) -> Result<Zeroizing<Vec<u8>>> {
+        let raw = RawSecretV1 {
+            password: self.password.expose_secret(),
+            notes: self.notes.as_ref().map(|n| n.expose_secret()),
+        };
+        encode_with_zeroizing(&raw)
+    }
+
+    /// Deserializa unos bytes escritos con `entry_schema_version`, aplicando
+    /// las reglas de esa versión. Los errores son [`Error::CorruptEntry`].
+    pub(crate) fn decode(entry_schema_version: u16, bytes: &[u8]) -> Result<Self> {
+        match entry_schema_version {
+            1 => {
+                let raw: RawSecretV1 = take_all(bytes)?;
+                // `SecretString::from(&str)` usa `String::from`, que reserva
+                // exactamente la longitud: su `into_boxed_str` no reasigna y no
+                // deja una copia sin borrar.
+                let password = SecretString::from(raw.password);
+                let notes = raw.notes.map(SecretString::from);
+                build_secret_v1(password, notes).map_err(|_| Error::CorruptEntry)
+            }
+            _ => Err(Error::CorruptEntry),
+        }
     }
 
     pub(crate) fn password(&self) -> &SecretString {
