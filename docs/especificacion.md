@@ -92,7 +92,7 @@ Decisiones tomadas el 2026-11-07, antes de implementar las llaves. Fijan el form
 
 - Identificador: 16 bytes aleatorios del generador del sistema (`getrandom`), guardados como `BLOB`.
 - Cada parte (datos de búsqueda y secreto) se serializa con `serde` + `postcard` y se cifra por separado. Se guarda como `nonce (24 bytes) | texto cifrado con etiqueta`.
-- Al descifrar, el texto plano va en `Zeroizing<Vec<u8>>` antes de deserializar. Los tipos que contienen secretos implementan `ZeroizeOnDrop`.
+- Al descifrar, el texto plano va en `Zeroizing<Vec<u8>>` antes de deserializar. La contraseña y las notas del secreto son `SecretString` (`secrecy`): `Debug` no muestra su valor y solo se leen con `expose_secret()`.
 - Dato autenticado de cada parte, binario de ancho fijo sin separadores (28 bytes):
 
   | Campo | Tamaño | Valor |
@@ -107,7 +107,7 @@ Decisiones tomadas el 2026-11-07, antes de implementar las llaves. Fijan el form
 
 **Almacenamiento.** La tabla de entradas guarda, además de las partes cifradas, `modified_at`, `last_used_at` y la marca de eliminada, en claro. `last_used_at` ordena las usadas recientemente cuando no hay texto de búsqueda; revela cuándo se usó una entrada, pero no cuál es.
 
-**API.** Una sola estructura `Vault` con la llave en `Option<Zeroizing<[u8; 32]>>`. Las operaciones con la bóveda bloqueada devuelven `Error::Locked`. `lock()` borra de memoria la llave de bóveda y los datos de búsqueda descifrados. Como `rusqlite::Connection` no es `Sync`, el `Mutex` vive en la fachada de `mobile/rust`, no en el núcleo.
+**API.** Una sola estructura `Vault` con la llave en `Option<SecretBox<[u8; 32]>>`. Las operaciones con la bóveda bloqueada devuelven `Error::Locked`. `lock()` borra de memoria la llave de bóveda y los datos de búsqueda descifrados. Como `rusqlite::Connection` no es `Sync`, el `Mutex` vive en la fachada de `mobile/rust`, no en el núcleo.
 
 **Entradas dañadas.** `unlock()` devuelve las entradas válidas y la lista de identificadores de las que no se pudieron descifrar, sin fallar por ellas. `reveal()` sobre una entrada con el secreto dañado devuelve un error de entrada dañada. Ambos casos tienen su prueba: alterar un byte de una sola entrada y comprobar que el resto abre, y que `reveal()` de la dañada devuelve ese error.
 

@@ -9,11 +9,11 @@ Núcleo compartido: criptografía, formato de la bóveda, búsqueda y protocolo.
 
 ## Criptografía
 
-- Usa solo estos crates: `argon2`, `chacha20poly1305` (`XChaCha20Poly1305`), `snow`, `x25519-dalek`, `zeroize` y `rand_core`/`getrandom` con el generador del sistema. No implementes primitivas criptográficas propias.
+- Usa solo estos crates: `argon2`, `chacha20poly1305` (`XChaCha20Poly1305`), `snow`, `x25519-dalek`, `zeroize`, `secrecy` y `getrandom` como generador del sistema. No implementes primitivas criptográficas propias.
 - Argon2id calibrado para tardar unos 0.5 s en el dispositivo, sin bajar nunca de 64 MiB de memoria, 3 iteraciones y paralelismo 1. Los parámetros usados se guardan en la cabecera de la bóveda.
 - Cada operación de cifrado usa un nonce aleatorio nuevo de 24 bytes. Nunca reutilices ni derives nonces.
 - Cada parte cifrada de una entrada usa como dato autenticado el identificador de la entrada y su versión de estructura.
-- Llaves y secretos van en `Zeroizing<...>` o en tipos que implementen `ZeroizeOnDrop`.
+- Los secretos que cruzan la API pública (contraseña maestra, llave de bóveda, contraseña y notas) van en tipos de `secrecy` (`SecretBox`, `SecretString`) y se leen solo con `expose_secret()`. Los búferes internos van en `Zeroizing<...>` o en tipos que implementen `ZeroizeOnDrop`.
 
 ## Formato de la bóveda y del protocolo
 
