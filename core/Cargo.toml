@@ -11,6 +11,8 @@ argon2 = { version = "0.6", default-features = false, features = ["alloc", "zero
 chacha20poly1305 = { version = "0.11", default-features = false, features = ["alloc", "getrandom", "zeroize"] }
 getrandom = "0.4"
 postcard = { version = "1", default-features = false, features = ["alloc"] }
+# `bundled` compila SQLite desde C; en Android requiere el NDK.
+rusqlite = { version = "0.41", features = ["bundled"] }
 secrecy = "0.10"
 serde = { version = "1", default-features = false, features = ["derive"] }
 thiserror = "2"
@@ -18,3 +20,4 @@ zeroize = { version = "1.9", features = ["derive"] }
 
 [dev-dependencies]
 proptest = "1"
+tempfile = "3"
