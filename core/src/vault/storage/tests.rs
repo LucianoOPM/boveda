@@ -567,3 +567,134 @@ mod props {
         }
     }
 }
+
+// --- Filas dañadas, archivo dañado y texto plano ---
+
+/// Escribe una fila anómala con SQL directo.
+fn raw_insert(path: &Path, id: &[u8], version: i64) {
+    raw(path)
+        .execute(
+            "INSERT INTO entries (id, entry_schema_version, search, secret, modified_at) \
+             VALUES (?1, ?2, x'00', x'00', 0)",
+            rusqlite::params![id, version],
+        )
+        .unwrap();
+}
+
+#[test]
+fn corrupt_rows_are_reported_without_blocking() {
+    let (_dir, path, mut storage) = new_vault();
+    storage
+        .insert_entry(&fake_entry(1, b"b1", b"s1"), T1)
+        .unwrap();
+    storage
+        .insert_entry(&fake_entry(2, b"b2", b"s2"), T1)
+        .unwrap();
+    raw_insert(&path, &[1_u8; 15], 1);
+    raw_insert(&path, &[9_u8; 16], 70_000);
+
+    let listing = storage.list_entries().unwrap();
+    assert_eq!(listing.entries.len(), 2);
+    assert_eq!(listing.unidentified_corrupt, 1);
+    assert_eq!(listing.corrupt, vec![EntryId::from_bytes([9; 16])]);
+    assert_eq!(
+        storage.get_entry(EntryId::from_bytes([9; 16])).err(),
+        Some(Error::CorruptEntry)
+    );
+}
+
+#[test]
+fn row_conversion_error_hides_value() {
+    let (_dir, path, storage) = new_vault();
+    raw_insert(&path, &[7_u8; 16], 987_654_321);
+
+    let err = storage
+        .get_entry(EntryId::from_bytes([7; 16]))
+        .err()
+        .unwrap();
+    assert_eq!(err, Error::CorruptEntry);
+    assert!(!format!("{err}").contains("987654321"));
+    assert!(!format!("{err:?}").contains("987654321"));
+}
+
+#[test]
+fn damaged_entries_page_is_storage_corrupt() {
+    let (_dir, path, mut storage) = new_vault();
+    for i in 1..=3 {
+        storage
+            .insert_entry(&fake_entry(i, b"b", b"s"), T1)
+            .unwrap();
+    }
+    storage.close().unwrap();
+    let (page_size, root_page): (i64, i64) = {
+        let conn = raw(&path);
+        let page_size = conn
+            .pragma_query_value(None, "page_size", |row| row.get(0))
+            .unwrap();
+        let root_page = conn
+            .query_row(
+                "SELECT rootpage FROM sqlite_schema WHERE name = 'entries'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        (page_size, root_page)
+    };
+    assert!(root_page > 1);
+
+    let mut bytes = fs::read(&path).unwrap();
+    let offset = usize::try_from((root_page - 1) * page_size).unwrap();
+    bytes[offset..offset + 8].fill(0xFF);
+    fs::write(&path, bytes).unwrap();
+
+    let storage = Storage::open(&path).unwrap();
+    assert_eq!(
+        storage.list_entries().err(),
+        Some(Error::Storage(StorageErrorKind::Corrupt))
+    );
+}
+
+fn contains(haystack: &[u8], needle: &[u8]) -> bool {
+    haystack.windows(needle.len()).any(|w| w == needle)
+}
+
+#[test]
+fn file_contains_no_known_plaintext() {
+    use crate::vault::entry::{SearchData, Secret};
+
+    let (_dir, path) = temp_path();
+    let (header, key) = new_header();
+    let mut storage = Storage::create(&path, &header).unwrap();
+    let seal = |n: u32| {
+        let search = SearchData::new(
+            &format!("canario-servicio-{n}"),
+            Some(&format!("https://canario-url-{n}.example")),
+            Some(&format!("canario-usuario-{n}")),
+            &[&format!("canario-etiqueta-{n}")],
+        )
+        .unwrap();
+        let secret = Secret::new(
+            SecretString::from(format!("canario-pass-{n}")),
+            Some(SecretString::from(format!("canario-notas-{n}"))),
+        )
+        .unwrap();
+        SealedEntry::seal(&key, EntryId::from_bytes([n as u8; 16]), &search, &secret).unwrap()
+    };
+    for n in 1..=3 {
+        storage.insert_entry(&seal(n), T1).unwrap();
+    }
+    storage.update_entry(&seal(1), T2).unwrap();
+    storage
+        .delete_entry(EntryId::from_bytes([2; 16]), T2)
+        .unwrap();
+    // Control: la misma búsqueda sí detecta texto plano guardado sin cifrar.
+    storage
+        .insert_entry(&fake_entry(9, b"control-en-claro", b"x"), T2)
+        .unwrap();
+    storage.close().unwrap();
+
+    let bytes = fs::read(&path).unwrap();
+    assert!(contains(&bytes, b"control-en-claro"));
+    assert!(!contains(&bytes, b"canario-"));
+    assert!(!sibling(&path, "-journal").exists());
+}
