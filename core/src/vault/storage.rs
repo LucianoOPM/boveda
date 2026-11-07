@@ -16,7 +16,7 @@ use rusqlite::{Connection, ErrorCode, OpenFlags, TransactionBehavior, params};
 
 use super::entry::sealed::SealedEntry;
 use super::entry::{ENTRY_ID_LEN, EntryId};
-use super::header::VaultHeader;
+use super::header::{FORMAT_VERSION, VaultHeader};
 use crate::crypto::aead::EncryptedPart;
 use crate::crypto::kdf::{KdfParams, SALT_LEN};
 use crate::crypto::keys::{ENCRYPTED_KEY_LEN, EncryptedKey, NONCE_LEN};
@@ -186,7 +186,28 @@ impl Storage {
     ///
     /// Una columna fuera de rango, una longitud incorrecta o la falta de la
     /// fila dan `Storage(Corrupt)`: sin cabecera no hay bóveda.
+    ///
+    /// `format_version` se lee y se compara primero, sola: una versión
+    /// futura puede tener otras columnas, y debe dar
+    /// [`Error::UnsupportedFormatVersion`], no un error de lectura.
     pub(crate) fn read_header(&self) -> Result<VaultHeader> {
+        let version: i64 = self
+            .conn
+            .query_row(
+                "SELECT format_version FROM header WHERE id = 1",
+                [],
+                |row| row.get(0),
+            )
+            .map_err(|e| match e {
+                rusqlite::Error::QueryReturnedNoRows => Error::Storage(StorageErrorKind::Corrupt),
+                other => map_sqlite_error(other),
+            })?;
+        let version =
+            u16::try_from(version).map_err(|_| Error::Storage(StorageErrorKind::Corrupt))?;
+        if version != FORMAT_VERSION {
+            return Err(Error::UnsupportedFormatVersion(version));
+        }
+
         let raw = self
             .conn
             .query_row(

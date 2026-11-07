@@ -739,3 +739,47 @@ fn open_read_only_rejects_foreign_wal_as_not_a_vault() {
     let path = make_foreign_wal_copy(dir.path());
     assert_eq!(Storage::open_read_only(&path).err(), Some(Error::NotAVault));
 }
+
+/// Prueba `open` y `open_read_only` sobre una bóveda con la cabecera
+/// alterada por `sql` (simula una versión futura del formato).
+fn assert_future_header_is_unsupported(sql: &str) {
+    let (_dir, path, storage) = new_vault();
+    storage.close().unwrap();
+    raw(&path).execute_batch(sql).unwrap();
+
+    assert_eq!(
+        Storage::open_read_only(&path).err(),
+        Some(Error::UnsupportedFormatVersion(2))
+    );
+    assert_eq!(
+        Storage::open(&path).err(),
+        Some(Error::UnsupportedFormatVersion(2))
+    );
+}
+
+#[test]
+fn future_header_without_v1_column_is_unsupported() {
+    assert_future_header_is_unsupported(
+        "UPDATE header SET format_version = 2; ALTER TABLE header DROP COLUMN kdf_memory_kib;",
+    );
+}
+
+#[test]
+fn future_header_with_wider_value_is_unsupported() {
+    assert_future_header_is_unsupported(
+        "UPDATE header SET format_version = 2, kdf_memory_kib = 99999999999;",
+    );
+}
+
+#[test]
+fn format_version_out_of_u16_is_corrupt() {
+    let (_dir, path, storage) = new_vault();
+    storage.close().unwrap();
+    raw(&path)
+        .execute("UPDATE header SET format_version = 70000", [])
+        .unwrap();
+    assert_eq!(
+        Storage::open(&path).err(),
+        Some(Error::Storage(StorageErrorKind::Corrupt))
+    );
+}
