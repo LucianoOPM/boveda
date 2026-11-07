@@ -511,3 +511,106 @@ fn reveal_and_edit_do_not_leak_in_errors() {
         }
     }
 }
+
+// --- Entradas dañadas, lápidas y reparación ----------------------------
+
+fn relock(vault: &mut Vault) -> UnlockReport {
+    vault.lock();
+    vault.unlock(&password("correcta")).unwrap()
+}
+
+fn ids(vault: &Vault) -> Vec<EntryId> {
+    vault.entries().unwrap().iter().map(|e| e.id()).collect()
+}
+
+#[test]
+fn unlock_reports_corrupt_search() {
+    let (_dir, path, mut vault) = new_vault();
+    let a = add_sample(&mut vault, "a");
+    let b = add_sample(&mut vault, "b");
+    let c = add_sample(&mut vault, "c");
+    tamper(&path, b, "search");
+
+    let report = relock(&mut vault);
+    assert_eq!(report.corrupt, vec![b]);
+    assert_eq!(report.unidentified_corrupt, 0);
+    let valid = ids(&vault);
+    assert_eq!(valid.len(), 2);
+    assert!(valid.contains(&a) && valid.contains(&c));
+}
+
+#[test]
+fn unlock_counts_unidentified_rows() {
+    let (_dir, path, mut vault) = new_vault();
+    let a = add_sample(&mut vault, "a");
+    raw(&path)
+        .execute(
+            "INSERT INTO entries (id, entry_schema_version, search, secret, modified_at) \
+             VALUES (?1, 1, x'00', x'00', 0)",
+            [[1_u8; 15].as_slice()],
+        )
+        .unwrap();
+
+    let report = relock(&mut vault);
+    assert_eq!(report.unidentified_corrupt, 1);
+    assert!(report.corrupt.is_empty());
+    assert_eq!(ids(&vault), vec![a]);
+}
+
+#[test]
+fn tombstone_not_reported() {
+    let (_dir, _path, mut vault) = new_vault();
+    let a = add_sample(&mut vault, "a");
+    let b = add_sample(&mut vault, "b");
+    vault.delete(b).unwrap();
+
+    let report = relock(&mut vault);
+    assert!(report.corrupt.is_empty());
+    assert_eq!(ids(&vault), vec![a]);
+}
+
+#[test]
+fn replace_repairs_corrupt_search() {
+    let (_dir, path, mut vault) = new_vault();
+    add_sample(&mut vault, "a");
+    let b = add_sample(&mut vault, "b");
+    tamper(&path, b, "search");
+    assert_eq!(relock(&mut vault).corrupt, vec![b]);
+
+    let (search, secret) = sample("b");
+    vault
+        .edit(b, search, SecretChange::Replace(secret))
+        .unwrap();
+    assert!(ids(&vault).contains(&b));
+
+    let report = relock(&mut vault);
+    assert!(report.corrupt.is_empty());
+    assert!(ids(&vault).contains(&b));
+}
+
+#[test]
+fn replace_repairs_corrupt_secret() {
+    let (_dir, path, mut vault) = new_vault();
+    let b = add_sample(&mut vault, "b");
+    tamper(&path, b, "secret");
+    let secret = Secret::new(password("reparada"), None).unwrap();
+    vault
+        .edit(b, search_with_tags("b", &[]), SecretChange::Replace(secret))
+        .unwrap();
+    assert_eq!(
+        vault.reveal(b).unwrap().password().expose_secret(),
+        "reparada"
+    );
+}
+
+#[test]
+fn delete_corrupt_entry() {
+    let (_dir, path, mut vault) = new_vault();
+    add_sample(&mut vault, "a");
+    let b = add_sample(&mut vault, "b");
+    tamper(&path, b, "search");
+    assert_eq!(relock(&mut vault).corrupt, vec![b]);
+
+    vault.delete(b).unwrap();
+    assert!(relock(&mut vault).corrupt.is_empty());
+}
