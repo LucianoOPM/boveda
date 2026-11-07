@@ -129,9 +129,11 @@ impl Storage {
     /// Abre una bóveda existente en lectura y escritura. Nunca crea el
     /// archivo: una ruta inexistente da `Storage(Io)`.
     ///
-    /// Orden: `application_id` → pragmas → cabecera. Así un archivo ajeno se
-    /// rechaza antes de escribir nada en él.
+    /// Orden: `application_id` (primero en los bytes del archivo, después
+    /// con SQLite) → pragmas → cabecera. Así un archivo ajeno se rechaza
+    /// antes de que SQLite lo toque.
     pub(crate) fn open(path: &Path) -> Result<Self> {
+        check_file_header(path)?;
         let conn = Connection::open_with_flags(
             path,
             OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_NO_MUTEX,
@@ -153,7 +155,7 @@ impl Storage {
         // Leer una base en WAL, aun en solo lectura, crea los archivos `-wal`
         // y `-shm`. Por eso el modo se revisa en la cabecera del archivo
         // antes de abrirlo con SQLite.
-        if is_wal_file(path) {
+        if check_file_header(path)? {
             return Err(Error::Storage(StorageErrorKind::JournalMode));
         }
         let conn = Connection::open_with_flags(
@@ -478,16 +480,27 @@ fn apply_pragmas(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
-/// Indica si la cabecera del archivo SQLite declara el modo WAL (bytes 18 y
-/// 19, versiones de lectura y escritura, iguales a 2).
+/// Revisa la cabecera del archivo (los primeros 100 bytes) sin pasar por
+/// SQLite, para que SQLite nunca abra un archivo ajeno: abrirlo puede
+/// revertir su `-journal` o integrar su `-wal`, es decir, modificarlo.
 ///
-/// Si el archivo no se puede leer o no es SQLite, devuelve `false` y deja
-/// que la apertura con SQLite dé el error que corresponda.
-fn is_wal_file(path: &Path) -> bool {
+/// Devuelve si el archivo está en modo WAL (bytes 18 y 19 iguales a 2).
+/// Un archivo inexistente o ilegible da `Storage(Io)`; uno sin el magic de
+/// SQLite, más corto que la cabecera o con otro `application_id` (bytes
+/// 68..72, big-endian) da [`Error::NotAVault`].
+fn check_file_header(path: &Path) -> Result<bool> {
     const MAGIC: &[u8; 16] = b"SQLite format 3\0";
-    let mut head = [0_u8; 20];
-    let read = fs::File::open(path).and_then(|mut f| io::Read::read_exact(&mut f, &mut head));
-    read.is_ok() && head.starts_with(MAGIC) && (head[18] == 2 || head[19] == 2)
+    let mut head = [0_u8; 100];
+    let mut file = fs::File::open(path).map_err(|_| Error::Storage(StorageErrorKind::Io))?;
+    io::Read::read_exact(&mut file, &mut head).map_err(|e| match e.kind() {
+        io::ErrorKind::UnexpectedEof => Error::NotAVault,
+        _ => Error::Storage(StorageErrorKind::Io),
+    })?;
+    let application_id = i32::from_be_bytes([head[68], head[69], head[70], head[71]]);
+    if !head.starts_with(MAGIC) || application_id != APPLICATION_ID {
+        return Err(Error::NotAVault);
+    }
+    Ok(head[18] == 2 || head[19] == 2)
 }
 
 /// Primera consulta tras abrir: como `rusqlite` abre de forma perezosa, un

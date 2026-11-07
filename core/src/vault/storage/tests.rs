@@ -698,3 +698,44 @@ fn file_contains_no_known_plaintext() {
     assert!(!contains(&bytes, b"canario-"));
     assert!(!sibling(&path, "-journal").exists());
 }
+
+// --- Correcciones de la revisión final ---
+
+/// SQLite ajeno en WAL con transacciones pendientes en su `-wal`, copiado
+/// mientras la conexión de origen sigue abierta (sin checkpoint).
+fn make_foreign_wal_copy(dir: &Path) -> PathBuf {
+    let src = dir.join("ajena.db");
+    let dst = dir.join("ajena-copia.db");
+    let conn = raw(&src);
+    let _: String = conn
+        .pragma_update_and_check(None, "journal_mode", "WAL", |row| row.get(0))
+        .unwrap();
+    conn.pragma_update(None, "wal_autocheckpoint", 0).unwrap();
+    conn.execute_batch("CREATE TABLE t (x BLOB); INSERT INTO t VALUES (randomblob(3000));")
+        .unwrap();
+    fs::copy(&src, &dst).unwrap();
+    fs::copy(sibling(&src, "-wal"), sibling(&dst, "-wal")).unwrap();
+    drop(conn);
+    assert!(fs::metadata(sibling(&dst, "-wal")).unwrap().len() > 0);
+    dst
+}
+
+#[test]
+fn open_does_not_touch_foreign_wal_database() {
+    let (dir, _) = temp_path();
+    let path = make_foreign_wal_copy(dir.path());
+    let db_before = fs::read(&path).unwrap();
+    let wal_before = fs::read(sibling(&path, "-wal")).unwrap();
+
+    assert_eq!(Storage::open(&path).err(), Some(Error::NotAVault));
+    assert_eq!(fs::read(&path).unwrap(), db_before);
+    assert_eq!(fs::read(sibling(&path, "-wal")).unwrap(), wal_before);
+    assert!(!sibling(&path, "-shm").exists());
+}
+
+#[test]
+fn open_read_only_rejects_foreign_wal_as_not_a_vault() {
+    let (dir, _) = temp_path();
+    let path = make_foreign_wal_copy(dir.path());
+    assert_eq!(Storage::open_read_only(&path).err(), Some(Error::NotAVault));
+}
