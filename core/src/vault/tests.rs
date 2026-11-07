@@ -742,3 +742,18 @@ fn search_after_reveal_puts_entry_first() {
     vault.reveal(added[1]).unwrap();
     assert_eq!(vault.search("").unwrap()[0].id(), added[1]);
 }
+
+#[test]
+fn search_never_matches_password() {
+    let (_dir, _path, mut vault) = new_vault();
+    let search = SearchData::new(
+        "Banco",
+        Some("https://banco.example"),
+        Some("usuario@example.com"),
+        &["trabajo", "correo"],
+    )
+    .unwrap();
+    let secret = Secret::new(password("zqxw-secreto-98"), None).unwrap();
+    vault.add(search, secret).unwrap();
+    assert!(vault.search("zqxw-secreto-98").unwrap().is_empty());
+}
