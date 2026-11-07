@@ -1,0 +1,20 @@
+[package]
+name = "rust_lib_boveda"
+version = "0.1.0"
+description = "Puente entre la app Flutter y vault-core: solo convierte tipos y delega"
+# Edición 2021 a propósito: flutter_rust_bridge genera y formatea frb_generated.rs
+# con el estilo de 2021, y con 2024 `cargo fmt --check` fallaría tras cada regeneración.
+edition = "2021"
+rust-version.workspace = true
+publish.workspace = true
+
+[lib]
+crate-type = ["cdylib", "staticlib"]
+
+[dependencies]
+# La versión debe coincidir con la de flutter_rust_bridge en pubspec.yaml.
+flutter_rust_bridge = "=2.13.0"
+vault-core = { path = "../../core" }
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(frb_expand)'] }

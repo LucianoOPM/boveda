@@ -6,7 +6,7 @@ Interfaz de la bóveda. Dart nunca hace criptografía ni guarda la bóveda: todo
 
 - Pruebas: `flutter test`
 - Análisis: `flutter analyze`
-- Regenerar el puente después de cambiar `rust/src/api.rs`: `flutter_rust_bridge_codegen generate`
+- Regenerar el puente después de cambiar `rust/src/api/`: `flutter_rust_bridge_codegen generate`
 
 ## Reglas
 

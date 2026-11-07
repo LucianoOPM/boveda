@@ -40,10 +40,13 @@ boveda/
 │   ├── CLAUDE.md
 │   ├── pubspec.yaml
 │   ├── flutter_rust_bridge.yaml
-│   ├── rust/               # crate puente: fachada delgada sobre vault-core
-│   │   ├── Cargo.toml
-│   │   └── src/api.rs
+│   ├── rust/               # crate puente rust_lib_boveda: fachada delgada sobre vault-core
+│   │   ├── Cargo.toml      # edición 2021 por el código generado
+│   │   └── src/
+│   │       ├── api/        # funciones expuestas a Dart (un archivo por área)
+│   │       └── frb_generated.rs  # generado; no se edita
 │   ├── rust_builder/       # generado por flutter_rust_bridge; no se edita
+│   ├── integration_test/   # pruebas en dispositivo que cargan la librería de Rust
 │   ├── lib/
 │   │   ├── main.dart
 │   │   ├── src/rust/       # código generado por flutter_rust_bridge; no se edita
