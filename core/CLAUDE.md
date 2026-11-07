@@ -6,6 +6,7 @@ Núcleo compartido: criptografía, formato de la bóveda, búsqueda y protocolo.
 
 - Toda función nueva empieza con una prueba que falla; después el código mínimo que la hace pasar.
 - Ejecuta `cargo test -p vault-core` antes de cada commit.
+- Las pruebas unitarias van en un archivo aparte: `modulo.rs` termina con `#[cfg(test)] mod tests;` y las pruebas viven en `modulo/tests.rs` (con `use super::*;`). Las pruebas de la API pública van en `core/tests/`.
 
 ## Criptografía
 
