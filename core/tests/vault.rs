@@ -62,3 +62,21 @@ fn change_password_with_calibration() {
     );
     assert!(vault.unlock(&password("nueva")).is_ok());
 }
+
+#[test]
+fn search_with_public_api() {
+    let (_dir, path) = temp_path();
+    let mut vault = Vault::create(&path, &password("maestra")).unwrap();
+    for service in ["gmail", "facebook"] {
+        let search = SearchData::new(service, None, None, &[]).unwrap();
+        let secret = Secret::new(password("clave"), None).unwrap();
+        vault.add(search, secret).unwrap();
+    }
+
+    let found = vault.search("gm").unwrap();
+    assert_eq!(found.len(), 1);
+    assert_eq!(found[0].search().service(), "gmail");
+
+    vault.lock();
+    assert_eq!(vault.search("gm").err(), Some(Error::Locked));
+}
