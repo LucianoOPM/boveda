@@ -173,3 +173,121 @@ fn non_latin_and_emoji_do_not_panic() {
     assert_eq!(services(&search(&entries, "correo")), ["📧 Correo"]);
     assert_eq!(services(&search(&entries, "cafe")), ["Cafe\u{301}"]);
 }
+
+// --- Respaldo con OSA ------------------------------------------------
+
+/// Gmail y Facebook, sin URL ni etiquetas.
+fn gmail_and_facebook() -> [EntrySummary; 2] {
+    [named("Gmail", None), named("Facebook", None)]
+}
+
+#[test]
+fn gmial_finds_gmail_via_fallback() {
+    assert_eq!(services(&search(&gmail_and_facebook(), "gmial")), ["Gmail"]);
+}
+
+#[test]
+fn prefix_while_typing() {
+    assert_eq!(services(&search(&gmail_and_facebook(), "gmia")), ["Gmail"]);
+}
+
+#[test]
+fn fallback_uses_domain_words() {
+    let entries = [entry(
+        "Cuenta",
+        Some("https://accounts.google.com"),
+        None,
+        &[],
+        None,
+    )];
+    assert_eq!(services(&search(&entries, "googel")), ["Cuenta"]);
+}
+
+#[test]
+fn fallback_folds_accents() {
+    let entries = [named("Teléfono", None)];
+    assert_eq!(services(&search(&entries, "telefnoo")), ["Teléfono"]);
+}
+
+#[test]
+fn distant_query_finds_nothing() {
+    let entries = [named("Gmail", None)];
+    assert!(search(&entries, "face").is_empty());
+}
+
+#[test]
+fn threshold_short_words() {
+    let entries = [named("Gmail", None)];
+    assert_eq!(services(&search(&entries, "gmaxl")), ["Gmail"]);
+    assert!(search(&entries, "gmaxx").is_empty());
+}
+
+#[test]
+fn threshold_long_words() {
+    let entries = [named("Google", None)];
+    assert_eq!(services(&search(&entries, "goozze")), ["Google"]);
+    assert!(search(&entries, "goozzz").is_empty());
+}
+
+#[test]
+fn short_query_has_no_fallback() {
+    let entries = [named("Gmail", None)];
+    assert!(search(&entries, "gx").is_empty());
+}
+
+#[test]
+fn short_word_uses_nucleo_in_fallback() {
+    let entries = [named("Gmail", None)];
+    assert_eq!(services(&search(&entries, "gm gmial")), ["Gmail"]);
+    assert!(search(&entries, "zq gmial").is_empty());
+}
+
+#[test]
+fn fuzzy_result_preempts_fallback() {
+    let entries = [named("Gmail", None), named("Gmial Pro", None)];
+    assert_eq!(services(&search(&entries, "gmial")), ["Gmial Pro"]);
+}
+
+#[test]
+fn operators_are_literal() {
+    let entries = gmail_and_facebook();
+    assert_eq!(services(&search(&entries, "!gm")), ["Gmail"]);
+    assert_eq!(services(&search(&entries, "^gm")), ["Gmail"]);
+}
+
+#[test]
+fn punctuation_only_query_finds_nothing() {
+    let entries = gmail_and_facebook();
+    assert!(search(&entries, "...").is_empty());
+    assert!(search(&entries, "-").is_empty());
+}
+
+#[test]
+fn very_long_query_does_not_panic() {
+    let entries = gmail_and_facebook();
+    assert!(search(&entries, &"a".repeat(5000)).is_empty());
+}
+
+#[test]
+fn fold_removes_accents_and_case() {
+    assert_eq!(fold("ÁrBol Ñandú").as_str(), "arbol nandu");
+}
+
+#[test]
+fn max_distance_by_length() {
+    assert_eq!(max_distance(0), None);
+    assert_eq!(max_distance(2), None);
+    assert_eq!(max_distance(3), Some(1));
+    assert_eq!(max_distance(5), Some(1));
+    assert_eq!(max_distance(6), Some(2));
+    assert_eq!(max_distance(40), Some(2));
+}
+
+proptest::proptest! {
+    #[test]
+    fn search_never_panics(query in ".{0,64}", service in ".{1,40}") {
+        proptest::prop_assume!(SearchData::new(&service, None, None, &[]).is_ok());
+        let entries = [named(&service, None)];
+        let _ = search(&entries, &query);
+    }
+}
