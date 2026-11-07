@@ -14,12 +14,12 @@ use zeroize::ZeroizeOnDrop;
 
 use crate::crypto::kdf::{self, KdfParams};
 use crate::crypto::keys::VaultKey;
-use crate::error::{Error, Result};
 
 pub(crate) mod entry;
 pub(crate) mod header;
 pub(crate) mod storage;
 
+pub use crate::error::{Error, InvalidEntryField, Result, StorageErrorKind};
 use entry::sealed::SealedEntry;
 pub use entry::{EntryId, SearchData, Secret};
 use header::VaultHeader;
@@ -100,8 +100,6 @@ impl Vault {
     ///
     /// Calibra Argon2id en este dispositivo. Una ruta que ya existe da
     /// [`Error::AlreadyExists`] sin tocarla.
-    // Temporal: se quita al hacer público el módulo `vault`.
-    #[cfg_attr(test, allow(dead_code))]
     pub fn create(path: &Path, password: &SecretString) -> Result<Self> {
         let params = kdf::calibrate()?;
         Self::create_with_params(path, password, params)
@@ -272,8 +270,6 @@ impl Vault {
     ///
     /// No toca la llave de bóveda ni las entradas. Con `current` incorrecta
     /// devuelve [`Error::WrongPassword`] sin calibrar ni cambiar nada.
-    // Temporal: se quita al hacer público el módulo `vault`.
-    #[cfg_attr(test, allow(dead_code))]
     pub fn change_master_password(
         &mut self,
         current: &SecretString,
@@ -284,7 +280,9 @@ impl Vault {
         self.rekey_with_params(new, params)
     }
 
-    /// Como [`Vault::change_master_password`], con parámetros fijos.
+    /// Como [`Vault::change_master_password`], con parámetros fijos. Solo la
+    /// usan las pruebas, para no calibrar.
+    #[cfg(test)]
     pub(crate) fn change_master_password_with_params(
         &mut self,
         current: &SecretString,

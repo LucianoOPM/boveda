@@ -1,14 +1,8 @@
 //! Núcleo de Bóveda: criptografía, formato de la bóveda, búsqueda y protocolo.
 //!
-//! Lo que usan las apps se expondrá desde los módulos `vault` y `protocol`;
-//! el resto es privado al crate.
-
-// Mientras no exista la API pública `Vault`, el código de llaves y cabecera
-// solo lo usan sus pruebas. Quitar esta línea cuando `Vault` lo consuma.
-#![cfg_attr(not(test), allow(dead_code))]
+//! Lo que usan las apps se expone desde el módulo `vault` (y, más adelante,
+//! `protocol`); el resto es privado al crate.
 
 mod crypto;
 mod error;
-mod vault;
-
-pub use error::{Error, InvalidEntryField, Result, StorageErrorKind};
+pub mod vault;

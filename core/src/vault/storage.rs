@@ -151,6 +151,10 @@ impl Storage {
     /// No fija pragmas (cambiar `journal_mode` es escribir): solo comprueba
     /// que el modo sea `delete`. Un archivo en WAL o con un `-journal`
     /// caliente se rechaza y nunca se repara.
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "lo usará la importación de respaldos")
+    )]
     pub(crate) fn open_read_only(path: &Path) -> Result<Self> {
         // Leer una base en WAL, aun en solo lectura, crea los archivos `-wal`
         // y `-shm`. Por eso el modo se revisa en la cabecera del archivo
@@ -178,6 +182,10 @@ impl Storage {
     }
 
     /// Cierra la conexión sin perder un error al cerrar.
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "lo usará la importación de respaldos")
+    )]
     pub(crate) fn close(self) -> Result<()> {
         self.conn.close().map_err(|(_, e)| map_sqlite_error(e))
     }
