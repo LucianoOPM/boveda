@@ -74,6 +74,22 @@ impl EntrySummary {
     pub fn last_used_at(&self) -> Option<i64> {
         self.last_used_at
     }
+
+    /// Construye un resumen en memoria, sin bóveda. Solo para pruebas.
+    #[cfg(test)]
+    pub(crate) fn for_test(
+        id: EntryId,
+        search: SearchData,
+        modified_at: i64,
+        last_used_at: Option<i64>,
+    ) -> Self {
+        Self {
+            id,
+            search,
+            modified_at,
+            last_used_at,
+        }
+    }
 }
 
 /// Resultado de desbloquear, sin texto plano. Las entradas válidas se leen
@@ -176,6 +192,15 @@ impl Vault {
     /// Entradas válidas, con sus datos de búsqueda descifrados.
     pub fn entries(&self) -> Result<&[EntrySummary]> {
         Ok(&self.unlocked()?.entries)
+    }
+
+    /// Entradas que coinciden con `query`, la mejor primero. Sin texto
+    /// (vacío o solo espacios), todas: las usadas más recientemente primero.
+    ///
+    /// Busca en servicio, dominio de la URL, usuario y etiquetas, sobre los
+    /// datos de búsqueda ya descifrados; nunca toca el secreto ni el disco.
+    pub fn search(&self, query: &str) -> Result<Vec<&EntrySummary>> {
+        Ok(crate::search::search(&self.unlocked()?.entries, query))
     }
 
     /// Agrega una entrada y devuelve su identificador nuevo.

@@ -702,3 +702,43 @@ fn change_password_to_same() {
     vault.lock();
     assert!(vault.unlock(&password("correcta")).is_ok());
 }
+
+// --- Búsqueda ----------------------------------------------------------
+
+#[test]
+fn search_when_locked_is_an_error() {
+    let (_dir, _path, mut vault) = new_vault();
+    vault.lock();
+    assert_eq!(vault.search("gm").err(), Some(Error::Locked));
+}
+
+#[test]
+fn search_skips_deleted_entries() {
+    let (_dir, _path, mut vault) = new_vault();
+    let (search, secret) = sample("gmail");
+    let deleted = vault.add(search, secret).unwrap();
+    let (search, secret) = sample("banco");
+    vault.add(search, secret).unwrap();
+    vault.delete(deleted).unwrap();
+
+    assert_eq!(vault.search("").unwrap().len(), 1);
+    assert!(
+        vault
+            .search("gmail")
+            .unwrap()
+            .iter()
+            .all(|e| e.id() != deleted)
+    );
+}
+
+#[test]
+fn search_after_reveal_puts_entry_first() {
+    let (_dir, _path, mut vault) = new_vault();
+    let mut added = Vec::new();
+    for service in ["uno", "dos", "tres"] {
+        let (search, secret) = sample(service);
+        added.push(vault.add(search, secret).unwrap());
+    }
+    vault.reveal(added[1]).unwrap();
+    assert_eq!(vault.search("").unwrap()[0].id(), added[1]);
+}
