@@ -375,6 +375,14 @@ impl Storage {
 
     /// Ejecuta una escritura en su propia transacción `IMMEDIATE` y devuelve
     /// cuántas filas cambió.
+    /// Solo para pruebas: hace que toda escritura posterior falle.
+    #[cfg(test)]
+    pub(crate) fn deny_writes_for_test(&self) {
+        self.conn
+            .pragma_update(None, "query_only", true)
+            .expect("query_only");
+    }
+
     fn write(&mut self, sql: &str, params: impl rusqlite::Params) -> Result<usize> {
         let tx = self
             .conn

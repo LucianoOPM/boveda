@@ -86,6 +86,15 @@ pub struct UnlockReport {
     pub unidentified_corrupt: usize,
 }
 
+/// Qué hacer con el secreto al editar una entrada.
+#[derive(Debug)]
+pub enum SecretChange {
+    /// Conservar el secreto actual. No sale del núcleo.
+    Keep,
+    /// Reemplazar contraseña y notas juntas.
+    Replace(Secret),
+}
+
 impl Vault {
     /// Crea una bóveda nueva en `path` y la devuelve desbloqueada y vacía.
     ///
@@ -185,6 +194,77 @@ impl Vault {
             last_used_at: None,
         });
         Ok(id)
+    }
+
+    /// Reemplaza los datos de búsqueda y, según `change`, conserva o
+    /// reemplaza el secreto.
+    ///
+    /// Siempre vuelve a cifrar ambas partes con nonces nuevos y la versión de
+    /// estructura actual. Actualiza `modified_at`, no `last_used_at`. Con
+    /// [`SecretChange::Replace`] repara una entrada dañada. Con
+    /// [`SecretChange::Keep`] y el secreto dañado devuelve
+    /// [`Error::CorruptEntry`] sin tocar el archivo.
+    pub fn edit(&mut self, id: EntryId, search: SearchData, change: SecretChange) -> Result<()> {
+        let unlocked = self.unlocked.as_mut().ok_or(Error::Locked)?;
+        let now = now_millis()?;
+        // Los metadatos vienen de la fila, no de la caché: así funciona igual
+        // para una entrada que estaba dañada.
+        let stored = self.storage.get_entry(id)?;
+        let secret = match change {
+            SecretChange::Keep => stored.sealed.open_secret(&unlocked.key)?,
+            SecretChange::Replace(secret) => secret,
+        };
+        let sealed = SealedEntry::seal(&unlocked.key, id, &search, &secret)?;
+        self.storage.update_entry(&sealed, now)?;
+
+        let summary = EntrySummary {
+            id,
+            search,
+            modified_at: now,
+            last_used_at: stored.last_used_at,
+        };
+        match unlocked.entries.iter_mut().find(|e| e.id == id) {
+            // El valor anterior se borra al soltarse.
+            Some(slot) => *slot = summary,
+            None => unlocked.entries.push(summary),
+        }
+        Ok(())
+    }
+
+    /// Elimina una entrada: queda como lápida en el archivo. También funciona
+    /// sobre una entrada dañada.
+    pub fn delete(&mut self, id: EntryId) -> Result<()> {
+        let unlocked = self.unlocked.as_mut().ok_or(Error::Locked)?;
+        let now = now_millis()?;
+        self.storage.delete_entry(id, now)?;
+        unlocked.entries.retain(|e| e.id != id);
+        Ok(())
+    }
+
+    /// Descifra el secreto de una entrada (al copiar, mostrar o enviar) y
+    /// registra su uso.
+    ///
+    /// Un secreto dañado devuelve [`Error::CorruptEntry`] sin escribir nada.
+    ///
+    /// `last_used_at` es de mejor esfuerzo: se actualiza en memoria y luego
+    /// se intenta escribir en disco. Si la escritura falla (o el reloj no es
+    /// válido), el secreto se devuelve igual y el error se descarta. Dentro de
+    /// la sesión, el orden en memoria es correcto; si el disco falló, ese uso
+    /// se pierde al cerrar. No afecta la integridad de la bóveda.
+    pub fn reveal(&mut self, id: EntryId) -> Result<Secret> {
+        let unlocked = self.unlocked.as_mut().ok_or(Error::Locked)?;
+        let secret = self
+            .storage
+            .get_entry(id)?
+            .sealed
+            .open_secret(&unlocked.key)?;
+        if let Ok(now) = now_millis() {
+            if let Some(entry) = unlocked.entries.iter_mut().find(|e| e.id == id) {
+                entry.last_used_at = Some(now);
+            }
+            let _ = self.storage.touch_entry(id, now);
+        }
+        Ok(secret)
     }
 
     fn unlocked(&self) -> Result<&Unlocked> {

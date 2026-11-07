@@ -4,7 +4,7 @@ use std::fs;
 use std::path::PathBuf;
 use std::time::{Duration, UNIX_EPOCH};
 
-use secrecy::SecretString;
+use secrecy::{ExposeSecret, SecretString};
 use zeroize::ZeroizeOnDrop;
 
 use super::*;
@@ -245,4 +245,269 @@ fn unlock_storage_failure_keeps_locked() {
         Err(Error::Storage(_))
     ));
     assert!(vault.is_locked());
+}
+
+// --- edit, delete y reveal ---------------------------------------------
+
+/// Invierte un bit dentro del texto cifrado de `column` (`search` o `secret`).
+fn tamper(path: &Path, id: EntryId, column: &str) {
+    let conn = raw(path);
+    let mut blob: Vec<u8> = conn
+        .query_row(
+            &format!("SELECT {column} FROM entries WHERE id = ?1"),
+            [id.as_bytes().as_slice()],
+            |r| r.get(0),
+        )
+        .unwrap();
+    blob[30] ^= 1;
+    conn.execute(
+        &format!("UPDATE entries SET {column} = ?1 WHERE id = ?2"),
+        rusqlite::params![blob, id.as_bytes().as_slice()],
+    )
+    .unwrap();
+}
+
+/// `search`, `secret`, `modified_at` y `last_used_at` de la fila.
+type RowBytes = (Option<Vec<u8>>, Option<Vec<u8>>, i64, Option<i64>);
+
+fn row_bytes(path: &Path, id: EntryId) -> RowBytes {
+    raw(path)
+        .query_row(
+            "SELECT search, secret, modified_at, last_used_at FROM entries WHERE id = ?1",
+            [id.as_bytes().as_slice()],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+        )
+        .unwrap()
+}
+
+fn add_sample(vault: &mut Vault, service: &str) -> EntryId {
+    let (search, secret) = sample(service);
+    vault.add(search, secret).unwrap()
+}
+
+fn search_with_tags(service: &str, tags: &[&str]) -> SearchData {
+    SearchData::new(
+        service,
+        Some(&format!("https://{service}.example")),
+        Some("usuario@example.com"),
+        tags,
+    )
+    .unwrap()
+}
+
+fn find(vault: &Vault, id: EntryId) -> &EntrySummary {
+    vault
+        .entries()
+        .unwrap()
+        .iter()
+        .find(|e| e.id() == id)
+        .unwrap()
+}
+
+#[test]
+fn locked_operations_fail() {
+    let (_dir, _path, mut vault) = new_vault();
+    let id = add_sample(&mut vault, "gmail");
+    vault.lock();
+    let (search, secret) = sample("otro");
+    assert_eq!(vault.entries().err(), Some(Error::Locked));
+    assert_eq!(vault.add(search, secret).err(), Some(Error::Locked));
+    let (search, _) = sample("otro");
+    assert_eq!(
+        vault.edit(id, search, SecretChange::Keep).err(),
+        Some(Error::Locked)
+    );
+    assert_eq!(vault.delete(id).err(), Some(Error::Locked));
+    assert_eq!(vault.reveal(id).err(), Some(Error::Locked));
+}
+
+#[test]
+fn reveal_returns_secret_and_touches() {
+    let (_dir, path, mut vault) = new_vault();
+    let id = add_sample(&mut vault, "gmail");
+    let secret = vault.reveal(id).unwrap();
+    assert_eq!(secret.password().expose_secret(), "clave-gmail");
+    assert_eq!(
+        secret.notes().map(|n| n.expose_secret()),
+        Some("notas de prueba")
+    );
+    let cached = find(&vault, id).last_used_at();
+    assert!(cached.is_some());
+    assert_eq!(row_bytes(&path, id).3, cached);
+}
+
+#[test]
+fn reveal_corrupt_secret() {
+    let (_dir, path, mut vault) = new_vault();
+    let id = add_sample(&mut vault, "gmail");
+    tamper(&path, id, "secret");
+    assert_eq!(vault.reveal(id).err(), Some(Error::CorruptEntry));
+    assert_eq!(row_bytes(&path, id).3, None);
+    assert_eq!(find(&vault, id).last_used_at(), None);
+}
+
+#[test]
+fn reveal_missing_id() {
+    let (_dir, _path, mut vault) = new_vault();
+    assert_eq!(
+        vault.reveal(EntryId::from_bytes([7; 16])).err(),
+        Some(Error::EntryNotFound)
+    );
+}
+
+#[test]
+fn reveal_survives_write_failure() {
+    let (_dir, _path, mut vault) = new_vault();
+    let id = add_sample(&mut vault, "gmail");
+    vault.storage.deny_writes_for_test();
+    let secret = vault.reveal(id).unwrap();
+    assert_eq!(secret.password().expose_secret(), "clave-gmail");
+    let (search, secret) = sample("otro");
+    assert_eq!(
+        vault.add(search, secret).err(),
+        Some(Error::Storage(crate::error::StorageErrorKind::ReadOnly))
+    );
+}
+
+#[test]
+fn edit_keep_changes_only_search() {
+    let (_dir, path, mut vault) = new_vault();
+    let id = add_sample(&mut vault, "gmail");
+    vault.reveal(id).unwrap();
+    let before = row_bytes(&path, id);
+
+    vault
+        .edit(
+            id,
+            search_with_tags("gmail", &["personal"]),
+            SecretChange::Keep,
+        )
+        .unwrap();
+
+    let after = row_bytes(&path, id);
+    assert_ne!(after.0, before.0);
+    assert!(after.2 >= before.2);
+    assert_eq!(after.3, before.3);
+    let summary = find(&vault, id);
+    assert_eq!(summary.search().tags(), ["personal"]);
+    assert_eq!(summary.last_used_at(), before.3);
+    assert_eq!(summary.modified_at(), after.2);
+    assert_eq!(
+        vault.reveal(id).unwrap().password().expose_secret(),
+        "clave-gmail"
+    );
+}
+
+#[test]
+fn edit_keep_with_corrupt_secret() {
+    let (_dir, path, mut vault) = new_vault();
+    let id = add_sample(&mut vault, "gmail");
+    tamper(&path, id, "secret");
+    let before = row_bytes(&path, id);
+    assert_eq!(
+        vault
+            .edit(id, search_with_tags("gmail", &["x"]), SecretChange::Keep)
+            .err(),
+        Some(Error::CorruptEntry)
+    );
+    assert_eq!(row_bytes(&path, id), before);
+}
+
+#[test]
+fn edit_replace_persists() {
+    let (_dir, _path, mut vault) = new_vault();
+    let id = add_sample(&mut vault, "gmail");
+    let secret = Secret::new(password("nueva"), None).unwrap();
+    vault
+        .edit(
+            id,
+            search_with_tags("gmail", &[]),
+            SecretChange::Replace(secret),
+        )
+        .unwrap();
+    vault.lock();
+    vault.unlock(&password("correcta")).unwrap();
+    let revealed = vault.reveal(id).unwrap();
+    assert_eq!(revealed.password().expose_secret(), "nueva");
+    assert!(revealed.notes().is_none());
+}
+
+#[test]
+fn edit_missing_or_deleted() {
+    let (_dir, _path, mut vault) = new_vault();
+    let missing = EntryId::from_bytes([7; 16]);
+    assert_eq!(
+        vault
+            .edit(missing, search_with_tags("x", &[]), SecretChange::Keep)
+            .err(),
+        Some(Error::EntryNotFound)
+    );
+    let id = add_sample(&mut vault, "gmail");
+    vault.delete(id).unwrap();
+    let secret = Secret::new(password("nueva"), None).unwrap();
+    assert_eq!(
+        vault
+            .edit(
+                id,
+                search_with_tags("x", &[]),
+                SecretChange::Replace(secret)
+            )
+            .err(),
+        Some(Error::EntryNotFound)
+    );
+}
+
+#[test]
+fn delete_makes_tombstone() {
+    let (_dir, path, mut vault) = new_vault();
+    let id = add_sample(&mut vault, "gmail");
+    vault.delete(id).unwrap();
+    assert!(vault.entries().unwrap().is_empty());
+    let deleted: i64 = raw(&path)
+        .query_row(
+            "SELECT deleted FROM entries WHERE id = ?1",
+            [id.as_bytes().as_slice()],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(deleted, 1);
+    let row = row_bytes(&path, id);
+    assert_eq!((row.0, row.1), (None, None));
+}
+
+#[test]
+fn delete_twice() {
+    let (_dir, _path, mut vault) = new_vault();
+    let id = add_sample(&mut vault, "gmail");
+    add_sample(&mut vault, "banco");
+    vault.delete(id).unwrap();
+    assert_eq!(vault.delete(id).err(), Some(Error::EntryNotFound));
+    assert_eq!(vault.entries().unwrap().len(), 1);
+}
+
+#[test]
+fn reveal_and_edit_do_not_leak_in_errors() {
+    // Contraseñas que no aparecen dentro de ningún mensaje ("incorrecta" contiene "correcta").
+    let (_dir, path) = temp_path();
+    let mut vault =
+        Vault::create_with_params(&path, &password("maestra-Xy7"), KdfParams::MIN).unwrap();
+    let id = add_sample(&mut vault, "gmail");
+    tamper(&path, id, "secret");
+    let mut errors = vec![
+        vault.reveal(id).err().unwrap(),
+        vault
+            .edit(id, search_with_tags("gmail", &[]), SecretChange::Keep)
+            .err()
+            .unwrap(),
+        vault.reveal(EntryId::from_bytes([7; 16])).err().unwrap(),
+    ];
+    vault.lock();
+    errors.push(vault.unlock(&password("intento-Qz4")).err().unwrap());
+    errors.push(vault.reveal(id).err().unwrap());
+    for e in errors {
+        let text = format!("{e} {e:?}");
+        for secret in ["maestra-Xy7", "intento-Qz4", "clave-", "gmail"] {
+            assert!(!text.contains(secret), "{text}");
+        }
+    }
 }
