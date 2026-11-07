@@ -9,5 +9,6 @@
 
 mod crypto;
 mod error;
+mod vault;
 
 pub use error::{Error, Result};
