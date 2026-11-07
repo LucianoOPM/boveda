@@ -41,6 +41,51 @@ pub enum Error {
     /// Los datos para crear o editar una entrada no cumplen las reglas.
     #[error("entrada no válida: {0}")]
     InvalidEntry(InvalidEntryField),
+
+    /// El archivo no es una bóveda: no es SQLite o su `application_id` no es
+    /// el de Bóveda.
+    #[error("el archivo no es una bóveda")]
+    NotAVault,
+
+    /// No existe una entrada viva con ese identificador (nunca existió o es
+    /// una lápida).
+    #[error("entrada no encontrada")]
+    EntryNotFound,
+
+    /// Falló el almacenamiento. Nunca incluye el error original de SQLite,
+    /// que puede traer SQL, rutas o valores de columnas.
+    #[error("error de almacenamiento: {0}")]
+    Storage(StorageErrorKind),
+}
+
+/// Tipo de fallo del almacenamiento, sin datos.
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+pub enum StorageErrorKind {
+    /// Disco lleno, permisos o error de lectura o escritura.
+    #[error("error de lectura o escritura del archivo")]
+    Io,
+    /// Otro proceso tiene bloqueado el archivo.
+    #[error("el archivo está bloqueado por otro proceso")]
+    Busy,
+    /// SQLite detectó que el archivo entero está dañado.
+    #[error("el archivo de la bóveda está dañado")]
+    Corrupt,
+    /// Escritura sobre una conexión o un archivo de solo lectura.
+    #[error("el archivo se abrió en solo lectura")]
+    ReadOnly,
+    /// El archivo trae un `-journal` caliente y se abrió en solo lectura.
+    #[error("el archivo tiene una transacción sin terminar")]
+    HotJournal,
+    /// El modo del diario no quedó en `delete`.
+    #[error("no se pudo fijar el modo del diario")]
+    JournalMode,
+    /// `create` sobre una ruta que ya existe.
+    #[error("el archivo ya existe")]
+    AlreadyExists,
+    /// Un código de SQLite no previsto.
+    #[error("error interno de SQLite")]
+    Other,
 }
 
 /// Campo de una entrada que no cumple las reglas, y por qué.
@@ -71,3 +116,6 @@ pub enum InvalidEntryField {
 
 /// Resultado con el [`Error`] del núcleo.
 pub type Result<T> = std::result::Result<T, Error>;
+
+#[cfg(test)]
+mod tests;

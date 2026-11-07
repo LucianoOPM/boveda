@@ -120,6 +120,45 @@ Decisiones tomadas el 2026-11-07, antes de implementar las llaves. Fijan el form
 
 **Almacenamiento.** La tabla de entradas guarda, además de las partes cifradas, `modified_at`, `last_used_at` y la marca de eliminada, en claro. `last_used_at` ordena las usadas recientemente cuando no hay texto de búsqueda; revela cuándo se usó una entrada, pero no cuál es.
 
+Decisiones tomadas el 2026-11-07 (detalle en `docs/superpowers/specs/2026-11-07-almacenamiento-design.md`):
+
+- Fechas en milisegundos Unix, como `i64`. El almacenamiento no lee el reloj: recibe la hora de quien llama. `Vault` la lee en un único punto y devuelve un error tipado si el reloj marca una fecha anterior a 1970.
+- `PRAGMA application_id = 0x42564C54` ("BVLT") identifica el archivo como bóveda. Es fijo para siempre y no es un control de seguridad, porque no está autenticado. La versión es solo `format_version` de la cabecera; no se usa `user_version`.
+- Abrir nunca crea ni modifica el archivo. Un archivo que no es SQLite, o un SQLite con otro `application_id`, da `NotAVault`; una `format_version` desconocida da su propio error.
+- En cada apertura de lectura y escritura se fijan `secure_delete = ON`, `journal_mode = DELETE` y `synchronous = FULL`. La apertura en solo lectura (para validar un respaldo) no los fija: rechaza un archivo en WAL o con un `-journal` caliente, y nunca lo repara.
+- Las filas eliminadas son lápidas: `deleted = 1`, `modified_at` actualizado y las dos partes cifradas en `NULL`. Un `CHECK` impide una entrada viva sin partes y una lápida con partes. Una lápida nunca cuenta como entrada dañada.
+- Una fila con un id que no mide 16 bytes o una versión fuera de `u16` cuenta como entrada dañada y falla sola.
+
+Esquema de la versión de formato 1:
+
+```sql
+CREATE TABLE header (
+    id              INTEGER PRIMARY KEY CHECK (id = 1),
+    format_version  INTEGER NOT NULL,
+    kdf_algorithm   INTEGER NOT NULL,
+    kdf_memory_kib  INTEGER NOT NULL,
+    kdf_iterations  INTEGER NOT NULL,
+    kdf_parallelism INTEGER NOT NULL,
+    salt            BLOB NOT NULL CHECK (length(salt) = 16),
+    key_nonce       BLOB NOT NULL CHECK (length(key_nonce) = 24),
+    encrypted_key   BLOB NOT NULL CHECK (length(encrypted_key) = 48)
+) STRICT;
+
+CREATE TABLE entries (
+    id                   BLOB PRIMARY KEY NOT NULL,
+    entry_schema_version INTEGER NOT NULL,
+    search               BLOB,
+    secret               BLOB,
+    modified_at          INTEGER NOT NULL,   -- ms Unix
+    last_used_at         INTEGER,            -- NULL = nunca usada
+    deleted              INTEGER NOT NULL DEFAULT 0,
+    CHECK ((deleted = 0 AND search IS NOT NULL AND secret IS NOT NULL)
+        OR (deleted = 1 AND search IS NULL AND secret IS NULL))
+) STRICT, WITHOUT ROWID;
+```
+
+**Fuera del modelo de amenazas de la v1:** al confirmar una transacción se borra el `-journal`, pero sus bytes (cifrados) pueden quedar en la memoria flash hasta que el sistema reutilice esos bloques, y `secure_delete` no cubre eso. Tampoco se resuelven aquí los relojes que retroceden o están desfasados entre dispositivos: le corresponde a la sincronización (fase 3).
+
 **API.** Una sola estructura `Vault` con la llave en `Option<SecretBox<[u8; 32]>>`. Las operaciones con la bóveda bloqueada devuelven `Error::Locked`. `lock()` borra de memoria la llave de bóveda y los datos de búsqueda descifrados. Como `rusqlite::Connection` no es `Sync`, el `Mutex` vive en la fachada de `mobile/rust`, no en el núcleo.
 
 **Entradas dañadas.** `unlock()` devuelve las entradas válidas y la lista de identificadores de las que no se pudieron descifrar, sin fallar por ellas. `reveal()` sobre una entrada con el secreto dañado devuelve un error de entrada dañada. Ambos casos tienen su prueba: alterar un byte de una sola entrada y comprobar que el resto abre, y que `reveal()` de la dañada devuelve ese error.
