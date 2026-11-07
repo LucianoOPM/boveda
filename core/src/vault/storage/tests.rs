@@ -711,3 +711,34 @@ fn format_version_out_of_u16_is_corrupt() {
         Some(Error::Storage(StorageErrorKind::Corrupt))
     );
 }
+
+// --- Respaldos (#9) ----------------------------------------------------
+
+#[test]
+fn vacuum_into_copies_with_synchronous_full() {
+    let (dir, _path, mut storage) = new_vault();
+    storage
+        .insert_entry(&fake_entry(1, b"b1", b"s1"), T1)
+        .unwrap();
+    storage
+        .insert_entry(&fake_entry(2, b"b2", b"s2"), T1)
+        .unwrap();
+    // Con `synchronous = FULL`, SQLite hace el fsync del archivo generado
+    // por `VACUUM INTO` (lang_vacuum.html). Si esto cambia, hay que
+    // sincronizar el respaldo a mano.
+    let synchronous: i64 = storage
+        .conn
+        .pragma_query_value(None, "synchronous", |row| row.get(0))
+        .unwrap();
+    assert_eq!(synchronous, 2);
+
+    let dest = dir.path().join("respaldo.db");
+    fs::File::create(&dest).unwrap();
+    storage.vacuum_into(&dest).unwrap();
+
+    let copy = Storage::open_read_only(&dest).unwrap();
+    let listing = copy.list_entries().unwrap();
+    assert_eq!(listing.entries.len(), 2);
+    let one = copy.get_entry(EntryId::from_bytes([1; 16])).unwrap();
+    assert_parts(&one, b"b1", b"s1");
+}

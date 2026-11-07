@@ -1,5 +1,5 @@
-//! Bóveda: cabecera, entradas, almacenamiento y la API pública `Vault`.
-//! Los respaldos llegan más adelante.
+//! Bóveda: cabecera, entradas, almacenamiento, respaldos y la API pública
+//! `Vault`.
 //!
 //! `Vault` guarda la conexión al archivo y, mientras está desbloqueada, la
 //! llave de bóveda junto con los datos de búsqueda descifrados. Ambos viven
@@ -15,6 +15,7 @@ use zeroize::ZeroizeOnDrop;
 use crate::crypto::kdf::{self, KdfParams};
 use crate::crypto::keys::VaultKey;
 
+mod backup;
 pub(crate) mod entry;
 pub(crate) mod header;
 pub(crate) mod storage;
@@ -290,6 +291,18 @@ impl Vault {
             let _ = self.storage.touch_entry(id, now);
         }
         Ok(secret)
+    }
+
+    /// Exporta un respaldo: una copia consistente de la bóveda en `dest`,
+    /// con su cabecera, que abre con la misma contraseña maestra.
+    ///
+    /// Exige la bóveda desbloqueada ([`Error::Locked`]), para que nadie
+    /// exporte sin que el usuario esté presente. `dest` debe ser absoluta
+    /// (si no, `Storage(Io)`) y no existir ([`Error::AlreadyExists`]). Las
+    /// partes cifradas de las entradas eliminadas no viajan.
+    pub fn export(&self, dest: &Path) -> Result<()> {
+        self.unlocked()?;
+        backup::export(&self.storage, dest)
     }
 
     /// Cambia la contraseña maestra: verifica `current`, calibra Argon2id y
