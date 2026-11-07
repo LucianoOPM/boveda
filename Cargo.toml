@@ -9,7 +9,7 @@ members = ["core", "mobile/rust", "desktop/src-tauri"]
 
 [workspace.package]
 edition = "2024"
-rust-version = "1.85"
+rust-version = "1.88"
 publish = false
 
 # Argon2 con 64 MiB es muy lento sin optimizar; optimizar las dependencias
