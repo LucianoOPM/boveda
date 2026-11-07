@@ -193,3 +193,145 @@ fn open_rejects_future_format_version() {
         .unwrap();
     assert_open_fails_unchanged(&path, Error::UnsupportedFormatVersion(2));
 }
+
+// --- Cabecera y solo lectura ---
+
+#[test]
+fn replace_header_persists_and_old_password_fails() {
+    let (_dir, path, mut storage) = new_vault();
+    let (new, _) = VaultHeader::create(&password("nueva"), KdfParams::MIN).unwrap();
+    storage.replace_header(&new).unwrap();
+    storage.close().unwrap();
+
+    let read = Storage::open(&path).unwrap().read_header().unwrap();
+    assert_eq!(read.salt(), new.salt());
+    assert!(read.unlock(&password("nueva")).is_ok());
+    assert_eq!(
+        read.unlock(&password("correcta")).err(),
+        Some(Error::WrongPassword)
+    );
+}
+
+#[test]
+fn header_out_of_range_value_is_corrupt_without_value() {
+    let (_dir, path, storage) = new_vault();
+    storage.close().unwrap();
+    raw(&path)
+        .execute("UPDATE header SET kdf_memory_kib = 987654321987", [])
+        .unwrap();
+
+    let err = Storage::open(&path).err().unwrap();
+    assert_eq!(err, Error::Storage(StorageErrorKind::Corrupt));
+    assert!(!format!("{err}").contains("987654321987"));
+    assert!(!format!("{err:?}").contains("987654321987"));
+}
+
+#[test]
+fn open_read_only_reads_header() {
+    let (_dir, path, storage) = new_vault();
+    storage.close().unwrap();
+    let storage = Storage::open_read_only(&path).unwrap();
+    assert!(
+        storage
+            .read_header()
+            .unwrap()
+            .unlock(&password("correcta"))
+            .is_ok()
+    );
+}
+
+#[test]
+fn read_only_rejects_writes() {
+    let (_dir, path, storage) = new_vault();
+    storage.close().unwrap();
+    let before = fs::read(&path).unwrap();
+    let mut storage = Storage::open_read_only(&path).unwrap();
+    let (other, _) = new_header();
+
+    assert_eq!(
+        storage.replace_header(&other).err(),
+        Some(Error::Storage(StorageErrorKind::ReadOnly))
+    );
+    storage.close().unwrap();
+    assert_eq!(fs::read(&path).unwrap(), before);
+}
+
+/// Ruta con un sufijo agregado al nombre del archivo (`-journal`, `-wal`...).
+fn sibling(path: &Path, suffix: &str) -> PathBuf {
+    let mut name = path.as_os_str().to_owned();
+    name.push(suffix);
+    PathBuf::from(name)
+}
+
+#[test]
+fn open_read_only_rejects_wal() {
+    let (_dir, path, storage) = new_vault();
+    storage.close().unwrap();
+    {
+        let conn = raw(&path);
+        let _: String = conn
+            .pragma_update_and_check(None, "journal_mode", "WAL", |row| row.get(0))
+            .unwrap();
+    }
+    let before = fs::read(&path).unwrap();
+    assert!(!sibling(&path, "-wal").exists());
+
+    let err = Storage::open_read_only(&path).err().unwrap();
+    assert_eq!(err, Error::Storage(StorageErrorKind::JournalMode));
+    assert_eq!(fs::read(&path).unwrap(), before);
+    assert!(!sibling(&path, "-wal").exists());
+    assert!(!sibling(&path, "-shm").exists());
+}
+
+/// Copia `src` a `dst` en mitad de una transacción que ya escribió páginas
+/// en el archivo, junto con su `-journal`: la copia queda con un diario
+/// caliente, como tras un corte de energía.
+fn make_hot_journal_copy(src: &Path, dst: &Path) {
+    let conn = raw(src);
+    conn.pragma_update(None, "cache_size", 1).unwrap();
+    conn.execute_batch("BEGIN IMMEDIATE").unwrap();
+    let part = vec![0xAB_u8; 4096];
+    for i in 0..200_u32 {
+        let mut id = [0_u8; 16];
+        id[..4].copy_from_slice(&i.to_le_bytes());
+        conn.execute(
+            "INSERT INTO entries (id, entry_schema_version, search, secret, modified_at) \
+             VALUES (?1, 1, ?2, ?2, 0)",
+            rusqlite::params![id.as_slice(), part.as_slice()],
+        )
+        .unwrap();
+    }
+    fs::copy(src, dst).unwrap();
+    fs::copy(sibling(src, "-journal"), sibling(dst, "-journal")).unwrap();
+    conn.execute_batch("ROLLBACK").unwrap();
+    drop(conn);
+
+    let journal = fs::metadata(sibling(dst, "-journal")).unwrap();
+    assert!(journal.len() > 512, "el diario copiado no está caliente");
+}
+
+#[test]
+fn open_read_only_rejects_hot_journal() {
+    let (dir, path, storage) = new_vault();
+    storage.close().unwrap();
+    let copy = dir.path().join("copia.db");
+    make_hot_journal_copy(&path, &copy);
+    let db_before = fs::read(&copy).unwrap();
+    let journal_before = fs::read(sibling(&copy, "-journal")).unwrap();
+
+    let err = Storage::open_read_only(&copy).err().unwrap();
+    assert_eq!(err, Error::Storage(StorageErrorKind::HotJournal));
+    assert_eq!(fs::read(&copy).unwrap(), db_before);
+    assert_eq!(
+        fs::read(sibling(&copy, "-journal")).unwrap(),
+        journal_before
+    );
+}
+
+#[test]
+fn open_read_only_missing_path_fails() {
+    let (_dir, path) = temp_path();
+    let err = Storage::open_read_only(&path).err().unwrap();
+    assert_eq!(err, Error::Storage(StorageErrorKind::Io));
+    assert!(!path.exists());
+}

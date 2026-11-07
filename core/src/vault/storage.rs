@@ -141,6 +141,37 @@ impl Storage {
         Ok(storage)
     }
 
+    /// Abre una bóveda existente en solo lectura, para validar un respaldo.
+    ///
+    /// No fija pragmas (cambiar `journal_mode` es escribir): solo comprueba
+    /// que el modo sea `delete`. Un archivo en WAL o con un `-journal`
+    /// caliente se rechaza y nunca se repara.
+    pub(crate) fn open_read_only(path: &Path) -> Result<Self> {
+        // Leer una base en WAL, aun en solo lectura, crea los archivos `-wal`
+        // y `-shm`. Por eso el modo se revisa en la cabecera del archivo
+        // antes de abrirlo con SQLite.
+        if is_wal_file(path) {
+            return Err(Error::Storage(StorageErrorKind::JournalMode));
+        }
+        let conn = Connection::open_with_flags(
+            path,
+            OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+        )
+        .map_err(map_sqlite_error)?;
+        // Primera lectura: con un `-journal` caliente falla aquí con
+        // `SQLITE_READONLY_ROLLBACK`.
+        check_application_id(&conn)?;
+        let mode: String = conn
+            .pragma_query_value(None, "journal_mode", |row| row.get(0))
+            .map_err(map_sqlite_error)?;
+        if !mode.eq_ignore_ascii_case("delete") {
+            return Err(Error::Storage(StorageErrorKind::JournalMode));
+        }
+        let storage = Self { conn };
+        storage.read_header()?;
+        Ok(storage)
+    }
+
     /// Cierra la conexión sin perder un error al cerrar.
     pub(crate) fn close(self) -> Result<()> {
         self.conn.close().map_err(|(_, e)| map_sqlite_error(e))
@@ -189,6 +220,38 @@ impl Storage {
             EncryptedKey { nonce, ciphertext },
         )
     }
+
+    /// Reemplaza la única fila de la cabecera (al cambiar la contraseña
+    /// maestra).
+    pub(crate) fn replace_header(&mut self, header: &VaultHeader) -> Result<()> {
+        let tx = self
+            .conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(map_sqlite_error)?;
+        let params = header.params();
+        let key = header.encrypted_key();
+        let changed = tx
+            .execute(
+                "UPDATE header SET format_version = ?1, kdf_algorithm = ?2, \
+                 kdf_memory_kib = ?3, kdf_iterations = ?4, kdf_parallelism = ?5, \
+                 salt = ?6, key_nonce = ?7, encrypted_key = ?8 WHERE id = 1",
+                params![
+                    header.format_version(),
+                    header.algorithm() as u8,
+                    params.memory_kib,
+                    params.iterations,
+                    params.parallelism,
+                    header.salt().as_slice(),
+                    key.nonce.as_slice(),
+                    key.ciphertext.as_slice(),
+                ],
+            )
+            .map_err(map_sqlite_error)?;
+        if changed != 1 {
+            return Err(Error::Storage(StorageErrorKind::Corrupt));
+        }
+        tx.commit().map_err(map_sqlite_error)
+    }
 }
 
 /// Columnas de la cabecera tal como salen de SQLite.
@@ -215,6 +278,18 @@ fn apply_pragmas(conn: &Connection) -> Result<()> {
         return Err(Error::Storage(StorageErrorKind::JournalMode));
     }
     Ok(())
+}
+
+/// Indica si la cabecera del archivo SQLite declara el modo WAL (bytes 18 y
+/// 19, versiones de lectura y escritura, iguales a 2).
+///
+/// Si el archivo no se puede leer o no es SQLite, devuelve `false` y deja
+/// que la apertura con SQLite dé el error que corresponda.
+fn is_wal_file(path: &Path) -> bool {
+    const MAGIC: &[u8; 16] = b"SQLite format 3\0";
+    let mut head = [0_u8; 20];
+    let read = fs::File::open(path).and_then(|mut f| io::Read::read_exact(&mut f, &mut head));
+    read.is_ok() && head.starts_with(MAGIC) && (head[18] == 2 || head[19] == 2)
 }
 
 /// Primera consulta tras abrir: como `rusqlite` abre de forma perezosa, un
