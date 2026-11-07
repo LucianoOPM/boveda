@@ -14,7 +14,10 @@ use std::path::Path;
 
 use rusqlite::{Connection, ErrorCode, OpenFlags, TransactionBehavior, params};
 
+use super::entry::sealed::SealedEntry;
+use super::entry::{ENTRY_ID_LEN, EntryId};
 use super::header::VaultHeader;
+use crate::crypto::aead::EncryptedPart;
 use crate::crypto::kdf::{KdfParams, SALT_LEN};
 use crate::crypto::keys::{ENCRYPTED_KEY_LEN, EncryptedKey, NONCE_LEN};
 use crate::error::{Error, Result, StorageErrorKind};
@@ -252,6 +255,201 @@ impl Storage {
         }
         tx.commit().map_err(map_sqlite_error)
     }
+
+    /// Guarda una entrada nueva con `modified_at = now` y sin uso registrado.
+    pub(crate) fn insert_entry(&mut self, entry: &SealedEntry, now: i64) -> Result<()> {
+        self.write(
+            "INSERT INTO entries (id, entry_schema_version, search, secret, modified_at, \
+             last_used_at, deleted) VALUES (?1, ?2, ?3, ?4, ?5, NULL, 0)",
+            params![
+                entry.id().as_bytes().as_slice(),
+                entry.entry_schema_version(),
+                entry.search_bytes().as_bytes(),
+                entry.secret_bytes().as_bytes(),
+                now,
+            ],
+        )
+        .map(|_| ())
+    }
+
+    /// Reemplaza la versión y las partes de una entrada viva y fija
+    /// `modified_at = now`. No toca `last_used_at`.
+    pub(crate) fn update_entry(&mut self, entry: &SealedEntry, now: i64) -> Result<()> {
+        self.write_existing(
+            "UPDATE entries SET entry_schema_version = ?2, search = ?3, secret = ?4, \
+             modified_at = ?5 WHERE id = ?1 AND deleted = 0",
+            params![
+                entry.id().as_bytes().as_slice(),
+                entry.entry_schema_version(),
+                entry.search_bytes().as_bytes(),
+                entry.secret_bytes().as_bytes(),
+                now,
+            ],
+        )
+    }
+
+    /// Convierte una entrada viva en lápida: sin partes cifradas y con
+    /// `modified_at = now`, en un solo `UPDATE`.
+    pub(crate) fn delete_entry(&mut self, id: EntryId, now: i64) -> Result<()> {
+        self.write_existing(
+            "UPDATE entries SET deleted = 1, search = NULL, secret = NULL, modified_at = ?2 \
+             WHERE id = ?1 AND deleted = 0",
+            params![id.as_bytes().as_slice(), now],
+        )
+    }
+
+    /// Registra el uso de una entrada viva. No cambia `modified_at`.
+    pub(crate) fn touch_entry(&mut self, id: EntryId, now: i64) -> Result<()> {
+        self.write_existing(
+            "UPDATE entries SET last_used_at = ?2 WHERE id = ?1 AND deleted = 0",
+            params![id.as_bytes().as_slice(), now],
+        )
+    }
+
+    /// Lee una entrada viva. Una lápida o un id inexistente dan
+    /// [`Error::EntryNotFound`]; una fila mal formada, [`Error::CorruptEntry`].
+    pub(crate) fn get_entry(&self, id: EntryId) -> Result<StoredEntry> {
+        let outcome = self
+            .conn
+            .query_row(
+                &format!("{SELECT_ENTRY} WHERE id = ?1 AND deleted = 0"),
+                [id.as_bytes().as_slice()],
+                read_row,
+            )
+            .map_err(|e| match e {
+                rusqlite::Error::QueryReturnedNoRows => Error::EntryNotFound,
+                other => map_sqlite_error(other),
+            })?;
+        match outcome {
+            RowOutcome::Valid(entry) => Ok(entry),
+            RowOutcome::Corrupt(_) | RowOutcome::Unidentified => Err(Error::CorruptEntry),
+        }
+    }
+
+    /// Lista las entradas vivas. Una fila mal formada no aborta el listado;
+    /// un error de SQLite (por ejemplo, el archivo dañado) sí.
+    pub(crate) fn list_entries(&self) -> Result<EntryListing> {
+        let mut stmt = self
+            .conn
+            .prepare(&format!("{SELECT_ENTRY} WHERE deleted = 0"))
+            .map_err(map_sqlite_error)?;
+        let rows = stmt.query_map([], read_row).map_err(map_sqlite_error)?;
+
+        let mut listing = EntryListing {
+            entries: Vec::new(),
+            corrupt: Vec::new(),
+            unidentified_corrupt: 0,
+        };
+        for outcome in rows {
+            match outcome.map_err(map_sqlite_error)? {
+                RowOutcome::Valid(entry) => listing.entries.push(entry),
+                RowOutcome::Corrupt(id) => listing.corrupt.push(id),
+                RowOutcome::Unidentified => listing.unidentified_corrupt += 1,
+            }
+        }
+        Ok(listing)
+    }
+
+    /// Ejecuta una escritura en su propia transacción `IMMEDIATE` y devuelve
+    /// cuántas filas cambió.
+    fn write(&mut self, sql: &str, params: impl rusqlite::Params) -> Result<usize> {
+        let tx = self
+            .conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(map_sqlite_error)?;
+        let changed = tx.execute(sql, params).map_err(map_sqlite_error)?;
+        tx.commit().map_err(map_sqlite_error)?;
+        Ok(changed)
+    }
+
+    /// Como [`Self::write`], pero sobre una entrada viva: si no cambió
+    /// ninguna fila, devuelve [`Error::EntryNotFound`].
+    fn write_existing(&mut self, sql: &str, params: impl rusqlite::Params) -> Result<()> {
+        match self.write(sql, params)? {
+            0 => Err(Error::EntryNotFound),
+            _ => Ok(()),
+        }
+    }
+}
+
+/// Entrada viva leída del archivo.
+#[derive(Debug)]
+pub(crate) struct StoredEntry {
+    pub(crate) sealed: SealedEntry,
+    /// Milisegundos Unix de la última creación o edición.
+    pub(crate) modified_at: i64,
+    /// Milisegundos Unix del último uso; `None` si nunca se usó.
+    pub(crate) last_used_at: Option<i64>,
+}
+
+/// Resultado de listar: las filas válidas y las dañadas, por separado.
+#[derive(Debug)]
+pub(crate) struct EntryListing {
+    pub(crate) entries: Vec<StoredEntry>,
+    /// Filas dañadas con un id válido de 16 bytes.
+    pub(crate) corrupt: Vec<EntryId>,
+    /// Filas dañadas cuyo id no mide 16 bytes: no hay un `EntryId` que
+    /// reportar.
+    pub(crate) unidentified_corrupt: usize,
+}
+
+const SELECT_ENTRY: &str = "SELECT id, entry_schema_version, search, secret, modified_at, \
+                            last_used_at FROM entries";
+
+/// Lo que se obtuvo de una fila de `entries`.
+enum RowOutcome {
+    Valid(StoredEntry),
+    Corrupt(EntryId),
+    Unidentified,
+}
+
+/// Lee una fila de [`SELECT_ENTRY`]. Los errores de conversión son daños de
+/// la fila, no del archivo: se convierten en `Corrupt` o `Unidentified` y su
+/// valor se descarta. Los demás errores se propagan.
+fn read_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<RowOutcome> {
+    let id = match row.get::<_, Vec<u8>>(0) {
+        Ok(bytes) => match <[u8; ENTRY_ID_LEN]>::try_from(bytes) {
+            Ok(bytes) => EntryId::from_bytes(bytes),
+            Err(_) => return Ok(RowOutcome::Unidentified),
+        },
+        Err(e) if is_conversion_error(&e) => return Ok(RowOutcome::Unidentified),
+        Err(e) => return Err(e),
+    };
+
+    let fields = (|| {
+        Ok((
+            row.get::<_, u16>(1)?,
+            row.get::<_, Vec<u8>>(2)?,
+            row.get::<_, Vec<u8>>(3)?,
+            row.get::<_, i64>(4)?,
+            row.get::<_, Option<i64>>(5)?,
+        ))
+    })();
+    match fields {
+        Ok((version, search, secret, modified_at, last_used_at)) => {
+            Ok(RowOutcome::Valid(StoredEntry {
+                sealed: SealedEntry::from_parts(
+                    id,
+                    version,
+                    EncryptedPart::from_bytes(search),
+                    EncryptedPart::from_bytes(secret),
+                ),
+                modified_at,
+                last_used_at,
+            }))
+        }
+        Err(e) if is_conversion_error(&e) => Ok(RowOutcome::Corrupt(id)),
+        Err(e) => Err(e),
+    }
+}
+
+fn is_conversion_error(err: &rusqlite::Error) -> bool {
+    matches!(
+        err,
+        rusqlite::Error::IntegralValueOutOfRange(..)
+            | rusqlite::Error::FromSqlConversionFailure(..)
+            | rusqlite::Error::InvalidColumnType(..)
+    )
 }
 
 /// Columnas de la cabecera tal como salen de SQLite.

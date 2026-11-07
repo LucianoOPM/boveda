@@ -6,8 +6,10 @@ use std::path::PathBuf;
 use secrecy::{ExposeSecret, SecretString};
 
 use super::*;
+use crate::crypto::aead::EncryptedPart;
 use crate::crypto::kdf::KdfParams;
 use crate::crypto::keys::VaultKey;
+use crate::vault::entry::{ENTRY_SCHEMA_VERSION, EntryId};
 
 fn password(text: &str) -> SecretString {
     SecretString::from(text)
@@ -242,16 +244,30 @@ fn open_read_only_reads_header() {
 
 #[test]
 fn read_only_rejects_writes() {
-    let (_dir, path, storage) = new_vault();
+    let (_dir, path, mut storage) = new_vault();
+    storage
+        .insert_entry(&fake_entry(1, b"busqueda", b"secreto"), T1)
+        .unwrap();
     storage.close().unwrap();
     let before = fs::read(&path).unwrap();
     let mut storage = Storage::open_read_only(&path).unwrap();
     let (other, _) = new_header();
+    let id = EntryId::from_bytes([1; 16]);
+    let read_only = Some(Error::Storage(StorageErrorKind::ReadOnly));
 
+    assert_eq!(storage.replace_header(&other).err(), read_only);
     assert_eq!(
-        storage.replace_header(&other).err(),
-        Some(Error::Storage(StorageErrorKind::ReadOnly))
+        storage.insert_entry(&fake_entry(2, b"b", b"s"), T2).err(),
+        read_only
     );
+    assert_eq!(
+        storage.update_entry(&fake_entry(1, b"b", b"s"), T2).err(),
+        read_only
+    );
+    assert_eq!(storage.delete_entry(id, T2).err(), read_only);
+    assert_eq!(storage.touch_entry(id, T2).err(), read_only);
+    assert!(storage.get_entry(id).is_ok());
+    assert_eq!(storage.list_entries().unwrap().entries.len(), 1);
     storage.close().unwrap();
     assert_eq!(fs::read(&path).unwrap(), before);
 }
@@ -334,4 +350,220 @@ fn open_read_only_missing_path_fails() {
     let err = Storage::open_read_only(&path).err().unwrap();
     assert_eq!(err, Error::Storage(StorageErrorKind::Io));
     assert!(!path.exists());
+}
+
+// --- Entradas ---
+
+const T1: i64 = 1_700_000_000_000;
+const T2: i64 = T1 + 1_000;
+const T3: i64 = T1 + 2_000;
+
+/// Entrada con partes arbitrarias, sin cifrar: el almacenamiento no las
+/// interpreta.
+fn fake_entry(id_byte: u8, search: &[u8], secret: &[u8]) -> SealedEntry {
+    SealedEntry::from_parts(
+        EntryId::from_bytes([id_byte; 16]),
+        ENTRY_SCHEMA_VERSION,
+        EncryptedPart::from_bytes(search.to_vec()),
+        EncryptedPart::from_bytes(secret.to_vec()),
+    )
+}
+
+fn assert_parts(stored: &StoredEntry, search: &[u8], secret: &[u8]) {
+    assert_eq!(stored.sealed.search_bytes().as_bytes(), search);
+    assert_eq!(stored.sealed.secret_bytes().as_bytes(), secret);
+    assert_eq!(stored.sealed.entry_schema_version(), ENTRY_SCHEMA_VERSION);
+}
+
+/// Lee con SQL directo `(deleted, modified_at, search IS NULL, secret IS NULL)`.
+fn raw_row(path: &Path, id: EntryId) -> (i64, i64, bool, bool) {
+    raw(path)
+        .query_row(
+            "SELECT deleted, modified_at, search IS NULL, secret IS NULL \
+             FROM entries WHERE id = ?1",
+            [id.as_bytes().as_slice()],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        )
+        .unwrap()
+}
+
+#[test]
+fn insert_then_get_returns_same_parts() {
+    let (_dir, _path, mut storage) = new_vault();
+    storage
+        .insert_entry(&fake_entry(1, b"busqueda", b"secreto"), T1)
+        .unwrap();
+
+    let stored = storage.get_entry(EntryId::from_bytes([1; 16])).unwrap();
+    assert_parts(&stored, b"busqueda", b"secreto");
+    assert_eq!(stored.sealed.id(), EntryId::from_bytes([1; 16]));
+    assert_eq!(stored.modified_at, T1);
+    assert_eq!(stored.last_used_at, None);
+}
+
+#[test]
+fn entries_survive_reopen() {
+    let (_dir, path, mut storage) = new_vault();
+    storage
+        .insert_entry(&fake_entry(1, b"busqueda", b"secreto"), T1)
+        .unwrap();
+    storage.close().unwrap();
+
+    let storage = Storage::open(&path).unwrap();
+    let stored = storage.get_entry(EntryId::from_bytes([1; 16])).unwrap();
+    assert_parts(&stored, b"busqueda", b"secreto");
+    assert_eq!(stored.modified_at, T1);
+}
+
+#[test]
+fn touch_does_not_change_modified_at() {
+    let (_dir, _path, mut storage) = new_vault();
+    let id = EntryId::from_bytes([1; 16]);
+    storage
+        .insert_entry(&fake_entry(1, b"b", b"s"), T1)
+        .unwrap();
+    storage.touch_entry(id, T2).unwrap();
+
+    let stored = storage.get_entry(id).unwrap();
+    assert_eq!(stored.modified_at, T1);
+    assert_eq!(stored.last_used_at, Some(T2));
+}
+
+#[test]
+fn update_replaces_parts_and_keeps_last_used_at() {
+    let (_dir, _path, mut storage) = new_vault();
+    let id = EntryId::from_bytes([1; 16]);
+    storage
+        .insert_entry(&fake_entry(1, b"b", b"s"), T1)
+        .unwrap();
+    storage.touch_entry(id, T2).unwrap();
+    storage
+        .update_entry(&fake_entry(1, b"otra", b"otro"), T3)
+        .unwrap();
+
+    let stored = storage.get_entry(id).unwrap();
+    assert_parts(&stored, b"otra", b"otro");
+    assert_eq!(stored.modified_at, T3);
+    assert_eq!(stored.last_used_at, Some(T2));
+}
+
+#[test]
+fn delete_leaves_tombstone() {
+    let (_dir, path, mut storage) = new_vault();
+    let id1 = EntryId::from_bytes([1; 16]);
+    storage
+        .insert_entry(&fake_entry(1, b"b1", b"s1"), T1)
+        .unwrap();
+    storage
+        .insert_entry(&fake_entry(2, b"b2", b"s2"), T1)
+        .unwrap();
+    storage.delete_entry(id1, T2).unwrap();
+
+    let listing = storage.list_entries().unwrap();
+    assert_eq!(listing.entries.len(), 1);
+    assert_eq!(listing.entries[0].sealed.id(), EntryId::from_bytes([2; 16]));
+    assert!(listing.corrupt.is_empty());
+    assert_eq!(listing.unidentified_corrupt, 0);
+    assert_eq!(storage.get_entry(id1).err(), Some(Error::EntryNotFound));
+    assert_eq!(raw_row(&path, id1), (1, T2, true, true));
+}
+
+#[test]
+fn delete_twice_fails_and_keeps_tombstone() {
+    let (_dir, path, mut storage) = new_vault();
+    let id = EntryId::from_bytes([1; 16]);
+    storage
+        .insert_entry(&fake_entry(1, b"b", b"s"), T1)
+        .unwrap();
+    storage.delete_entry(id, T2).unwrap();
+
+    assert_eq!(
+        storage.delete_entry(id, T3).err(),
+        Some(Error::EntryNotFound)
+    );
+    assert_eq!(raw_row(&path, id), (1, T2, true, true));
+}
+
+#[test]
+fn missing_or_deleted_entry_is_not_found() {
+    let (_dir, _path, mut storage) = new_vault();
+    let deleted = EntryId::from_bytes([1; 16]);
+    storage
+        .insert_entry(&fake_entry(1, b"b", b"s"), T1)
+        .unwrap();
+    storage.delete_entry(deleted, T2).unwrap();
+
+    for (byte, id) in [(9, EntryId::from_bytes([9; 16])), (1, deleted)] {
+        let not_found = Some(Error::EntryNotFound);
+        assert_eq!(
+            storage
+                .update_entry(&fake_entry(byte, b"x", b"y"), T3)
+                .err(),
+            not_found
+        );
+        assert_eq!(storage.delete_entry(id, T3).err(), not_found);
+        assert_eq!(storage.touch_entry(id, T3).err(), not_found);
+        assert_eq!(storage.get_entry(id).err(), not_found);
+    }
+}
+
+#[test]
+fn tombstone_check_constraint_both_ways() {
+    let (_dir, path, mut storage) = new_vault();
+    let id = EntryId::from_bytes([1; 16]);
+    storage
+        .insert_entry(&fake_entry(1, b"b", b"s"), T1)
+        .unwrap();
+    storage.delete_entry(id, T2).unwrap();
+    storage.close().unwrap();
+    let conn = raw(&path);
+
+    let live_without_parts = conn.execute(
+        "INSERT INTO entries (id, entry_schema_version, search, secret, modified_at) \
+         VALUES (?1, 1, NULL, x'00', 0)",
+        [[2_u8; 16].as_slice()],
+    );
+    assert!(live_without_parts.is_err());
+    let tombstone_with_part = conn.execute(
+        "UPDATE entries SET secret = x'00' WHERE id = ?1",
+        [id.as_bytes().as_slice()],
+    );
+    assert!(tombstone_with_part.is_err());
+}
+
+#[test]
+fn extreme_timestamps_round_trip() {
+    for t in [i64::MIN, 0, i64::MAX] {
+        let (_dir, _path, mut storage) = new_vault();
+        let id = EntryId::from_bytes([1; 16]);
+        storage.insert_entry(&fake_entry(1, b"b", b"s"), t).unwrap();
+        assert_eq!(storage.get_entry(id).unwrap().modified_at, t);
+        storage.touch_entry(id, t).unwrap();
+        storage.update_entry(&fake_entry(1, b"b", b"s"), t).unwrap();
+        let stored = storage.get_entry(id).unwrap();
+        assert_eq!(stored.modified_at, t);
+        assert_eq!(stored.last_used_at, Some(t));
+    }
+}
+
+mod props {
+    use proptest::prelude::*;
+
+    use super::*;
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(32))]
+
+        #[test]
+        fn prop_parts_round_trip(
+            search in proptest::collection::vec(any::<u8>(), 0..=20_000),
+            secret in proptest::collection::vec(any::<u8>(), 0..=20_000),
+        ) {
+            let (_dir, _path, mut storage) = new_vault();
+            storage.insert_entry(&fake_entry(1, &search, &secret), T1).unwrap();
+            let stored = storage.get_entry(EntryId::from_bytes([1; 16])).unwrap();
+            prop_assert_eq!(stored.sealed.search_bytes().as_bytes(), search.as_slice());
+            prop_assert_eq!(stored.sealed.secret_bytes().as_bytes(), secret.as_slice());
+        }
+    }
 }
