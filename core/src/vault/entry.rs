@@ -44,7 +44,7 @@ pub(crate) const ENTRY_ID_LEN: usize = 16;
 ///
 /// No es secreto, así que deriva `Debug`.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
-pub(crate) struct EntryId([u8; ENTRY_ID_LEN]);
+pub struct EntryId([u8; ENTRY_ID_LEN]);
 
 impl EntryId {
     /// Genera un identificador nuevo con el generador del sistema.
@@ -55,11 +55,11 @@ impl EntryId {
     }
 
     /// Reconstruye un identificador leído del almacenamiento.
-    pub(crate) fn from_bytes(bytes: [u8; ENTRY_ID_LEN]) -> Self {
+    pub fn from_bytes(bytes: [u8; ENTRY_ID_LEN]) -> Self {
         Self(bytes)
     }
 
-    pub(crate) fn as_bytes(&self) -> &[u8; ENTRY_ID_LEN] {
+    pub fn as_bytes(&self) -> &[u8; ENTRY_ID_LEN] {
         &self.0
     }
 }
@@ -69,8 +69,8 @@ impl EntryId {
 /// Solo se construye con [`SearchData::new`] o al decodificar, así que
 /// siempre cumple las reglas de su versión. Se borra de memoria al soltarse y
 /// su `Debug` no muestra los valores.
-#[derive(Clone, PartialEq, Eq, Zeroize, ZeroizeOnDrop)]
-pub(crate) struct SearchData {
+#[derive(PartialEq, Eq, Zeroize, ZeroizeOnDrop)]
+pub struct SearchData {
     service: String,
     url: Option<String>,
     username: Option<String>,
@@ -80,7 +80,7 @@ pub(crate) struct SearchData {
 impl SearchData {
     /// Crea los datos de búsqueda normalizándolos y validándolos con las
     /// reglas de la versión de estructura actual.
-    pub(crate) fn new(
+    pub fn new(
         service: &str,
         url: Option<&str>,
         username: Option<&str>,
@@ -117,19 +117,19 @@ impl SearchData {
         }
     }
 
-    pub(crate) fn service(&self) -> &str {
+    pub fn service(&self) -> &str {
         &self.service
     }
 
-    pub(crate) fn url(&self) -> Option<&str> {
+    pub fn url(&self) -> Option<&str> {
         self.url.as_deref()
     }
 
-    pub(crate) fn username(&self) -> Option<&str> {
+    pub fn username(&self) -> Option<&str> {
         self.username.as_deref()
     }
 
-    pub(crate) fn tags(&self) -> &[String] {
+    pub fn tags(&self) -> &[String] {
         &self.tags
     }
 }
@@ -274,7 +274,7 @@ fn build_search_data_v1(
 ///
 /// No deriva `Clone` ni `PartialEq` para no copiar ni comparar el secreto, y
 /// su `Debug` no muestra los valores. Solo se lee con `expose_secret()`.
-pub(crate) struct Secret {
+pub struct Secret {
     password: SecretString,
     notes: Option<SecretString>,
 }
@@ -286,7 +286,7 @@ impl ZeroizeOnDrop for Secret {}
 impl Secret {
     /// Crea el secreto validándolo con las reglas de la versión de
     /// estructura actual.
-    pub(crate) fn new(password: SecretString, notes: Option<SecretString>) -> Result<Self> {
+    pub fn new(password: SecretString, notes: Option<SecretString>) -> Result<Self> {
         build_secret_v1(password, notes).map_err(Error::InvalidEntry)
     }
 
@@ -316,11 +316,11 @@ impl Secret {
         }
     }
 
-    pub(crate) fn password(&self) -> &SecretString {
+    pub fn password(&self) -> &SecretString {
         &self.password
     }
 
-    pub(crate) fn notes(&self) -> Option<&SecretString> {
+    pub fn notes(&self) -> Option<&SecretString> {
         self.notes.as_ref()
     }
 }
