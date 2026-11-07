@@ -63,7 +63,7 @@ pub(crate) struct Storage {
 impl Storage {
     /// Crea un archivo de bóveda nuevo con su esquema y su cabecera.
     ///
-    /// Falla con `Storage(AlreadyExists)` si la ruta ya existe, sin tocarla.
+    /// Falla con `Error::AlreadyExists` si la ruta ya existe, sin tocarla.
     /// Si algo falla después de crear el archivo, lo borra.
     pub(crate) fn create(path: &Path, header: &VaultHeader) -> Result<Self> {
         // `create_new` falla de forma atómica si la ruta ya existe.
@@ -72,7 +72,7 @@ impl Storage {
             .create_new(true)
             .open(path)
             .map_err(|e| match e.kind() {
-                io::ErrorKind::AlreadyExists => Error::Storage(StorageErrorKind::AlreadyExists),
+                io::ErrorKind::AlreadyExists => Error::AlreadyExists,
                 _ => Error::Storage(StorageErrorKind::Io),
             })?;
 

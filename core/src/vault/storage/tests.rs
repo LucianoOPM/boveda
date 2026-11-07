@@ -117,7 +117,7 @@ fn create_on_existing_path_fails_and_keeps_file() {
     let (header, _) = new_header();
 
     let err = Storage::create(&path, &header).err().unwrap();
-    assert_eq!(err, Error::Storage(StorageErrorKind::AlreadyExists));
+    assert_eq!(err, Error::AlreadyExists);
     assert_eq!(fs::read(&path).unwrap(), b"contenido previo");
 }
 

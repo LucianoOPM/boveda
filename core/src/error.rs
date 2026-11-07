@@ -56,6 +56,10 @@ pub enum Error {
     /// que puede traer SQL, rutas o valores de columnas.
     #[error("error de almacenamiento: {0}")]
     Storage(StorageErrorKind),
+
+    /// `create` sobre una ruta que ya existe. No incluye la ruta.
+    #[error("el archivo ya existe")]
+    AlreadyExists,
 }
 
 /// Tipo de fallo del almacenamiento, sin datos.
@@ -80,9 +84,6 @@ pub enum StorageErrorKind {
     /// El modo del diario no quedó en `delete`.
     #[error("no se pudo fijar el modo del diario")]
     JournalMode,
-    /// `create` sobre una ruta que ya existe.
-    #[error("el archivo ya existe")]
-    AlreadyExists,
     /// Un código de SQLite no previsto.
     #[error("error interno de SQLite")]
     Other,
