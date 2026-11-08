@@ -50,8 +50,10 @@ jobs:
           java-version: "17"
 
       - name: Toolchain de rust-toolchain.toml
-        # Igual que en ci.yml: rustup instala la versión, los componentes y los
-        # targets de Android del archivo.
+        # Igual que en ci.yml: rustup instala la versión y los componentes del
+        # archivo. Lo usan los pasos que corren cargo dentro del repo (codegen
+        # y cargo expand). El APK no: cargokit compila con el `stable` de la
+        # imagen, que se comprueba antes de compilarlo.
         shell: bash
         run: |
           rustup toolchain install
@@ -88,12 +90,13 @@ jobs:
         # Debe coincidir con flutter_rust_bridge en mobile/pubspec.yaml y en
         # mobile/rust/Cargo.toml; si se actualiza, se cambian los tres en el
         # mismo commit. rust-cache guarda ~/.cargo/bin: con caché, no recompila.
+        # Toolchain: el de rust-toolchain.toml (corre dentro del repo).
         run: cargo install flutter_rust_bridge_codegen --version 2.13.0 --locked
 
       - name: Instalar cargo-expand
         # El codegen 2.13.0 ejecuta cargo expand y, si falta, lo instala sin
         # versión; por eso se fija aquí. Si se actualiza el codegen, se revisa
-        # también esta versión.
+        # también esta versión. Toolchain: el de rust-toolchain.toml.
         run: cargo install cargo-expand --version 1.0.127 --locked
 
       - name: Versiones del codegen y de cargo-expand
@@ -111,6 +114,8 @@ jobs:
         run: flutter test
 
       - name: Regenerar el puente
+        # Toolchain: el de rust-toolchain.toml (el codegen llama a cargo expand
+        # dentro de mobile/rust).
         run: flutter_rust_bridge_codegen generate
 
       - name: Código generado al día
@@ -127,7 +132,26 @@ jobs:
             exit 1
           fi
 
+      - name: Stable de la imagen igual a rust-toolchain.toml
+        # Cargokit compila con `rustup run stable`, no con rust-toolchain.toml
+        # (#48). Mientras eso no se resuelva, el stable de la imagen debe ser la
+        # versión fijada. No se ejecuta `rustup update stable`: la comprobación
+        # debe ver el stable que trae la imagen.
+        shell: bash
+        run: |
+          pinned=$(sed -n 's/^channel *= *"\(.*\)"/\1/p' ../rust-toolchain.toml)
+          stable=$(rustup run stable rustc --version | awk '{print $2}')
+          echo "rust-toolchain.toml: $pinned; stable de la imagen: $stable"
+          if [ "$stable" != "$pinned" ]; then
+            echo "::error::cargokit compila Android con el toolchain stable de la imagen ($stable), distinto del fijado en rust-toolchain.toml ($pinned). Actualiza rust-toolchain.toml a $stable en un commit propio, o resuelve la issue #48."
+            exit 1
+          fi
+
       - name: APK debug
-        # Además de arm64 y x64, el APK debug incluye i686: cargokit lo agrega
-        # siempre en debug. El release no lo incluye.
+        # Toolchain: stable (cargokit), que instala por su cuenta los targets
+        # de Android que le falten.
+        # En debug, cargokit compila además i686, pero el APK no lo incluye,
+        # porque Flutter fija abiFilters a armeabi-v7a, arm64-v8a y x86_64. El
+        # lib/armeabi-v7a/ que aparezca en un APK local es un resto de builds
+        # anteriores en mobile/build/; en la CI, que parte de cero, no aparece.
         run: flutter build apk --debug --target-platform android-arm64,android-x64
