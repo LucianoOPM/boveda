@@ -846,34 +846,11 @@ fn search_never_matches_password() {
     assert!(vault.search("zqxw-secreto-98").unwrap().is_empty());
 }
 
-// --- Bóveda de ejemplo del formato 1 -------------------------------------
+// --- Bóvedas de ejemplo ---------------------------------------------------
 
-/// Genera `core/tests/fixtures/vault-v1.db`, la bóveda de ejemplo del
-/// formato 1, que las pruebas de `core/tests/vault.rs` deben abrir siempre.
-///
-/// El número del nombre es la `format_version` de la cabecera. Cada versión
-/// de formato nueva lleva un archivo nuevo (`vault-v2.db`, ...) y su propio
-/// generador; los archivos existentes no se modifican ni se borran. Si el
-/// archivo ya existe, falla a propósito con `AlreadyExists`.
-///
-/// Se ejecuta una sola vez, al introducir una versión de formato nueva:
-/// `cargo test -p vault-core --lib -- --ignored --exact vault::tests::generate_fixture_v1`
-///
-/// Nunca con `--ignored` sin filtro: también correría este generador, que
-/// fallaría con `AlreadyExists` (o crearía una bóveda distinta si falta el
-/// archivo).
-///
-/// Contenido y contraseña: `core/tests/fixtures/README.md`.
-#[test]
-#[ignore = "solo al introducir una versión de formato nueva"]
-fn generate_fixture_v1() {
-    // Ruta absoluta, como exigen las reglas de rutas (`SQLITE_USE_URI`).
-    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/vault-v1.db");
-    fs::create_dir_all(path.parent().unwrap()).unwrap();
-    // Sin borrar nada antes: si el archivo existe, `AlreadyExists`.
-    let mut vault =
-        Vault::create_with_params(&path, &password(FIXTURE_V1_PASSWORD), KdfParams::MIN).unwrap();
-
+/// Llena una bóveda de ejemplo con el contenido descrito en
+/// `core/tests/fixtures/README.md`. La usan todos los generadores.
+fn fill_fixture(vault: &mut Vault) {
     // Todos los campos opcionales, con acentos y un salto de línea.
     let full = SearchData::new(
         "Correo Electrónico",
@@ -884,7 +861,10 @@ fn generate_fixture_v1() {
     .unwrap();
     let full_secret = Secret::new(
         password("clave-completa-ñ"),
-        Some(password("Línea uno\nLínea dos")),
+        Some(password(
+            "Línea uno
+Línea dos",
+        )),
     )
     .unwrap();
     vault.add(full, full_secret).unwrap();
@@ -905,6 +885,56 @@ fn generate_fixture_v1() {
     // `reveal` escribe `last_used_at`; `delete` deja la lápida.
     vault.reveal(used).unwrap();
     vault.delete(deleted).unwrap();
+}
+
+/// Crea la bóveda de ejemplo `name` en `core/tests/fixtures/` con
+/// `KdfParams::MIN`. Si el archivo ya existe, falla a propósito con
+/// `AlreadyExists` sin tocarlo.
+fn generate_fixture(name: &str, fixture_password: &str) {
+    // Ruta absoluta, como exigen las reglas de rutas (`SQLITE_USE_URI`).
+    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures")
+        .join(name);
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    // Sin borrar nada antes: si el archivo existe, `AlreadyExists`.
+    let mut vault =
+        Vault::create_with_params(&path, &password(fixture_password), KdfParams::MIN).unwrap();
+    fill_fixture(&mut vault);
+}
+
+/// Generó `core/tests/fixtures/vault-v1.db`, la bóveda de ejemplo del
+/// formato 1, que las pruebas de `core/tests/vault.rs` deben abrir siempre.
+///
+/// Desde el formato 2, `create_with_params` crea bóvedas de la versión 2,
+/// así que este generador ya no reproduce `vault-v1.db`: se conserva como
+/// registro de cómo se generó. Nunca lo ejecutes.
+///
+/// Cada versión de formato nueva lleva un archivo nuevo y su propio
+/// generador; los archivos existentes no se modifican ni se borran.
+/// Contenido y contraseña: `core/tests/fixtures/README.md`.
+#[test]
+#[ignore = "registro: generó vault-v1.db con el formato 1; ya no lo reproduce"]
+fn generate_fixture_v1() {
+    generate_fixture("vault-v1.db", FIXTURE_V1_PASSWORD);
+}
+
+/// Contraseña de prueba de `core/tests/fixtures/vault-v2.db`. Se repite en
+/// `core/tests/vault.rs`, que no ve el código `cfg(test)` del crate.
+const FIXTURE_V2_PASSWORD: &str = "prueba-bóveda-v2";
+
+/// Genera `core/tests/fixtures/vault-v2.db`, la bóveda de ejemplo del
+/// formato 2, con el mismo contenido que la del formato 1.
+///
+/// Se ejecutó una sola vez:
+/// `cargo test -p vault-core --lib -- --ignored --exact vault::tests::generate_fixture_v2`
+///
+/// Nunca con `--ignored` sin filtro: también correría los generadores, que
+/// fallarían con `AlreadyExists` (o crearían una bóveda distinta si falta
+/// el archivo).
+#[test]
+#[ignore = "solo al introducir una versión de formato nueva"]
+fn generate_fixture_v2() {
+    generate_fixture("vault-v2.db", FIXTURE_V2_PASSWORD);
 }
 
 // --- Migración del formato 1 al 2 (#34) ----------------------------------
