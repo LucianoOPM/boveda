@@ -241,3 +241,49 @@ fn from_parts_versions_and_key_check_presence() {
         Some(Error::UnsupportedFormatVersion(3))
     );
 }
+
+/// Cabecera de la versión 1 con la llave `vault_key` y la contraseña
+/// `password`: dato autenticado con la versión 1 y sin `key_check`.
+fn v1_header(vault_key: &VaultKey, password_text: &str) -> VaultHeader {
+    let params = KdfParams::MIN;
+    let salt = kdf::generate_salt().unwrap();
+    let ad = encode_associated_data(FORMAT_VERSION_V1, KdfAlgorithm::Argon2idV13, &params, &salt);
+    let encrypted =
+        keys::seal_vault_key(vault_key, &password(password_text), &salt, &params, &ad).unwrap();
+    VaultHeader::from_parts(FORMAT_VERSION_V1, 1, params, salt, encrypted, None).unwrap()
+}
+
+#[test]
+fn unlock_upgrading_v2_returns_no_new_header() {
+    let (header, vault_key) = new_header();
+    let (key, upgraded) = header.unlock_upgrading(&password("correcta")).unwrap();
+    assert_eq!(key.expose_secret(), vault_key.expose_secret());
+    assert!(upgraded.is_none());
+}
+
+#[test]
+fn unlock_upgrading_v1_builds_v2_header_for_same_key() {
+    let vault_key = keys::generate_vault_key().unwrap();
+    let old = v1_header(&vault_key, "correcta");
+
+    let (key, upgraded) = old.unlock_upgrading(&password("correcta")).unwrap();
+    assert_eq!(key.expose_secret(), vault_key.expose_secret());
+    let new = upgraded.unwrap();
+    assert_eq!(new.format_version(), 2);
+    assert_eq!(new.salt(), old.salt());
+    assert_eq!(new.params(), old.params());
+    assert!(new.encrypted_key().nonce != old.encrypted_key().nonce);
+    assert_eq!(new.verify_key(&vault_key), Ok(()));
+    let reopened = new.unlock(&password("correcta")).unwrap();
+    assert_eq!(reopened.expose_secret(), vault_key.expose_secret());
+}
+
+#[test]
+fn unlock_upgrading_v1_wrong_password() {
+    let vault_key = keys::generate_vault_key().unwrap();
+    let old = v1_header(&vault_key, "correcta");
+    assert!(matches!(
+        old.unlock_upgrading(&password("otra")),
+        Err(Error::WrongPassword)
+    ));
+}

@@ -166,11 +166,21 @@ impl Vault {
     /// no impiden abrir las demás: se reportan en [`UnlockReport`]. Los
     /// secretos no se descifran aquí; uno dañado aparece al usar
     /// [`Vault::reveal`]. Si falla, la bóveda sigue bloqueada.
+    ///
+    /// Sobre una bóveda de la versión de formato 1, la migra a la 2 antes de
+    /// cargar las entradas, con una sola derivación de Argon2id y en una
+    /// transacción: abrir no modifica el archivo, pero desbloquear una
+    /// versión 1 sí. Si la migración falla, devuelve el error de
+    /// almacenamiento, la bóveda sigue bloqueada y el archivo sigue siendo
+    /// de la versión 1. Sobre una versión 2 no escribe nada.
     pub fn unlock(&mut self, password: &SecretString) -> Result<UnlockReport> {
         if self.unlocked.is_some() {
             return Err(Error::AlreadyUnlocked);
         }
-        let key = self.storage.read_header()?.unlock(password)?;
+        let (key, upgraded) = self.storage.read_header()?.unlock_upgrading(password)?;
+        if let Some(header) = upgraded {
+            self.storage.migrate_header(&header)?;
+        }
         let (unlocked, report) = Self::load_entries(&self.storage, key)?;
         self.unlocked = Some(unlocked);
         Ok(report)

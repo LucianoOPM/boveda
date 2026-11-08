@@ -171,3 +171,32 @@ pub(crate) fn damage_entries_root_page(path: &Path) {
     bytes[offset..offset + 8].fill(0xFF);
     fs::write(path, bytes).unwrap();
 }
+
+/// Contraseña de prueba de `core/tests/fixtures/vault-v1.db`. Se repite en
+/// `core/tests/vault.rs`, que no ve el código `cfg(test)` del crate.
+pub(crate) const FIXTURE_V1_PASSWORD: &str = "prueba-bóveda-v1";
+
+/// Copia `core/tests/fixtures/vault-v1.db` a un directorio temporal (debe
+/// vivir toda la prueba). Abrirla con contraseña la migra, así que nunca se
+/// usa el archivo del repositorio.
+pub(crate) fn fixture_v1_copy() -> (tempfile::TempDir, PathBuf) {
+    let source = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/vault-v1.db");
+    let (dir, path) = temp_path();
+    fs::copy(source, &path).unwrap();
+    (dir, path)
+}
+
+/// Esquema completo de una base: `(type, name, tbl_name, sql)` de cada fila
+/// de `sqlite_schema`, ordenado por nombre.
+pub(crate) fn schema_of(path: &Path) -> Vec<(String, String, String, Option<String>)> {
+    let conn = raw(path);
+    let mut stmt = conn
+        .prepare("SELECT type, name, tbl_name, sql FROM sqlite_schema ORDER BY name")
+        .unwrap();
+    stmt.query_map([], |row| {
+        Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
+    })
+    .unwrap()
+    .collect::<rusqlite::Result<_>>()
+    .unwrap()
+}

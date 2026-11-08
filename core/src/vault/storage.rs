@@ -312,6 +312,46 @@ impl Storage {
         tx.commit().map_err(map_sqlite_error)
     }
 
+    /// Migra la tabla `header` de la versión 1 a la 2 con `header`, ya
+    /// armada por [`VaultHeader::unlock_upgrading`].
+    ///
+    /// Sigue el procedimiento que documenta SQLite para cambios de esquema
+    /// ("Making Other Kinds Of Table Schema Changes", `lang_altertable.html`
+    /// §8), en una sola transacción: crear `header_v2`, insertar la
+    /// cabecera, borrar `header`, renombrar `header_v2` a `header` y
+    /// verificar. Se renombra la tabla nueva, no la vieja: la documentación
+    /// advierte que renombrar primero la vieja puede dañar referencias.
+    /// `header` no tiene índices, triggers, vistas ni llaves foráneas que
+    /// reconstruir. Si algo falla, la transacción se revierte y el archivo
+    /// sigue siendo de la versión 1.
+    pub(crate) fn migrate_header(&mut self, header: &VaultHeader) -> Result<()> {
+        let tx = self
+            .conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(map_sqlite_error)?;
+        tx.execute_batch(concat!(
+            "CREATE TABLE header_v2 ",
+            header_v2_columns!(),
+            ";"
+        ))
+        .map_err(map_sqlite_error)?;
+        insert_header(&tx, HeaderTable::HeaderV2, header)?;
+        tx.execute_batch("DROP TABLE header; ALTER TABLE header_v2 RENAME TO header;")
+            .map_err(map_sqlite_error)?;
+
+        let (version, key_check_len): (i64, i64) = tx
+            .query_row(
+                "SELECT format_version, length(key_check) FROM header WHERE id = 1",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .map_err(map_sqlite_error)?;
+        if (version, key_check_len) != (i64::from(FORMAT_VERSION), KEY_CHECK_LEN as i64) {
+            return Err(Error::Storage(StorageErrorKind::Corrupt));
+        }
+        tx.commit().map_err(map_sqlite_error)
+    }
+
     /// Copia consistente y compacta de la bóveda en `dest` con `VACUUM INTO`.
     /// `dest` debe no existir o estar vacío. La ruta va como parámetro,
     /// nunca dentro del SQL; una que no es UTF-8 o relativa da
@@ -579,6 +619,7 @@ struct RawHeader {
 #[derive(Clone, Copy)]
 enum HeaderTable {
     Header,
+    HeaderV2,
 }
 
 impl HeaderTable {
@@ -586,6 +627,11 @@ impl HeaderTable {
         match self {
             Self::Header => {
                 "INSERT INTO header (id, format_version, kdf_algorithm, kdf_memory_kib, \
+                 kdf_iterations, kdf_parallelism, salt, key_nonce, encrypted_key, key_check) \
+                 VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)"
+            }
+            Self::HeaderV2 => {
+                "INSERT INTO header_v2 (id, format_version, kdf_algorithm, kdf_memory_kib, \
                  kdf_iterations, kdf_parallelism, salt, key_nonce, encrypted_key, key_check) \
                  VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)"
             }

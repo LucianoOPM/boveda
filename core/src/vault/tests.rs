@@ -8,7 +8,7 @@ use secrecy::ExposeSecret;
 use zeroize::ZeroizeOnDrop;
 
 use super::*;
-use crate::crypto::kdf::KdfParams;
+use crate::crypto::kdf::{DERIVE_CALLS, KdfParams};
 use crate::vault::test_support::*;
 
 #[test]
@@ -848,10 +848,6 @@ fn search_never_matches_password() {
 
 // --- Bóveda de ejemplo del formato 1 -------------------------------------
 
-/// Contraseña de prueba de `core/tests/fixtures/vault-v1.db`. Se repite en
-/// `core/tests/vault.rs`, que no ve el código `cfg(test)` del crate.
-const FIXTURE_V1_PASSWORD: &str = "prueba-bóveda-v1";
-
 /// Genera `core/tests/fixtures/vault-v1.db`, la bóveda de ejemplo del
 /// formato 1, que las pruebas de `core/tests/vault.rs` deben abrir siempre.
 ///
@@ -909,4 +905,80 @@ fn generate_fixture_v1() {
     // `reveal` escribe `last_used_at`; `delete` deja la lápida.
     vault.reveal(used).unwrap();
     vault.delete(deleted).unwrap();
+}
+
+// --- Migración del formato 1 al 2 (#34) ----------------------------------
+
+#[test]
+fn unlock_migrates_v1_with_one_derivation() {
+    let (_dir, path) = fixture_v1_copy();
+    let mut vault = Vault::open(&path).unwrap();
+    assert_eq!(vault.storage.read_header().unwrap().format_version(), 1);
+
+    DERIVE_CALLS.with(|c| c.set(0));
+    let report = vault.unlock(&password(FIXTURE_V1_PASSWORD)).unwrap();
+    assert_eq!(DERIVE_CALLS.with(|c| c.get()), 1);
+
+    assert!(report.corrupt.is_empty());
+    assert_eq!(report.unidentified_corrupt, 0);
+    assert_eq!(vault.entries().unwrap().len(), 3);
+    let header = vault.storage.read_header().unwrap();
+    assert_eq!(header.format_version(), 2);
+    assert_eq!(header.verify_key(&vault.unlocked().unwrap().key), Ok(()));
+}
+
+#[test]
+fn migrated_schema_equals_created_schema() {
+    let (_dir, migrated) = fixture_v1_copy();
+    let mut vault = Vault::open(&migrated).unwrap();
+    vault.unlock(&password(FIXTURE_V1_PASSWORD)).unwrap();
+    drop(vault);
+
+    let (_dir2, created) = temp_path();
+    drop(Vault::create_with_params(&created, &password("p"), KdfParams::MIN).unwrap());
+
+    assert_eq!(schema_of(&migrated), schema_of(&created));
+    let integrity: String = raw(&migrated)
+        .query_row("PRAGMA integrity_check", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(integrity, "ok");
+}
+
+#[test]
+fn failed_migration_keeps_v1_byte_for_byte() {
+    let (_dir, path) = fixture_v1_copy();
+    let mut vault = Vault::open(&path).unwrap();
+    let before = fs::read(&path).unwrap();
+    vault.storage.deny_writes_for_test();
+
+    let err = vault.unlock(&password(FIXTURE_V1_PASSWORD)).unwrap_err();
+    assert!(matches!(err, Error::Storage(_)), "{err:?}");
+    assert!(vault.is_locked());
+    drop(vault);
+    assert_eq!(fs::read(&path).unwrap(), before);
+}
+
+#[test]
+fn wrong_password_on_v1_writes_nothing() {
+    let (_dir, path) = fixture_v1_copy();
+    let mut vault = Vault::open(&path).unwrap();
+    let before = fs::read(&path).unwrap();
+
+    assert_eq!(
+        vault.unlock(&password("incorrecta")).err(),
+        Some(Error::WrongPassword)
+    );
+    assert!(vault.is_locked());
+    drop(vault);
+    assert_eq!(fs::read(&path).unwrap(), before);
+}
+
+#[test]
+fn v2_unlock_writes_nothing() {
+    let (_dir, path, mut vault) = new_vault();
+    vault.lock();
+    let before = fs::read(&path).unwrap();
+    relock(&mut vault);
+    drop(vault);
+    assert_eq!(fs::read(&path).unwrap(), before);
 }

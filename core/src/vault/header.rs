@@ -160,6 +160,44 @@ impl VaultHeader {
         )
     }
 
+    /// Descifra la llave de bóveda con la contraseña maestra y, si la
+    /// cabecera es de la versión 1, arma también la de la versión 2.
+    ///
+    /// Argon2id corre una sola vez: la llave derivada que descifró la llave
+    /// de bóveda la vuelve a cifrar con el dato autenticado de la versión 2,
+    /// con la misma sal y los mismos parámetros y un nonce nuevo, y se crea
+    /// `key_check`. En una versión 2 devuelve `(llave, None)`. Los errores
+    /// son los de [`VaultHeader::unlock`].
+    pub(crate) fn unlock_upgrading(
+        &self,
+        password: &SecretString,
+    ) -> Result<(VaultKey, Option<VaultHeader>)> {
+        let (vault_key, derived) = keys::open_vault_key_keeping_derived(
+            &self.encrypted_key,
+            password,
+            &self.salt,
+            &self.params,
+            &self.associated_data(),
+        )?;
+        if self.format_version == FORMAT_VERSION {
+            return Ok((vault_key, None));
+        }
+
+        let associated_data =
+            encode_associated_data(FORMAT_VERSION, self.algorithm, &self.params, &self.salt);
+        let encrypted_key = keys::encrypt_vault_key(&vault_key, &derived, &associated_data)?;
+        let key_check = keys::seal_key_check(&vault_key, FORMAT_VERSION)?;
+        let upgraded = Self {
+            format_version: FORMAT_VERSION,
+            algorithm: self.algorithm,
+            params: self.params,
+            salt: self.salt,
+            encrypted_key,
+            key_check: Some(key_check),
+        };
+        Ok((vault_key, Some(upgraded)))
+    }
+
     /// Codifica los campos de la cabecera como dato autenticado: binario de
     /// ancho fijo y little-endian.
     pub(crate) fn associated_data(&self) -> [u8; ASSOCIATED_DATA_LEN] {
