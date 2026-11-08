@@ -116,3 +116,33 @@ class _VaultGateState extends State<VaultGate> {
     };
   }
 }
+
+/// Arranque: carga la librería de Rust, obtiene la ruta de la bóveda y arma
+/// la app con [appFor]. Si cualquiera de los pasos falla, devuelve
+/// [StartupErrorApp] en lugar de dejar la pantalla en blanco.
+Future<Widget> bootstrap({
+  required Future<void> Function() initRust,
+  required Future<String> Function() vaultPath,
+  required Widget Function(String path) appFor,
+}) async {
+  try {
+    await initRust();
+    return appFor(await vaultPath());
+  } catch (_) {
+    // Sin detalles: el error puede traer rutas o datos internos.
+    return const StartupErrorApp();
+  }
+}
+
+/// Pantalla mínima cuando la app no pudo iniciar.
+class StartupErrorApp extends StatelessWidget {
+  const StartupErrorApp({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return const MaterialApp(
+      title: 'Bóveda',
+      home: PlaceholderScreen(text: 'No se pudo iniciar la app'),
+    );
+  }
+}

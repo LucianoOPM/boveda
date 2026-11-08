@@ -64,7 +64,7 @@ boveda/
 │   ├── test_driver/        # punto de entrada para correr integration_test con flutter drive
 │   ├── lib/
 │   │   ├── main.dart       # arma las dependencias reales y arranca la app
-│   │   ├── app.dart        # BovedaApp y VaultGate: la pantalla según el estado de la sesión
+│   │   ├── app.dart        # BovedaApp y VaultGate (la pantalla según el estado de la sesión); bootstrap: si el arranque falla, "No se pudo iniciar la app"
 │   │   ├── src/rust/       # código generado por flutter_rust_bridge; no se edita
 │   │   ├── screens/        # first_run_screen.dart, placeholder_screen.dart; futuro: desbloqueo, búsqueda, detalle, edición, ajustes
 │   │   ├── widgets/        # password_field.dart, strength_indicator.dart
