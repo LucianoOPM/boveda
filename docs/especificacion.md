@@ -275,7 +275,7 @@ Las pruebas del núcleo son las más importantes, porque un error ahí puede dej
 - Una contraseña maestra incorrecta falla.
 - Modificar un solo byte de una entrada cifrada se detecta.
 - Intercambiar el secreto de una entrada con el de otra se rechaza.
-- Bóvedas de ejemplo fijas en el repositorio que siempre deben abrirse, para detectar cambios accidentales de formato.
+- Bóvedas de ejemplo fijas en el repositorio que siempre deben abrirse, para detectar cambios accidentales de formato. Decidido el 2026-11-07: una por versión de formato, `core/tests/fixtures/vault-vN.db` con N igual a la `format_version`; nunca se modifican ni se borran; se generan una sola vez con `KdfParams::MIN`, y las pruebas de integración (`core/tests/vault.rs`) las leen sobre una copia, solo con la API pública (detalle en `docs/superpowers/specs/2026-11-07-pruebas-integracion-design.md`).
 - Exportar, borrar e importar un respaldo recupera todas las entradas.
 
 **Protocolo** (ambos extremos en el mismo proceso, por localhost):

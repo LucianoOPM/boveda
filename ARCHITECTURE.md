@@ -38,7 +38,7 @@ boveda/
 │   └── tests/
 │       ├── vault.rs
 │       ├── protocol.rs
-│       └── fixtures/       # bóvedas de ejemplo fijas
+│       └── fixtures/       # bóvedas de ejemplo fijas (vault-vN.db, ver su README)
 │
 ├── mobile/                 # app Flutter (esperado, etapa 2)
 │   ├── CLAUDE.md
