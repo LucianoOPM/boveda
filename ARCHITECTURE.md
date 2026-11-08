@@ -54,7 +54,8 @@ boveda/
 │   │       ├── lib.rs
 │   │       ├── api/        # expuesto a Dart, un archivo por área:
 │   │       │               #   mod.rs, error.rs (VaultError), session.rs (VaultSession),
-│   │       │               #   entries.rs y backup.rs; pruebas en <área>/tests.rs
+│   │       │               #   entries.rs, backup.rs y password.rs (fortaleza
+│   │       │               #   de la contraseña maestra); pruebas en <área>/tests.rs
 │   │       ├── test_support.rs   # ayudantes de pruebas (copia de vault-v2.db)
 │   │       └── frb_generated.rs  # generado; no se edita
 │   ├── rust_builder/       # generado por flutter_rust_bridge (cargokit); no se edita

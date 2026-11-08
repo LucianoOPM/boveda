@@ -93,3 +93,19 @@ fn create_on_new_path_is_unlocked_and_empty() {
     assert_eq!(session.create("contraseña nueva".into()), Ok(()));
     assert_eq!(session.is_locked(), Ok(false));
 }
+
+#[test]
+fn create_with_short_password_fails_and_leaves_no_vault() {
+    let (_dir, path) = temp_path();
+    let session = VaultSession::new(path_string(&path));
+    assert_eq!(
+        session.create("corta".into()),
+        Err(VaultError::PasswordTooShort)
+    );
+    assert_eq!(session.is_locked(), Ok(true));
+    assert_eq!(
+        session.search(String::new()).err(),
+        Some(VaultError::NoVault)
+    );
+    assert!(!path.exists());
+}
