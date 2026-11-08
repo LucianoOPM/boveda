@@ -36,7 +36,8 @@ fn now_is_after_2026() {
 
 fn new_vault() -> (tempfile::TempDir, PathBuf, Vault) {
     let (dir, path) = temp_path();
-    let vault = Vault::create_with_params(&path, &password("correcta"), KdfParams::MIN).unwrap();
+    let vault =
+        Vault::create_with_params(&path, &password("correcta-larga"), KdfParams::MIN).unwrap();
     (dir, path, vault)
 }
 
@@ -88,7 +89,7 @@ fn create_with_relative_path_is_io_and_creates_nothing() {
 
     for path in [relative.clone(), uri_of(&relative)] {
         assert_eq!(
-            Vault::create_with_params(&path, &password("correcta"), KdfParams::MIN).err(),
+            Vault::create_with_params(&path, &password("correcta-larga"), KdfParams::MIN).err(),
             io
         );
         assert!(!absolute.exists());
@@ -96,14 +97,19 @@ fn create_with_relative_path_is_io_and_creates_nothing() {
     // `Vault::create` también da `Storage(Io)`. La comprobación temprana
     // busca evitar la calibración; esta prueba no lo verifica (sin ella,
     // `Storage::create` daría el mismo error después de calibrar).
-    assert_eq!(Vault::create(&relative, &password("correcta")).err(), io);
+    assert_eq!(
+        Vault::create(&relative, &password("correcta-larga")).err(),
+        io
+    );
     assert!(!absolute.exists());
 }
 
 #[test]
 fn open_with_relative_path_is_io_and_keeps_vault() {
     let (_dir, absolute, relative) = relative_temp_path();
-    drop(Vault::create_with_params(&absolute, &password("correcta"), KdfParams::MIN).unwrap());
+    drop(
+        Vault::create_with_params(&absolute, &password("correcta-larga"), KdfParams::MIN).unwrap(),
+    );
     let before = fs::read(&absolute).unwrap();
 
     for path in [relative.clone(), uri_of(&relative)] {
@@ -128,7 +134,7 @@ fn create_unlock_round_trip() {
     assert_eq!(before.len(), 3);
 
     vault.lock();
-    let report = vault.unlock(&password("correcta")).unwrap();
+    let report = vault.unlock(&password("correcta-larga")).unwrap();
     assert_eq!(
         report,
         UnlockReport {
@@ -140,7 +146,7 @@ fn create_unlock_round_trip() {
 
     drop(vault);
     let mut reopened = Vault::open(&path).unwrap();
-    reopened.unlock(&password("correcta")).unwrap();
+    reopened.unlock(&password("correcta-larga")).unwrap();
     assert_eq!(snapshot(&reopened), before);
 }
 
@@ -198,7 +204,7 @@ fn unlock_twice_is_already_unlocked() {
     vault.add(search, secret).unwrap();
     let before = snapshot(&vault);
     assert_eq!(
-        vault.unlock(&password("correcta")).err(),
+        vault.unlock(&password("correcta-larga")).err(),
         Some(Error::AlreadyUnlocked)
     );
     assert_eq!(snapshot(&vault), before);
@@ -235,7 +241,7 @@ fn add_sets_modified_at_and_no_last_used() {
 fn create_on_existing_path_is_already_exists() {
     let (_dir, path) = temp_path();
     fs::write(&path, b"previo").unwrap();
-    let err = Vault::create_with_params(&path, &password("correcta"), KdfParams::MIN).err();
+    let err = Vault::create_with_params(&path, &password("correcta-larga"), KdfParams::MIN).err();
     assert_eq!(err, Some(Error::AlreadyExists));
     assert_eq!(fs::read(&path).unwrap(), b"previo");
 }
@@ -245,7 +251,7 @@ fn create_failure_leaves_path_free() {
     let (_dir, path) = temp_path();
     // Un directorio donde SQLite quiere crear su diario: la transacción falla.
     fs::create_dir(path.with_file_name("boveda.db-journal")).unwrap();
-    let result = Vault::create_with_params(&path, &password("correcta"), KdfParams::MIN);
+    let result = Vault::create_with_params(&path, &password("correcta-larga"), KdfParams::MIN);
     assert!(result.is_err());
     assert!(!path.exists());
 }
@@ -258,7 +264,7 @@ fn unlock_storage_failure_keeps_locked() {
     vault.lock();
     raw(&path).execute_batch("DROP TABLE entries").unwrap();
     assert!(matches!(
-        vault.unlock(&password("correcta")),
+        vault.unlock(&password("correcta-larga")),
         Err(Error::Storage(_))
     ));
     assert!(vault.is_locked());
@@ -425,7 +431,7 @@ fn edit_replace_persists() {
         )
         .unwrap();
     vault.lock();
-    vault.unlock(&password("correcta")).unwrap();
+    vault.unlock(&password("correcta-larga")).unwrap();
     let revealed = vault.reveal(id).unwrap();
     assert_eq!(revealed.password().expose_secret(), "nueva");
     assert!(revealed.notes().is_none());
@@ -489,7 +495,7 @@ fn reveal_and_edit_do_not_leak_in_errors() {
     // Contraseñas que no aparecen dentro de ningún mensaje ("incorrecta" contiene "correcta").
     let (_dir, path) = temp_path();
     let mut vault =
-        Vault::create_with_params(&path, &password("maestra-Xy7"), KdfParams::MIN).unwrap();
+        Vault::create_with_params(&path, &password("maestra-Xy7-larga"), KdfParams::MIN).unwrap();
     let id = add_sample(&mut vault, "gmail");
     tamper(&path, id, "secret");
     let mut errors = vec![
@@ -515,7 +521,7 @@ fn reveal_and_edit_do_not_leak_in_errors() {
 
 fn relock(vault: &mut Vault) -> UnlockReport {
     vault.lock();
-    vault.unlock(&password("correcta")).unwrap()
+    vault.unlock(&password("correcta-larga")).unwrap()
 }
 
 fn ids(vault: &Vault) -> Vec<EntryId> {
@@ -726,18 +732,18 @@ fn change_password_keeps_entries() {
 
     vault
         .change_master_password_with_params(
-            &password("correcta"),
-            &password("nueva"),
+            &password("correcta-larga"),
+            &password("nueva-maestra"),
             KdfParams::MIN,
         )
         .unwrap();
     vault.lock();
 
     assert_eq!(
-        vault.unlock(&password("correcta")).err(),
+        vault.unlock(&password("correcta-larga")).err(),
         Some(Error::WrongPassword)
     );
-    vault.unlock(&password("nueva")).unwrap();
+    vault.unlock(&password("nueva-maestra")).unwrap();
     assert_eq!(snapshot(&vault), before);
     assert_eq!((row_bytes(&path, a), row_bytes(&path, b)), rows_before);
 }
@@ -750,7 +756,7 @@ fn change_password_wrong_current() {
         vault
             .change_master_password_with_params(
                 &password("incorrecta"),
-                &password("nueva"),
+                &password("nueva-maestra"),
                 KdfParams::MIN,
             )
             .err(),
@@ -766,8 +772,8 @@ fn change_password_locked() {
     assert_eq!(
         vault
             .change_master_password_with_params(
-                &password("correcta"),
-                &password("nueva"),
+                &password("correcta-larga"),
+                &password("nueva-maestra"),
                 KdfParams::MIN,
             )
             .err(),
@@ -781,14 +787,14 @@ fn change_password_to_same() {
     let before = header_row(&path);
     vault
         .change_master_password_with_params(
-            &password("correcta"),
-            &password("correcta"),
+            &password("correcta-larga"),
+            &password("correcta-larga"),
             KdfParams::MIN,
         )
         .unwrap();
     assert_ne!(header_row(&path).0, before.0);
     vault.lock();
-    assert!(vault.unlock(&password("correcta")).is_ok());
+    assert!(vault.unlock(&password("correcta-larga")).is_ok());
 }
 
 // --- Búsqueda ----------------------------------------------------------
@@ -965,7 +971,7 @@ fn migrated_schema_equals_created_schema() {
     drop(vault);
 
     let (_dir2, created) = temp_path();
-    drop(Vault::create_with_params(&created, &password("p"), KdfParams::MIN).unwrap());
+    drop(Vault::create_with_params(&created, &password("p-de-prueba-12"), KdfParams::MIN).unwrap());
 
     assert_eq!(schema_of(&migrated), schema_of(&created));
     let integrity: String = raw(&migrated)
@@ -1129,8 +1135,8 @@ fn old_key_survives_change_master_password() {
 
     vault
         .change_master_password_with_params(
-            &password("correcta"),
-            &password("nueva"),
+            &password("correcta-larga"),
+            &password("nueva-maestra"),
             KdfParams::MIN,
         )
         .unwrap();
@@ -1151,7 +1157,7 @@ fn damaged_key_check_is_repaired_by_export() {
 
     assert_eq!(vault.unlock_with_key(key).err(), Some(Error::WrongVaultKey));
     // La contraseña nunca depende del verificador.
-    vault.unlock(&password("correcta")).unwrap();
+    vault.unlock(&password("correcta-larga")).unwrap();
     let repaired = vault.export_vault_key().unwrap();
     assert_eq!(*repaired.expose_secret(), key_bytes);
 
@@ -1165,7 +1171,7 @@ fn export_fails_without_key_when_repair_cannot_write() {
     let (_dir, path, mut vault) = new_vault();
     vault.lock();
     damage_key_check(&path);
-    vault.unlock(&password("correcta")).unwrap();
+    vault.unlock(&password("correcta-larga")).unwrap();
     vault.storage.deny_writes_for_test();
 
     let err = vault.export_vault_key().err();
@@ -1192,7 +1198,7 @@ fn failed_unlock_with_key_then_password_works() {
         vault.unlock_with_key(random_key()).err(),
         Some(Error::WrongVaultKey)
     );
-    vault.unlock(&password("correcta")).unwrap();
+    vault.unlock(&password("correcta-larga")).unwrap();
     assert_eq!(vault.entries().unwrap().len(), 1);
 }
 
@@ -1222,7 +1228,7 @@ fn concurrent_migration_does_not_revert_password_change() {
     b.unlock(&password(FIXTURE_V1_PASSWORD)).unwrap();
     b.change_master_password_with_params(
         &password(FIXTURE_V1_PASSWORD),
-        &password("nueva"),
+        &password("nueva-maestra"),
         KdfParams::MIN,
     )
     .unwrap();
@@ -1237,7 +1243,7 @@ fn concurrent_migration_does_not_revert_password_change() {
     assert!(a.is_locked());
 
     // La contraseña nueva sigue abriendo y la vieja no.
-    a.unlock(&password("nueva")).unwrap();
+    a.unlock(&password("nueva-maestra")).unwrap();
     assert_eq!(a.entries().unwrap().len(), 3);
     a.lock();
     assert_eq!(
@@ -1267,4 +1273,128 @@ fn concurrent_migration_without_password_change_unlocks() {
         a.storage.read_header().unwrap().key_check().copied(),
         check_from_b
     );
+}
+
+// --- longitud mínima de la contraseña maestra (#36) ---------------------
+
+/// Contraseña válida para las pruebas de esta sección (16 caracteres).
+const LONG_PASSWORD: &str = "maestra-de-16-ch";
+
+/// Justo debajo del mínimo (11 caracteres) y justo en el mínimo (12).
+const ELEVEN_CHARS: &str = "corta-11-ch";
+const TWELVE_CHARS: &str = "justa-12-chr";
+
+#[test]
+fn boundary_constants_have_their_length() {
+    assert_eq!(ELEVEN_CHARS.chars().count(), 11);
+    assert_eq!(TWELVE_CHARS.chars().count(), 12);
+}
+
+#[test]
+fn create_accepts_exactly_twelve() {
+    let (_dir, path) = temp_path();
+    let mut vault =
+        Vault::create_with_params(&path, &password(TWELVE_CHARS), KdfParams::MIN).unwrap();
+    vault.lock();
+    vault.unlock(&password(TWELVE_CHARS)).unwrap();
+}
+
+#[test]
+fn change_master_password_accepts_exactly_twelve() {
+    let (_dir, path) = temp_path();
+    let mut vault =
+        Vault::create_with_params(&path, &password(LONG_PASSWORD), KdfParams::MIN).unwrap();
+    vault
+        .change_master_password_with_params(
+            &password(LONG_PASSWORD),
+            &password(TWELVE_CHARS),
+            KdfParams::MIN,
+        )
+        .unwrap();
+    vault.lock();
+    vault.unlock(&password(TWELVE_CHARS)).unwrap();
+}
+
+#[test]
+fn create_rejects_short_password_before_touching_disk() {
+    let (_dir, path) = temp_path();
+    // `Vault::create` real: debe regresar antes de calibrar.
+    DERIVE_CALLS.with(|c| c.set(0));
+    assert_eq!(
+        Vault::create(&path, &password(ELEVEN_CHARS)).err(),
+        Some(Error::PasswordTooShort)
+    );
+    assert_eq!(DERIVE_CALLS.with(|c| c.get()), 0);
+    assert!(!path.exists());
+}
+
+#[test]
+fn create_with_params_rejects_short_password() {
+    let (_dir, path) = temp_path();
+    assert_eq!(
+        Vault::create_with_params(&path, &password(ELEVEN_CHARS), KdfParams::MIN).err(),
+        Some(Error::PasswordTooShort)
+    );
+    assert!(!path.exists());
+}
+
+#[test]
+fn change_master_password_rejects_short_before_deriving() {
+    let (_dir, path) = temp_path();
+    let mut vault =
+        Vault::create_with_params(&path, &password(LONG_PASSWORD), KdfParams::MIN).unwrap();
+    let before = header_row(&path);
+
+    DERIVE_CALLS.with(|c| c.set(0));
+    assert_eq!(
+        vault
+            .change_master_password_with_params(
+                &password(LONG_PASSWORD),
+                &password(ELEVEN_CHARS),
+                KdfParams::MIN,
+            )
+            .err(),
+        Some(Error::PasswordTooShort)
+    );
+    // Con la actual incorrecta, la longitud se comprueba primero.
+    assert_eq!(
+        vault
+            .change_master_password_with_params(
+                &password("incorrecta-y-larga"),
+                &password(ELEVEN_CHARS),
+                KdfParams::MIN,
+            )
+            .err(),
+        Some(Error::PasswordTooShort)
+    );
+    assert_eq!(DERIVE_CALLS.with(|c| c.get()), 0);
+    assert_eq!(header_row(&path), before);
+
+    vault.lock();
+    vault.unlock(&password(LONG_PASSWORD)).unwrap();
+}
+
+/// Una bóveda con contraseña corta, armada sin pasar por `create`, como las
+/// que existían antes de la regla.
+fn short_password_vault(path: &Path, pw: &str) {
+    let (header, _key) = VaultHeader::create(&password(pw), KdfParams::MIN).unwrap();
+    drop(Storage::create(path, &header).unwrap());
+}
+
+#[test]
+fn unlock_and_import_ignore_the_minimum() {
+    let dir = tempfile::tempdir().unwrap();
+    let original = dir.path().join("corta.db");
+    short_password_vault(&original, "corta");
+
+    let mut vault = Vault::open(&original).unwrap();
+    vault.unlock(&password("corta")).unwrap();
+
+    let backup = dir.path().join("respaldo.db");
+    vault.export(&backup).unwrap();
+    drop(vault);
+
+    let dest = dir.path().join("importada.db");
+    let (imported, _report) = Vault::import(&backup, &dest, &password("corta")).unwrap();
+    assert!(!imported.is_locked());
 }

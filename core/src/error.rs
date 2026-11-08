@@ -79,6 +79,11 @@ pub enum Error {
     /// `create` sobre una ruta que ya existe. No incluye la ruta.
     #[error("el archivo ya existe")]
     AlreadyExists,
+
+    /// La contraseña maestra nueva (al crear o al cambiarla) tiene menos
+    /// caracteres que el mínimo. Nunca la incluye.
+    #[error("la contraseña maestra es demasiado corta")]
+    PasswordTooShort,
 }
 
 /// Tipo de fallo del almacenamiento, sin datos.

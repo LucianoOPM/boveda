@@ -40,7 +40,7 @@ flutter_rust_bridge::frb_generated_boilerplate!(
     default_rust_auto_opaque = RustAutoOpaqueMoi,
 );
 pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_VERSION: &str = "2.13.0";
-pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = -778584515;
+pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = -715753731;
 
 // Section: executor
 
@@ -788,6 +788,36 @@ fn wire__crate__api__init_app_impl(
         },
     )
 }
+fn wire__crate__api__password__password_strength_impl(
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) -> flutter_rust_bridge::for_generated::WireSyncRust2DartSse {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_sync::<flutter_rust_bridge::for_generated::SseCodec, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "password_strength",
+            port: None,
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Sync,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_password = <String>::sse_decode(&mut deserializer);
+            deserializer.end();
+            transform_result_sse::<_, ()>((move || {
+                let output_ok = Ok::<_, ()>(crate::api::password::password_strength(api_password))?;
+                std::result::Result::Ok(output_ok)
+            })())
+        },
+    )
+}
 
 // Section: related_funcs
 
@@ -967,6 +997,19 @@ impl SseDecode for Option<crate::api::entries::NewSecret> {
     }
 }
 
+impl SseDecode for crate::api::password::PasswordStrength {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut inner = <i32>::sse_decode(deserializer);
+        return match inner {
+            0 => crate::api::password::PasswordStrength::TooShort,
+            1 => crate::api::password::PasswordStrength::Acceptable,
+            2 => crate::api::password::PasswordStrength::Strong,
+            _ => unreachable!("Invalid variant for PasswordStrength: {}", inner),
+        };
+    }
+}
+
 impl SseDecode for u32 {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
@@ -1024,27 +1067,28 @@ impl SseDecode for crate::api::error::VaultError {
             11 => crate::api::error::VaultError::Clock,
             12 => crate::api::error::VaultError::WrongVaultKey,
             13 => crate::api::error::VaultError::AlreadyExists,
-            14 => crate::api::error::VaultError::StorageIo,
-            15 => crate::api::error::VaultError::StorageBusy,
-            16 => crate::api::error::VaultError::StorageCorrupt,
-            17 => crate::api::error::VaultError::StorageReadOnly,
-            18 => crate::api::error::VaultError::StorageHotJournal,
-            19 => crate::api::error::VaultError::StorageJournalMode,
-            20 => crate::api::error::VaultError::StorageOther,
-            21 => crate::api::error::VaultError::InvalidEntryServiceEmpty,
-            22 => crate::api::error::VaultError::InvalidEntryServiceTooLong,
-            23 => crate::api::error::VaultError::InvalidEntryUrlTooLong,
-            24 => crate::api::error::VaultError::InvalidEntryUsernameTooLong,
-            25 => crate::api::error::VaultError::InvalidEntryPasswordEmpty,
-            26 => crate::api::error::VaultError::InvalidEntryPasswordTooLong,
-            27 => crate::api::error::VaultError::InvalidEntryNotesTooLong,
-            28 => crate::api::error::VaultError::InvalidEntryTooManyTags,
-            29 => crate::api::error::VaultError::InvalidEntryTagTooLong,
-            30 => crate::api::error::VaultError::InvalidEntryOther,
-            31 => crate::api::error::VaultError::NoVault,
-            32 => crate::api::error::VaultError::VaultAlreadyOpen,
-            33 => crate::api::error::VaultError::InvalidEntryId,
-            34 => crate::api::error::VaultError::SessionPoisoned,
+            14 => crate::api::error::VaultError::PasswordTooShort,
+            15 => crate::api::error::VaultError::StorageIo,
+            16 => crate::api::error::VaultError::StorageBusy,
+            17 => crate::api::error::VaultError::StorageCorrupt,
+            18 => crate::api::error::VaultError::StorageReadOnly,
+            19 => crate::api::error::VaultError::StorageHotJournal,
+            20 => crate::api::error::VaultError::StorageJournalMode,
+            21 => crate::api::error::VaultError::StorageOther,
+            22 => crate::api::error::VaultError::InvalidEntryServiceEmpty,
+            23 => crate::api::error::VaultError::InvalidEntryServiceTooLong,
+            24 => crate::api::error::VaultError::InvalidEntryUrlTooLong,
+            25 => crate::api::error::VaultError::InvalidEntryUsernameTooLong,
+            26 => crate::api::error::VaultError::InvalidEntryPasswordEmpty,
+            27 => crate::api::error::VaultError::InvalidEntryPasswordTooLong,
+            28 => crate::api::error::VaultError::InvalidEntryNotesTooLong,
+            29 => crate::api::error::VaultError::InvalidEntryTooManyTags,
+            30 => crate::api::error::VaultError::InvalidEntryTagTooLong,
+            31 => crate::api::error::VaultError::InvalidEntryOther,
+            32 => crate::api::error::VaultError::NoVault,
+            33 => crate::api::error::VaultError::VaultAlreadyOpen,
+            34 => crate::api::error::VaultError::InvalidEntryId,
+            35 => crate::api::error::VaultError::SessionPoisoned,
             _ => unreachable!("Invalid variant for VaultError: {}", inner),
         };
     }
@@ -1115,6 +1159,7 @@ fn pde_ffi_dispatcher_sync_impl(
     // Codec=Pde (Serialization + dispatch), see doc to use other codecs
     match func_id {
         9 => wire__crate__api__session__VaultSession_new_impl(ptr, rust_vec_len, data_len),
+        16 => wire__crate__api__password__password_strength_impl(ptr, rust_vec_len, data_len),
         _ => unreachable!(),
     }
 }
@@ -1207,6 +1252,28 @@ impl flutter_rust_bridge::IntoIntoDart<crate::api::entries::NewSecret>
     }
 }
 // Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for crate::api::password::PasswordStrength {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        match self {
+            Self::TooShort => 0.into_dart(),
+            Self::Acceptable => 1.into_dart(),
+            Self::Strong => 2.into_dart(),
+            _ => unreachable!(),
+        }
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive
+    for crate::api::password::PasswordStrength
+{
+}
+impl flutter_rust_bridge::IntoIntoDart<crate::api::password::PasswordStrength>
+    for crate::api::password::PasswordStrength
+{
+    fn into_into_dart(self) -> crate::api::password::PasswordStrength {
+        self
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
 impl flutter_rust_bridge::IntoDart for crate::api::session::UnlockReport {
     fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
         [
@@ -1245,27 +1312,28 @@ impl flutter_rust_bridge::IntoDart for crate::api::error::VaultError {
             Self::Clock => 11.into_dart(),
             Self::WrongVaultKey => 12.into_dart(),
             Self::AlreadyExists => 13.into_dart(),
-            Self::StorageIo => 14.into_dart(),
-            Self::StorageBusy => 15.into_dart(),
-            Self::StorageCorrupt => 16.into_dart(),
-            Self::StorageReadOnly => 17.into_dart(),
-            Self::StorageHotJournal => 18.into_dart(),
-            Self::StorageJournalMode => 19.into_dart(),
-            Self::StorageOther => 20.into_dart(),
-            Self::InvalidEntryServiceEmpty => 21.into_dart(),
-            Self::InvalidEntryServiceTooLong => 22.into_dart(),
-            Self::InvalidEntryUrlTooLong => 23.into_dart(),
-            Self::InvalidEntryUsernameTooLong => 24.into_dart(),
-            Self::InvalidEntryPasswordEmpty => 25.into_dart(),
-            Self::InvalidEntryPasswordTooLong => 26.into_dart(),
-            Self::InvalidEntryNotesTooLong => 27.into_dart(),
-            Self::InvalidEntryTooManyTags => 28.into_dart(),
-            Self::InvalidEntryTagTooLong => 29.into_dart(),
-            Self::InvalidEntryOther => 30.into_dart(),
-            Self::NoVault => 31.into_dart(),
-            Self::VaultAlreadyOpen => 32.into_dart(),
-            Self::InvalidEntryId => 33.into_dart(),
-            Self::SessionPoisoned => 34.into_dart(),
+            Self::PasswordTooShort => 14.into_dart(),
+            Self::StorageIo => 15.into_dart(),
+            Self::StorageBusy => 16.into_dart(),
+            Self::StorageCorrupt => 17.into_dart(),
+            Self::StorageReadOnly => 18.into_dart(),
+            Self::StorageHotJournal => 19.into_dart(),
+            Self::StorageJournalMode => 20.into_dart(),
+            Self::StorageOther => 21.into_dart(),
+            Self::InvalidEntryServiceEmpty => 22.into_dart(),
+            Self::InvalidEntryServiceTooLong => 23.into_dart(),
+            Self::InvalidEntryUrlTooLong => 24.into_dart(),
+            Self::InvalidEntryUsernameTooLong => 25.into_dart(),
+            Self::InvalidEntryPasswordEmpty => 26.into_dart(),
+            Self::InvalidEntryPasswordTooLong => 27.into_dart(),
+            Self::InvalidEntryNotesTooLong => 28.into_dart(),
+            Self::InvalidEntryTooManyTags => 29.into_dart(),
+            Self::InvalidEntryTagTooLong => 30.into_dart(),
+            Self::InvalidEntryOther => 31.into_dart(),
+            Self::NoVault => 32.into_dart(),
+            Self::VaultAlreadyOpen => 33.into_dart(),
+            Self::InvalidEntryId => 34.into_dart(),
+            Self::SessionPoisoned => 35.into_dart(),
             _ => unreachable!(),
         }
     }
@@ -1416,6 +1484,23 @@ impl SseEncode for Option<crate::api::entries::NewSecret> {
     }
 }
 
+impl SseEncode for crate::api::password::PasswordStrength {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <i32>::sse_encode(
+            match self {
+                crate::api::password::PasswordStrength::TooShort => 0,
+                crate::api::password::PasswordStrength::Acceptable => 1,
+                crate::api::password::PasswordStrength::Strong => 2,
+                _ => {
+                    unimplemented!("");
+                }
+            },
+            serializer,
+        );
+    }
+}
+
 impl SseEncode for u32 {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
@@ -1472,27 +1557,28 @@ impl SseEncode for crate::api::error::VaultError {
                 crate::api::error::VaultError::Clock => 11,
                 crate::api::error::VaultError::WrongVaultKey => 12,
                 crate::api::error::VaultError::AlreadyExists => 13,
-                crate::api::error::VaultError::StorageIo => 14,
-                crate::api::error::VaultError::StorageBusy => 15,
-                crate::api::error::VaultError::StorageCorrupt => 16,
-                crate::api::error::VaultError::StorageReadOnly => 17,
-                crate::api::error::VaultError::StorageHotJournal => 18,
-                crate::api::error::VaultError::StorageJournalMode => 19,
-                crate::api::error::VaultError::StorageOther => 20,
-                crate::api::error::VaultError::InvalidEntryServiceEmpty => 21,
-                crate::api::error::VaultError::InvalidEntryServiceTooLong => 22,
-                crate::api::error::VaultError::InvalidEntryUrlTooLong => 23,
-                crate::api::error::VaultError::InvalidEntryUsernameTooLong => 24,
-                crate::api::error::VaultError::InvalidEntryPasswordEmpty => 25,
-                crate::api::error::VaultError::InvalidEntryPasswordTooLong => 26,
-                crate::api::error::VaultError::InvalidEntryNotesTooLong => 27,
-                crate::api::error::VaultError::InvalidEntryTooManyTags => 28,
-                crate::api::error::VaultError::InvalidEntryTagTooLong => 29,
-                crate::api::error::VaultError::InvalidEntryOther => 30,
-                crate::api::error::VaultError::NoVault => 31,
-                crate::api::error::VaultError::VaultAlreadyOpen => 32,
-                crate::api::error::VaultError::InvalidEntryId => 33,
-                crate::api::error::VaultError::SessionPoisoned => 34,
+                crate::api::error::VaultError::PasswordTooShort => 14,
+                crate::api::error::VaultError::StorageIo => 15,
+                crate::api::error::VaultError::StorageBusy => 16,
+                crate::api::error::VaultError::StorageCorrupt => 17,
+                crate::api::error::VaultError::StorageReadOnly => 18,
+                crate::api::error::VaultError::StorageHotJournal => 19,
+                crate::api::error::VaultError::StorageJournalMode => 20,
+                crate::api::error::VaultError::StorageOther => 21,
+                crate::api::error::VaultError::InvalidEntryServiceEmpty => 22,
+                crate::api::error::VaultError::InvalidEntryServiceTooLong => 23,
+                crate::api::error::VaultError::InvalidEntryUrlTooLong => 24,
+                crate::api::error::VaultError::InvalidEntryUsernameTooLong => 25,
+                crate::api::error::VaultError::InvalidEntryPasswordEmpty => 26,
+                crate::api::error::VaultError::InvalidEntryPasswordTooLong => 27,
+                crate::api::error::VaultError::InvalidEntryNotesTooLong => 28,
+                crate::api::error::VaultError::InvalidEntryTooManyTags => 29,
+                crate::api::error::VaultError::InvalidEntryTagTooLong => 30,
+                crate::api::error::VaultError::InvalidEntryOther => 31,
+                crate::api::error::VaultError::NoVault => 32,
+                crate::api::error::VaultError::VaultAlreadyOpen => 33,
+                crate::api::error::VaultError::InvalidEntryId => 34,
+                crate::api::error::VaultError::SessionPoisoned => 35,
                 _ => {
                     unimplemented!("");
                 }

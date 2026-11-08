@@ -3,6 +3,7 @@
 pub mod backup;
 pub mod entries;
 pub mod error;
+pub mod password;
 pub mod session;
 
 #[flutter_rust_bridge::frb(init)]

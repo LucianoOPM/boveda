@@ -35,7 +35,7 @@ boveda/
 │   │   ├── lib.rs
 │   │   ├── error.rs        # tipo Error (thiserror), sin secretos
 │   │   ├── crypto/         # kdf.rs (Argon2), keys.rs, aead.rs
-│   │   ├── vault/          # mod.rs (API), header.rs, entry.rs, storage.rs, backup.rs
+│   │   ├── vault/          # mod.rs (API), header.rs, entry.rs, storage.rs, backup.rs, password.rs
 │   │   ├── search.rs
 │   │   └── protocol/       # identity.rs, pairing.rs, message.rs, transport.rs
 │   └── tests/
@@ -54,7 +54,8 @@ boveda/
 │   │       ├── lib.rs
 │   │       ├── api/        # expuesto a Dart, un archivo por área:
 │   │       │               #   mod.rs, error.rs (VaultError), session.rs (VaultSession),
-│   │       │               #   entries.rs y backup.rs; pruebas en <área>/tests.rs
+│   │       │               #   entries.rs, backup.rs y password.rs (fortaleza
+│   │       │               #   de la contraseña maestra); pruebas en <área>/tests.rs
 │   │       ├── test_support.rs   # ayudantes de pruebas (copia de vault-v2.db)
 │   │       └── frb_generated.rs  # generado; no se edita
 │   ├── rust_builder/       # generado por flutter_rust_bridge (cargokit); no se edita
@@ -62,10 +63,11 @@ boveda/
 │   ├── integration_test/   # pruebas en dispositivo que cargan la librería de Rust
 │   ├── test_driver/        # punto de entrada para correr integration_test con flutter drive
 │   ├── lib/
-│   │   ├── main.dart
+│   │   ├── main.dart       # arma las dependencias reales y arranca la app
+│   │   ├── app.dart        # BovedaApp y VaultGate (la pantalla según el estado de la sesión); bootstrap: si el arranque falla, "No se pudo iniciar la app"
 │   │   ├── src/rust/       # código generado por flutter_rust_bridge; no se edita
-│   │   ├── screens/        # futuro: desbloqueo, búsqueda, detalle, edición, ajustes
-│   │   ├── widgets/        # futuro
+│   │   ├── screens/        # first_run_screen.dart, placeholder_screen.dart; futuro: desbloqueo, búsqueda, detalle, edición, ajustes
+│   │   ├── widgets/        # password_field.dart, strength_indicator.dart
 │   │   └── services/       # vault_location.dart (ruta en noBackupFilesDir); futuro: huella, Keystore, selector
 │   ├── android/
 │   └── build/              # ignorado; cargokit compila Rust en build/rust_lib_boveda/build
@@ -100,7 +102,7 @@ Los miembros del workspace se agregan conforme existen: `core` en la etapa 1, `m
 | Módulo | Responsabilidad |
 | --- | --- |
 | `crypto/` | Argon2id (`kdf.rs`); generar la llave de bóveda, derivar la llave maestra y cifrar o descifrar con ella la llave de bóveda, y crear y comprobar el verificador `key_check` (`keys.rs`); cifrar y descifrar cada parte de una entrada con XChaCha20-Poly1305 y su dato autenticado (`aead.rs`) |
-| `vault/` | API de la bóveda (`mod.rs`, estructura `Vault`); cabecera (formato 2, con `key_check`): codificarla como dato autenticado, leerla y validarla, y armar la v2 al desbloquear una v1 (`header.rs`); modelo de entrada (`entry.rs`) y entrada cifrada (`entry/sealed.rs`), almacenamiento SQLite con lápidas para las eliminadas y la migración de la cabecera v1 a v2 (`storage.rs`), respaldos: exportar con `VACUUM INTO` e importar validando una copia temporal (`backup.rs`) |
+| `vault/` | API de la bóveda (`mod.rs`, estructura `Vault`); cabecera (formato 2, con `key_check`): codificarla como dato autenticado, leerla y validarla, y armar la v2 al desbloquear una v1 (`header.rs`); modelo de entrada (`entry.rs`) y entrada cifrada (`entry/sealed.rs`), almacenamiento SQLite con lápidas para las eliminadas y la migración de la cabecera v1 a v2 (`storage.rs`), respaldos: exportar con `VACUUM INTO` e importar validando una copia temporal (`backup.rs`), regla de la contraseña maestra: longitud mínima y fortaleza (`password.rs`) |
 | `search.rs` | Búsqueda tolerante a errores sobre los datos de búsqueda |
 | `protocol/` | Identidades X25519, emparejamiento y envío con Noise (`snow`), descubrimiento mDNS |
 
@@ -110,6 +112,7 @@ Sin dependencias de interfaz ni de plataforma.
 
 - `rust/`: crate puente expuesto con flutter_rust_bridge. Dart guarda un objeto opaco `VaultSession` (la ruta y un `Mutex<Option<Vault>>`) y le pide todas las operaciones; los errores cruzan como un enum plano `VaultError`, sin datos.
 - `lib/src/rust/`: código generado; no se edita a mano.
+- `lib/app.dart`: widget raíz que elige la pantalla según el estado de la sesión (sin bóveda, bloqueada, desbloqueada, error al abrir), sin go_router. Recibe la sesión y la regla de fortaleza inyectadas, para que las pruebas de widgets usen dobles escritos a mano.
 - `lib/screens/`, `lib/widgets/`: interfaz.
 - `lib/services/`: ruta de la bóveda (`noBackupFilesDir`, por un canal de Kotlin), huella, Keystore, selector de archivos.
 

@@ -5,6 +5,7 @@
 
 import 'api/entries.dart';
 import 'api/error.dart';
+import 'api/password.dart';
 import 'api/session.dart';
 
 import 'dart:async';
@@ -71,7 +72,7 @@ class RustLib extends BaseEntrypoint<RustLibApi, RustLibApiImpl, RustLibWire> {
   String get codegenVersion => '2.13.0';
 
   @override
-  int get rustContentHash => -778584515;
+  int get rustContentHash => -715753731;
 
   static const kDefaultExternalLibraryLoaderConfig =
       ExternalLibraryLoaderConfig(
@@ -148,6 +149,8 @@ abstract class RustLibApi extends BaseApi {
   });
 
   Future<void> crateApiInitApp();
+
+  PasswordStrength crateApiPasswordPasswordStrength({required String password});
 
   RustArcIncrementStrongCountFnType
   get rust_arc_increment_strong_count_VaultSession;
@@ -703,6 +706,34 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   TaskConstMeta get kCrateApiInitAppConstMeta =>
       const TaskConstMeta(debugName: "init_app", argNames: []);
 
+  @override
+  PasswordStrength crateApiPasswordPasswordStrength({
+    required String password,
+  }) {
+    return handler.executeSync(
+      SyncTask(
+        callFfi: () {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_String(password, serializer);
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 16)!;
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_password_strength,
+          decodeErrorData: null,
+        ),
+        constMeta: kCrateApiPasswordPasswordStrengthConstMeta,
+        argValues: [password],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiPasswordPasswordStrengthConstMeta =>
+      const TaskConstMeta(
+        debugName: "password_strength",
+        argNames: ["password"],
+      );
+
   RustArcIncrementStrongCountFnType
   get rust_arc_increment_strong_count_VaultSession => wire
       .rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerVaultSession;
@@ -857,6 +888,12 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   NewSecret? dco_decode_opt_box_autoadd_new_secret(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return raw == null ? null : dco_decode_box_autoadd_new_secret(raw);
+  }
+
+  @protected
+  PasswordStrength dco_decode_password_strength(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return PasswordStrength.values[raw as int];
   }
 
   @protected
@@ -1093,6 +1130,13 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  PasswordStrength sse_decode_password_strength(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var inner = sse_decode_i_32(deserializer);
+    return PasswordStrength.values[inner];
+  }
+
+  @protected
   int sse_decode_u_32(SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     return deserializer.buffer.getUint32();
@@ -1316,6 +1360,15 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     if (self != null) {
       sse_encode_box_autoadd_new_secret(self, serializer);
     }
+  }
+
+  @protected
+  void sse_encode_password_strength(
+    PasswordStrength self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_32(self.index, serializer);
   }
 
   @protected

@@ -10,10 +10,11 @@ use crate::crypto::kdf::{DERIVE_CALLS, KdfParams};
 use crate::vault::test_support::*;
 use crate::vault::{EntryId, Error, SearchData, Secret, StorageErrorKind, UnlockReport, Vault};
 
-/// Bóveda nueva y desbloqueada con contraseña `correcta`, en `boveda.db`.
+/// Bóveda nueva y desbloqueada con contraseña `correcta-larga`, en `boveda.db`.
 fn new_vault() -> (tempfile::TempDir, PathBuf, Vault) {
     let (dir, path) = temp_path();
-    let vault = Vault::create_with_params(&path, &password("correcta"), KdfParams::MIN).unwrap();
+    let vault =
+        Vault::create_with_params(&path, &password("correcta-larga"), KdfParams::MIN).unwrap();
     (dir, path, vault)
 }
 
@@ -47,7 +48,7 @@ fn export_creates_openable_backup() {
 
     Storage::open_read_only(&dest).unwrap().close().unwrap();
     let mut copy = Vault::open(&dest).unwrap();
-    copy.unlock(&password("correcta")).unwrap();
+    copy.unlock(&password("correcta-larga")).unwrap();
     assert_eq!(ids_and_services(&copy), ids_and_services(&vault));
 }
 
@@ -101,7 +102,7 @@ fn export_purges_deleted_entry_parts() {
     assert!(!contains(&bytes, &secret));
     // Control: la entrada viva sí viaja.
     let mut copy = Vault::open(&dest).unwrap();
-    copy.unlock(&password("correcta")).unwrap();
+    copy.unlock(&password("correcta-larga")).unwrap();
     assert_eq!(copy.entries().unwrap().len(), 1);
     assert_eq!(copy.entries().unwrap()[0].id(), keep);
 }
@@ -171,7 +172,7 @@ fn export_non_ascii_path() {
     vault.export(&dest).unwrap();
 
     let mut copy = Vault::open(&dest).unwrap();
-    copy.unlock(&password("correcta")).unwrap();
+    copy.unlock(&password("correcta-larga")).unwrap();
     assert_eq!(copy.entries().unwrap().len(), 1);
 }
 
@@ -200,19 +201,19 @@ fn exported_secrets_match() {
     vault.export(&dest).unwrap();
 
     let mut copy = Vault::open(&dest).unwrap();
-    copy.unlock(&password("correcta")).unwrap();
+    copy.unlock(&password("correcta-larga")).unwrap();
     let secret = copy.reveal(id).unwrap();
     assert_eq!(secret.password().expose_secret(), "clave-gmail");
 }
 
 // --- Importar ----------------------------------------------------------
 
-/// Bóveda `origen.db` (contraseña `respaldo`) con gmail y banco, exportada
+/// Bóveda `origen.db` (contraseña `respaldo-maestra`) con gmail y banco, exportada
 /// a `respaldo.db`. Devuelve la ruta del respaldo y sus ids y servicios.
 fn make_backup(dir: &Path) -> (PathBuf, Vec<(EntryId, String)>) {
     let origin = dir.join("origen.db");
     let mut vault =
-        Vault::create_with_params(&origin, &password("respaldo"), KdfParams::MIN).unwrap();
+        Vault::create_with_params(&origin, &password("respaldo-maestra"), KdfParams::MIN).unwrap();
     add_sample(&mut vault, "gmail");
     add_sample(&mut vault, "banco");
     let backup = dir.join("respaldo.db");
@@ -220,9 +221,10 @@ fn make_backup(dir: &Path) -> (PathBuf, Vec<(EntryId, String)>) {
     (backup, ids_and_services(&vault))
 }
 
-/// Bóveda actual en `dest` (contraseña `actual`) con una entrada, cerrada.
+/// Bóveda actual en `dest` (contraseña `actual-maestra`) con una entrada, cerrada.
 fn make_current(dest: &Path) {
-    let mut vault = Vault::create_with_params(dest, &password("actual"), KdfParams::MIN).unwrap();
+    let mut vault =
+        Vault::create_with_params(dest, &password("actual-maestra"), KdfParams::MIN).unwrap();
     add_sample(&mut vault, "actual");
 }
 
@@ -249,7 +251,8 @@ fn import_round_trip() {
     drop(vault);
     fs::remove_file(&path).unwrap();
 
-    let (mut imported, report) = Vault::import(&backup, &path, &password("correcta")).unwrap();
+    let (mut imported, report) =
+        Vault::import(&backup, &path, &password("correcta-larga")).unwrap();
 
     assert_eq!(
         report,
@@ -294,7 +297,7 @@ fn import_future_version_keeps_dest() {
     assert_import_fails_intact(
         &backup,
         &dest,
-        "respaldo",
+        "respaldo-maestra",
         Error::UnsupportedFormatVersion(3),
     );
 }
@@ -317,7 +320,7 @@ fn import_not_a_vault_keeps_dest() {
         .unwrap();
 
     for backup in [&random, &empty, &text, &foreign] {
-        assert_import_fails_intact(backup, &dest, "respaldo", Error::NotAVault);
+        assert_import_fails_intact(backup, &dest, "respaldo-maestra", Error::NotAVault);
     }
 }
 
@@ -332,7 +335,7 @@ fn import_damaged_backup_is_corrupt() {
     assert_import_fails_intact(
         &backup,
         &dest,
-        "respaldo",
+        "respaldo-maestra",
         Error::Storage(StorageErrorKind::Corrupt),
     );
 }
@@ -345,7 +348,7 @@ fn import_reports_corrupt_entry() {
     tamper(&backup, damaged, "search");
     let dest = dir.path().join("boveda.db");
 
-    let (imported, report) = Vault::import(&backup, &dest, &password("respaldo")).unwrap();
+    let (imported, report) = Vault::import(&backup, &dest, &password("respaldo-maestra")).unwrap();
 
     assert_eq!(report.corrupt, vec![damaged]);
     assert_eq!(imported.entries().unwrap().len(), 1);
@@ -362,7 +365,8 @@ fn import_does_not_check_secrets() {
     tamper(&backup, damaged, "secret");
     let dest = dir.path().join("boveda.db");
 
-    let (mut imported, report) = Vault::import(&backup, &dest, &password("respaldo")).unwrap();
+    let (mut imported, report) =
+        Vault::import(&backup, &dest, &password("respaldo-maestra")).unwrap();
 
     assert!(report.corrupt.is_empty());
     assert_eq!(report.unidentified_corrupt, 0);
@@ -386,7 +390,7 @@ fn import_into_missing_dest() {
     assert_import_fails_intact(&backup, &dest, "incorrecta", Error::WrongPassword);
     assert!(!dest.exists());
 
-    let (imported, _) = Vault::import(&backup, &dest, &password("respaldo")).unwrap();
+    let (imported, _) = Vault::import(&backup, &dest, &password("respaldo-maestra")).unwrap();
     assert_eq!(ids_and_services(&imported), entries);
 }
 
@@ -397,16 +401,16 @@ fn import_uses_backup_password() {
     let dest = dir.path().join("boveda.db");
     make_current(&dest);
 
-    let (imported, _) = Vault::import(&backup, &dest, &password("respaldo")).unwrap();
+    let (imported, _) = Vault::import(&backup, &dest, &password("respaldo-maestra")).unwrap();
     assert_eq!(ids_and_services(&imported), entries);
     drop(imported);
 
     let mut reopened = Vault::open(&dest).unwrap();
     assert_eq!(
-        reopened.unlock(&password("actual")).err(),
+        reopened.unlock(&password("actual-maestra")).err(),
         Some(Error::WrongPassword)
     );
-    reopened.unlock(&password("respaldo")).unwrap();
+    reopened.unlock(&password("respaldo-maestra")).unwrap();
 }
 
 #[test]
@@ -416,7 +420,7 @@ fn import_replaces_leftover_temp() {
     let dest = dir.path().join("boveda.db");
     fs::write(sibling(&dest, IMPORT_SUFFIX), b"basura").unwrap();
 
-    let (imported, _) = Vault::import(&backup, &dest, &password("respaldo")).unwrap();
+    let (imported, _) = Vault::import(&backup, &dest, &password("respaldo-maestra")).unwrap();
 
     assert_eq!(ids_and_services(&imported), entries);
     assert!(!sibling(&dest, IMPORT_SUFFIX).exists());
@@ -436,7 +440,7 @@ fn import_read_only_backup() {
     set_readonly(&backup, true);
     let dest = dir.path().join("boveda.db");
 
-    let result = Vault::import(&backup, &dest, &password("respaldo"));
+    let result = Vault::import(&backup, &dest, &password("respaldo-maestra"));
     set_readonly(&backup, false);
 
     let (mut imported, _) = result.unwrap();
@@ -456,7 +460,7 @@ fn import_from_temp_path_keeps_backup() {
     let before = fs::read(&temp).unwrap();
 
     assert_eq!(
-        Vault::import(&temp, &dest, &password("respaldo")).err(),
+        Vault::import(&temp, &dest, &password("respaldo-maestra")).err(),
         Some(Error::Storage(StorageErrorKind::Io))
     );
     assert_eq!(fs::read(&temp).unwrap(), before);
@@ -472,12 +476,12 @@ fn import_relative_paths_are_io() {
 
     let relative_backup = Path::new("respaldo-relativo.db");
     assert_eq!(
-        Vault::import(relative_backup, &dest, &password("respaldo")).err(),
+        Vault::import(relative_backup, &dest, &password("respaldo-maestra")).err(),
         io
     );
     let relative_dest = Path::new("boveda-relativa-no-debe-existir.db");
     assert_eq!(
-        Vault::import(&backup, relative_dest, &password("respaldo")).err(),
+        Vault::import(&backup, relative_dest, &password("respaldo-maestra")).err(),
         io
     );
     assert!(!dest.exists());
@@ -493,7 +497,7 @@ fn import_missing_backup_or_directory_is_io() {
     assert_import_fails_intact(
         &dir.path().join("no-existe.db"),
         &dest,
-        "respaldo",
+        "respaldo-maestra",
         Error::Storage(StorageErrorKind::Io),
     );
 
@@ -502,7 +506,7 @@ fn import_missing_backup_or_directory_is_io() {
     assert_import_fails_intact(
         &backup,
         &nested,
-        "respaldo",
+        "respaldo-maestra",
         Error::Storage(StorageErrorKind::Io),
     );
 }
@@ -512,7 +516,7 @@ fn import_same_path_as_dest() {
     let dir = tempfile::tempdir().unwrap();
     let (backup, entries) = make_backup(dir.path());
 
-    let (imported, _) = Vault::import(&backup, &backup, &password("respaldo")).unwrap();
+    let (imported, _) = Vault::import(&backup, &backup, &password("respaldo-maestra")).unwrap();
 
     assert_eq!(ids_and_services(&imported), entries);
     assert!(!sibling(&backup, IMPORT_SUFFIX).exists());
@@ -526,7 +530,7 @@ fn import_non_ascii_paths() {
     fs::rename(&backup, &renamed).unwrap();
     let dest = dir.path().join("bóveda ñ 2026.db");
 
-    let (imported, _) = Vault::import(&renamed, &dest, &password("respaldo")).unwrap();
+    let (imported, _) = Vault::import(&renamed, &dest, &password("respaldo-maestra")).unwrap();
 
     assert_eq!(ids_and_services(&imported), entries);
 }
@@ -536,14 +540,14 @@ fn imported_vault_is_writable_and_exportable() {
     let dir = tempfile::tempdir().unwrap();
     let (backup, _) = make_backup(dir.path());
     let dest = dir.path().join("boveda.db");
-    let (mut imported, _) = Vault::import(&backup, &dest, &password("respaldo")).unwrap();
+    let (mut imported, _) = Vault::import(&backup, &dest, &password("respaldo-maestra")).unwrap();
 
     let new_id = add_sample(&mut imported, "nueva");
     let second = dir.path().join("segundo.db");
     imported.export(&second).unwrap();
     drop(imported);
     let other = dir.path().join("otra.db");
-    let (again, _) = Vault::import(&second, &other, &password("respaldo")).unwrap();
+    let (again, _) = Vault::import(&second, &other, &password("respaldo-maestra")).unwrap();
 
     assert!(again.entries().unwrap().iter().any(|e| e.id() == new_id));
     assert_eq!(again.entries().unwrap().len(), 3);
@@ -597,13 +601,13 @@ fn import_rolls_back_hot_journal_of_dest() {
     let dest = dir.path().join("boveda.db");
     make_hot_journal_copy(&old, &dest);
 
-    let (imported, _) = Vault::import(&backup, &dest, &password("respaldo")).unwrap();
+    let (imported, _) = Vault::import(&backup, &dest, &password("respaldo-maestra")).unwrap();
     assert_eq!(ids_and_services(&imported), entries);
     drop(imported);
 
     assert!(!sibling(&dest, "-journal").exists());
     let mut reopened = Vault::open(&dest).unwrap();
-    let report = reopened.unlock(&password("respaldo")).unwrap();
+    let report = reopened.unlock(&password("respaldo-maestra")).unwrap();
     assert_eq!(report.unidentified_corrupt, 0);
     assert!(report.corrupt.is_empty());
     assert_eq!(ids_and_services(&reopened), entries);
@@ -619,7 +623,7 @@ fn import_keeps_unopenable_dest_with_journal() {
     let journal = sibling(&dest, "-journal");
     fs::write(&journal, [0xAA_u8; 1024]).unwrap();
 
-    assert_import_fails_intact(&backup, &dest, "respaldo", Error::NotAVault);
+    assert_import_fails_intact(&backup, &dest, "respaldo-maestra", Error::NotAVault);
     assert_eq!(fs::read(&journal).unwrap(), [0xAA_u8; 1024]);
 }
 
@@ -635,13 +639,13 @@ fn import_deletes_orphan_journal_without_dest() {
     make_hot_journal_copy(&old, &dest);
     fs::remove_file(&dest).unwrap();
 
-    let (imported, _) = Vault::import(&backup, &dest, &password("respaldo")).unwrap();
+    let (imported, _) = Vault::import(&backup, &dest, &password("respaldo-maestra")).unwrap();
     assert_eq!(ids_and_services(&imported), entries);
     drop(imported);
 
     assert!(!sibling(&dest, "-journal").exists());
     let mut reopened = Vault::open(&dest).unwrap();
-    let report = reopened.unlock(&password("respaldo")).unwrap();
+    let report = reopened.unlock(&password("respaldo-maestra")).unwrap();
     assert_eq!(report.unidentified_corrupt, 0);
     assert!(report.corrupt.is_empty());
     assert_eq!(ids_and_services(&reopened), entries);
@@ -660,14 +664,14 @@ fn import_deletes_orphan_wal_and_shm_without_dest() {
     copy_live_wal(&old, &dest);
     fs::write(sibling(&dest, "-shm"), [0xBB_u8; 1024]).unwrap();
 
-    let (imported, _) = Vault::import(&backup, &dest, &password("respaldo")).unwrap();
+    let (imported, _) = Vault::import(&backup, &dest, &password("respaldo-maestra")).unwrap();
     assert_eq!(ids_and_services(&imported), entries);
     drop(imported);
 
     assert!(!sibling(&dest, "-wal").exists());
     assert!(!sibling(&dest, "-shm").exists());
     let mut reopened = Vault::open(&dest).unwrap();
-    let report = reopened.unlock(&password("respaldo")).unwrap();
+    let report = reopened.unlock(&password("respaldo-maestra")).unwrap();
     assert!(report.corrupt.is_empty());
     assert_eq!(ids_and_services(&reopened), entries);
     assert_eq!(Storage::open(&dest).unwrap().check_integrity(), Ok(()));
@@ -689,7 +693,7 @@ fn import_keeps_journal_of_dangling_symlink_dest() {
     assert_import_fails_intact(
         &backup,
         &dest,
-        "respaldo",
+        "respaldo-maestra",
         Error::Storage(StorageErrorKind::Io),
     );
     assert_eq!(fs::read(&journal).unwrap(), [0xAA_u8; 1024]);
@@ -708,7 +712,7 @@ fn import_fails_while_dest_is_open() {
         .query_row("SELECT count(*) FROM entries", [], |r| r.get(0))
         .unwrap();
 
-    let err = Vault::import(&backup, &dest, &password("respaldo"))
+    let err = Vault::import(&backup, &dest, &password("respaldo-maestra"))
         .err()
         .unwrap();
     drop(conn);

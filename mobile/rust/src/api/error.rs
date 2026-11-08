@@ -28,6 +28,8 @@ pub enum VaultError {
     Clock,
     WrongVaultKey,
     AlreadyExists,
+    /// La contraseña maestra nueva no llega al mínimo de caracteres.
+    PasswordTooShort,
     StorageIo,
     StorageBusy,
     StorageCorrupt,
@@ -84,6 +86,7 @@ impl From<Error> for VaultError {
             Error::Clock => Self::Clock,
             Error::WrongVaultKey => Self::WrongVaultKey,
             Error::AlreadyExists => Self::AlreadyExists,
+            Error::PasswordTooShort => Self::PasswordTooShort,
         }
     }
 }

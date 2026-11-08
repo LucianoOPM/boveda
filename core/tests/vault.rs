@@ -23,13 +23,13 @@ fn temp_path() -> (tempfile::TempDir, std::path::PathBuf) {
 #[test]
 fn create_lock_unlock_with_calibration() {
     let (_dir, path) = temp_path();
-    let mut vault = Vault::create(&path, &password("maestra")).unwrap();
+    let mut vault = Vault::create(&path, &password("maestra-larga")).unwrap();
     let search = SearchData::new("gmail", None, Some("yo@example.com"), &["correo"]).unwrap();
     let secret = Secret::new(password("clave-gmail"), None).unwrap();
     let id = vault.add(search, secret).unwrap();
 
     vault.lock();
-    let report = vault.unlock(&password("maestra")).unwrap();
+    let report = vault.unlock(&password("maestra-larga")).unwrap();
     assert!(report.corrupt.is_empty());
     let entries = vault.entries().unwrap();
     assert_eq!(entries.len(), 1);
@@ -57,22 +57,22 @@ fn create_lock_unlock_with_calibration() {
 #[test]
 fn change_password_with_calibration() {
     let (_dir, path) = temp_path();
-    let mut vault = Vault::create(&path, &password("vieja")).unwrap();
+    let mut vault = Vault::create(&path, &password("vieja-maestra")).unwrap();
     vault
-        .change_master_password(&password("vieja"), &password("nueva"))
+        .change_master_password(&password("vieja-maestra"), &password("nueva-maestra"))
         .unwrap();
     vault.lock();
     assert_eq!(
-        vault.unlock(&password("vieja")).err(),
+        vault.unlock(&password("vieja-maestra")).err(),
         Some(Error::WrongPassword)
     );
-    assert!(vault.unlock(&password("nueva")).is_ok());
+    assert!(vault.unlock(&password("nueva-maestra")).is_ok());
 }
 
 #[test]
 fn search_with_public_api() {
     let (_dir, path) = temp_path();
-    let mut vault = Vault::create(&path, &password("maestra")).unwrap();
+    let mut vault = Vault::create(&path, &password("maestra-larga")).unwrap();
     for service in ["gmail", "facebook"] {
         let search = SearchData::new(service, None, None, &[]).unwrap();
         let secret = Secret::new(password("clave"), None).unwrap();
@@ -90,7 +90,7 @@ fn search_with_public_api() {
 #[test]
 fn export_delete_import_with_calibration() {
     let (dir, path) = temp_path();
-    let mut vault = Vault::create(&path, &password("maestra")).unwrap();
+    let mut vault = Vault::create(&path, &password("maestra-larga")).unwrap();
     let mut expected = Vec::new();
     for service in ["gmail", "banco"] {
         let search = SearchData::new(service, None, Some("yo@example.com"), &[]).unwrap();
@@ -102,7 +102,7 @@ fn export_delete_import_with_calibration() {
     drop(vault);
     std::fs::remove_file(&path).unwrap();
 
-    let (mut imported, report) = Vault::import(&backup, &path, &password("maestra")).unwrap();
+    let (mut imported, report) = Vault::import(&backup, &path, &password("maestra-larga")).unwrap();
 
     assert!(report.corrupt.is_empty());
     assert_eq!(report.unidentified_corrupt, 0);
@@ -507,7 +507,7 @@ fn migrated_vault_key_survives_password_change_with_calibration() {
     let (mut vault, _) = unlock_at(&path);
     let key = vault.export_vault_key().unwrap();
     vault
-        .change_master_password(&password(FIXTURE_V1_PASSWORD), &password("nueva"))
+        .change_master_password(&password(FIXTURE_V1_PASSWORD), &password("nueva-maestra"))
         .unwrap();
     vault.lock();
     assert_eq!(vault.unlock_with_key(key).unwrap(), clean_report());

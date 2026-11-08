@@ -8,6 +8,7 @@
 
 import 'api/entries.dart';
 import 'api/error.dart';
+import 'api/password.dart';
 import 'api/session.dart';
 
 import 'dart:async';
@@ -96,6 +97,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   NewSecret? dco_decode_opt_box_autoadd_new_secret(dynamic raw);
 
   @protected
+  PasswordStrength dco_decode_password_strength(dynamic raw);
+
+  @protected
   int dco_decode_u_32(dynamic raw);
 
   @protected
@@ -182,6 +186,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   NewSecret? sse_decode_opt_box_autoadd_new_secret(
     SseDeserializer deserializer,
   );
+
+  @protected
+  PasswordStrength sse_decode_password_strength(SseDeserializer deserializer);
 
   @protected
   int sse_decode_u_32(SseDeserializer deserializer);
@@ -288,6 +295,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void sse_encode_opt_box_autoadd_new_secret(
     NewSecret? self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_password_strength(
+    PasswordStrength self,
     SseSerializer serializer,
   );
 
