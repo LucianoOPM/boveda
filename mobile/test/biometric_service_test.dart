@@ -42,7 +42,10 @@ void main() {
     await expectLater(service.unlock(), failsWith(BiometricFailure.failed));
   });
 
-  test('unlock devuelve los bytes y se pueden poner en ceros', () async {
+  // El canal simulado entrega una lista modificable; el motor real entrega
+  // una vista no modificable. Ese caso lo cubren las pruebas de
+  // biometric_unlock_test.dart (una llave no modificable).
+  test('unlock devuelve los bytes', () async {
     handle((call) async {
       expect(call.method, 'unlock');
       return Uint8List.fromList(List.filled(32, 7));
@@ -50,8 +53,6 @@ void main() {
     final key = await service.unlock();
     expect(key, hasLength(32));
     expect(key.every((b) => b == 7), isTrue);
-    key.fillRange(0, key.length, 0);
-    expect(key.every((b) => b == 0), isTrue);
   });
 
   test('unlock sin bytes produce failed', () async {

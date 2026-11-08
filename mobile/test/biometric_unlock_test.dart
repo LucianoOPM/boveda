@@ -1,6 +1,8 @@
 // Pruebas de los flujos de activar y desbloquear con huella, con la sesión y
 // el servicio simulados.
 
+import 'dart:typed_data';
+
 import 'package:boveda/services/biometric_service.dart';
 import 'package:boveda/services/biometric_unlock.dart';
 import 'package:boveda/src/rust/api/error.dart';
@@ -53,6 +55,12 @@ void main() {
       session.onExportVaultKey = () async => throw VaultError.locked;
       expect(await enableBiometric(session, biometric), EnableOutcome.failed);
       expect(biometric.calls, ['beginEnable', 'abortEnable']);
+    });
+
+    test('una llave no modificable activa igual', () async {
+      session.onExportVaultKey = () async =>
+          Uint8List.fromList(List.filled(32, 9)).asUnmodifiableView();
+      expect(await enableBiometric(session, biometric), EnableOutcome.enabled);
     });
 
     test(
@@ -134,6 +142,17 @@ void main() {
         expect(zeroed(session.unlockWithKeyCalls.last), isTrue);
       }
       expect(biometric.calls, isNot(contains('disable')));
+    });
+
+    test('una llave no modificable desbloquea igual', () async {
+      // El canal real entrega un `_UnmodifiableUint8ArrayView`: ponerlo en
+      // ceros lanza y no debe romper el desbloqueo.
+      biometric.onUnlock = () async =>
+          Uint8List.fromList(List.filled(32, 7)).asUnmodifiableView();
+      expect(
+        await unlockWithBiometric(session, biometric),
+        isA<BiometricUnlocked>(),
+      );
     });
 
     test('disable que falla igual da disabled', () async {

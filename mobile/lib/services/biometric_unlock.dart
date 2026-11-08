@@ -49,7 +49,7 @@ Future<EnableOutcome> enableBiometric(
   } catch (_) {
     return EnableOutcome.failed;
   } finally {
-    key.fillRange(0, key.length, 0);
+    _wipe(key);
   }
 }
 
@@ -115,7 +115,19 @@ Future<BiometricUnlockOutcome> unlockWithBiometric(
   } catch (_) {
     return const BiometricCoreError();
   } finally {
+    _wipe(key);
+  }
+}
+
+/// Pone la llave en ceros. El canal de Kotlin la entrega como una vista no
+/// modificable del mensaje (`_UnmodifiableUint8ArrayView`): ahí no se puede
+/// borrar y queda en la excepción de mejor esfuerzo de `StandardMessageCodec`.
+/// Nunca lanza, para que un fallo al borrar no rompa el desbloqueo.
+void _wipe(Uint8List key) {
+  try {
     key.fillRange(0, key.length, 0);
+  } on UnsupportedError {
+    // Vista no modificable: mejor esfuerzo.
   }
 }
 
