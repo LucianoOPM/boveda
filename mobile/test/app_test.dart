@@ -7,6 +7,7 @@ import 'package:boveda/app.dart';
 import 'package:boveda/screens/biometric_offer_screen.dart';
 import 'package:boveda/screens/first_run_screen.dart';
 import 'package:boveda/screens/unlock_screen.dart';
+import 'package:boveda/services/biometric_service.dart';
 import 'package:boveda/src/rust/api/error.dart';
 import 'package:boveda/src/rust/api/session.dart';
 import 'package:flutter/material.dart';
@@ -265,6 +266,30 @@ void main() {
     await createFromFirstRun(tester);
 
     expect(find.text("Pantalla principal: #40"), findsOneWidget);
+  });
+
+  testWidgets("activación fallida desde el desbloqueo muestra el SnackBar en "
+      "la pantalla principal", (tester) async {
+    biometric
+      ..available = true
+      ..onBeginEnable = () async =>
+          throw const BiometricException(BiometricFailure.failed);
+    await pumpApp(tester, session, () async => true);
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(
+      find.byKey(const Key("unlock-enable-biometric")),
+    );
+    await tester.tap(find.byKey(const Key("unlock-enable-biometric")));
+    await tester.enterText(
+      find.byKey(const Key("unlock-password")),
+      "prueba-bóveda-v2",
+    );
+    await tester.pump();
+    await tester.tap(find.byKey(const Key("unlock-submit")));
+    await tester.pumpAndSettle();
+
+    expect(find.text("Pantalla principal: #40"), findsOneWidget);
+    expect(find.text("No se pudo activar la huella."), findsOneWidget);
   });
 
   testWidgets("Ahora no lleva a la pantalla principal", (tester) async {
