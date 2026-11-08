@@ -6,7 +6,7 @@ Documentos relacionados: `docs/especificacion.md` (qué y por qué) y `docs/road
 
 ## Mapa del repositorio
 
-La estructura de la raíz y de `core/` es la definitiva y debe seguirse desde ahora. La de `mobile/` y `desktop/` es la esperada: la definitiva la generan `flutter create`, `flutter_rust_bridge_codegen integrate` y el creador de Tauri al iniciar las etapas 2 y 3. Si lo generado difiere de este mapa, manda lo generado y se actualiza este archivo.
+La estructura de la raíz, de `core/` y de `mobile/` es la definitiva y debe seguirse desde ahora; en `mobile/`, las carpetas marcadas como futuras se crean con las pantallas de la etapa 2. La de `desktop/` es la esperada: la definitiva la genera el creador de Tauri al iniciar la etapa 3. Si lo generado difiere de este mapa, manda lo generado y se actualiza este archivo.
 
 ```
 boveda/
@@ -15,7 +15,9 @@ boveda/
 ├── rust-toolchain.toml     # versión fija de Rust; subirla es un commit propio
 ├── deny.toml               # reglas de cargo deny
 ├── .gitignore
-├── .github/workflows/ci.yml
+├── .github/workflows/
+│   ├── ci.yml              # núcleo (Linux), workspace completo (Windows) y dependencias
+│   └── mobile.yml          # Flutter: analyze, test, puente al día y APK debug
 ├── .claude/                # configuración de Claude Code (settings, skills, rules)
 ├── CLAUDE.md
 ├── ARCHITECTURE.md
@@ -41,24 +43,29 @@ boveda/
 │       ├── protocol.rs
 │       └── fixtures/       # bóvedas de ejemplo fijas (vault-vN.db, ver su README)
 │
-├── mobile/                 # app Flutter (esperado, etapa 2)
+├── mobile/                 # app Flutter (etapa 2)
 │   ├── CLAUDE.md
 │   ├── pubspec.yaml
+│   ├── analysis_options.yaml
 │   ├── flutter_rust_bridge.yaml
 │   ├── rust/               # crate puente rust_lib_boveda: fachada delgada sobre vault-core
 │   │   ├── Cargo.toml      # edición 2021 por el código generado
 │   │   └── src/
-│   │       ├── api/        # funciones expuestas a Dart (un archivo por área)
+│   │       ├── lib.rs
+│   │       ├── api/        # funciones expuestas a Dart (mod.rs y un archivo por área)
 │   │       └── frb_generated.rs  # generado; no se edita
-│   ├── rust_builder/       # generado por flutter_rust_bridge; no se edita
+│   ├── rust_builder/       # generado por flutter_rust_bridge (cargokit); no se edita
+│   ├── test/               # pruebas de widgets en la PC, con el puente simulado
 │   ├── integration_test/   # pruebas en dispositivo que cargan la librería de Rust
+│   ├── test_driver/        # punto de entrada para correr integration_test con flutter drive
 │   ├── lib/
 │   │   ├── main.dart
 │   │   ├── src/rust/       # código generado por flutter_rust_bridge; no se edita
-│   │   ├── screens/        # desbloqueo, búsqueda, detalle, edición, ajustes
-│   │   ├── widgets/
-│   │   └── services/       # huella, Keystore, selector de archivos
-│   └── android/
+│   │   ├── screens/        # futuro: desbloqueo, búsqueda, detalle, edición, ajustes
+│   │   ├── widgets/        # futuro
+│   │   └── services/       # futuro: huella, Keystore, selector de archivos
+│   ├── android/
+│   └── build/              # ignorado; cargokit compila Rust en build/rust_lib_boveda/build
 │
 └── desktop/                # app Tauri 2 (esperado, etapa 3)
     ├── CLAUDE.md
