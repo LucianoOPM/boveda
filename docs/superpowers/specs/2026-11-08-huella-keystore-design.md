@@ -328,6 +328,15 @@ Los dobles guardan la referencia de cada `Uint8List` que reciben, para comprobar
 
 `cargo test --workspace`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo fmt --all`, `flutter analyze`, `flutter test` y el puente regenerado sin diferencias, como comprueba `mobile.yml`.
 
+## Hallazgos de la prueba a mano
+
+En el emulador (Android 16, API 37) aparecieron dos fallos que las pruebas automáticas no podían ver. Se corrigieron en commits `fix:` propios:
+
+1. **`updateAAD` antes de la huella.** keystore2 rechaza `updateAad` sobre una llave que exige autenticación en cada uso si todavía no hay huella (`KEY_USER_NOT_AUTHENTICATED`, "No operation auth token received") y aborta la operación; el `doFinal` posterior falla con `IllegalBlockSizeException`. El dato autenticado se pasa ahora en el callback de éxito, justo antes de `doFinal`, al cifrar y al descifrar. Regla: con una llave así, ninguna operación del `Cipher` salvo `init` va antes de la huella.
+2. **El canal entrega una vista no modificable.** El `Uint8List` que llega de Kotlin por `StandardMessageCodec` es un `_UnmodifiableUint8ArrayView`: `fillRange` lanza `UnsupportedError`. En el `finally` de `unlockWithBiometric` ese error reemplazaba al resultado, la pantalla se quedaba en "Desbloqueando…" y la bóveda ya estaba desbloqueada en Rust. El canal simulado de las pruebas entrega una lista modificable, así que no lo mostraba. Ahora el borrado pasa por `_wipe`, que nunca lanza; esa copia queda en la excepción de mejor esfuerzo de `StandardMessageCodec`. Hay pruebas con `asUnmodifiableView()` en los dos flujos.
+
+Otro hallazgo, sin cambio de código: con Android 16, tras varios dedos no reconocidos el propio diálogo pide el PIN del dispositivo para recuperar la biometría. Cancelarlo vuelve a la contraseña sin desactivar la huella, como manda la tabla de códigos.
+
 ## Documentación
 
 - `docs/especificacion.md`:
