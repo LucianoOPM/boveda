@@ -69,15 +69,7 @@ pub(super) fn import(
     // El guardián se declara antes de cualquier conexión sobre la copia,
     // para soltarse después de ella: en Windows no se borra un archivo
     // abierto.
-    let temp = TempFile(with_suffix(dest, IMPORT_SUFFIX));
-    fs::copy(backup, &temp.0).map_err(io_error)?;
-    // En Windows, `FlushFileBuffers` exige permiso de escritura.
-    OpenOptions::new()
-        .write(true)
-        .open(&temp.0)
-        .and_then(|file| file.sync_all())
-        .map_err(io_error)?;
-
+    let temp = copy_to_temp(backup, &with_suffix(dest, IMPORT_SUFFIX))?;
     let (unlocked, report) = validate(&temp.0, password)?;
 
     settle_dest(dest)?;
@@ -94,6 +86,50 @@ pub(super) fn import(
         },
         report,
     ))
+}
+
+/// Copia `backup` a `temp` (la copia temporal, junto a `dest`) y la
+/// sincroniza. Devuelve el guardián que la borra al soltarse.
+///
+/// - Si `backup` es el mismo archivo que `temp`, se rechaza con
+///   `Storage(Io)`: borrar el sobrante o el guardián destruirían el
+///   respaldo del usuario.
+/// - Un `temp` sobrante de un intento interrumpido se borra primero, y la
+///   copia se crea con `create_new`: el guardián solo borra un archivo que
+///   creó esta llamada.
+/// - No se usa `fs::copy`, que copia también los permisos: la copia de un
+///   respaldo de solo lectura no se podría sincronizar, y la bóveda
+///   instalada heredaría los permisos del respaldo. Aquí la copia toma los
+///   permisos por defecto del proceso.
+fn copy_to_temp(backup: &Path, temp: &Path) -> Result<TempFile> {
+    if same_file(backup, temp) {
+        return Err(Error::Storage(StorageErrorKind::Io));
+    }
+    match fs::remove_file(temp) {
+        Ok(()) => {}
+        Err(e) if e.kind() == io::ErrorKind::NotFound => {}
+        Err(e) => return Err(io_error(e)),
+    }
+
+    let mut source = fs::File::open(backup).map_err(io_error)?;
+    let mut copy = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(temp)
+        .map_err(io_error)?;
+    let guard = TempFile(temp.to_path_buf());
+    io::copy(&mut source, &mut copy).map_err(io_error)?;
+    copy.sync_all().map_err(io_error)?;
+    Ok(guard)
+}
+
+/// Si las dos rutas existen y apuntan al mismo archivo. Si alguna no
+/// existe, no pueden ser el mismo.
+fn same_file(a: &Path, b: &Path) -> bool {
+    match (fs::canonicalize(a), fs::canonicalize(b)) {
+        (Ok(a), Ok(b)) => a == b,
+        _ => false,
+    }
 }
 
 /// Abre la copia en solo lectura (rechaza un archivo ajeno, en WAL o de una

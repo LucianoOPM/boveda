@@ -396,6 +396,47 @@ fn import_replaces_leftover_temp() {
     assert!(!sibling(&dest, IMPORT_SUFFIX).exists());
 }
 
+/// Marca o desmarca un archivo como de solo lectura.
+fn set_readonly(path: &Path, readonly: bool) {
+    let mut perms = fs::metadata(path).unwrap().permissions();
+    perms.set_readonly(readonly);
+    fs::set_permissions(path, perms).unwrap();
+}
+
+#[test]
+fn import_read_only_backup() {
+    let dir = tempfile::tempdir().unwrap();
+    let (backup, entries) = make_backup(dir.path());
+    set_readonly(&backup, true);
+    let dest = dir.path().join("boveda.db");
+
+    let result = Vault::import(&backup, &dest, &password("respaldo"));
+    set_readonly(&backup, false);
+
+    let (mut imported, _) = result.unwrap();
+    assert_eq!(ids_and_services(&imported), entries);
+    // La bóveda importada no hereda el solo lectura del respaldo.
+    assert!(!fs::metadata(&dest).unwrap().permissions().readonly());
+    add_sample(&mut imported, "nueva");
+}
+
+#[test]
+fn import_from_temp_path_keeps_backup() {
+    let dir = tempfile::tempdir().unwrap();
+    let (backup, _) = make_backup(dir.path());
+    let dest = dir.path().join("boveda.db");
+    let temp = sibling(&dest, IMPORT_SUFFIX);
+    fs::rename(&backup, &temp).unwrap();
+    let before = fs::read(&temp).unwrap();
+
+    assert_eq!(
+        Vault::import(&temp, &dest, &password("respaldo")).err(),
+        Some(Error::Storage(StorageErrorKind::Io))
+    );
+    assert_eq!(fs::read(&temp).unwrap(), before);
+    assert!(!dest.exists());
+}
+
 #[test]
 fn import_relative_paths_are_io() {
     let dir = tempfile::tempdir().unwrap();
