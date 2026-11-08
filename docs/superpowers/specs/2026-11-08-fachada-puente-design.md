@@ -133,8 +133,9 @@ pub struct UnlockReport {
 ```
 
 - `EntrySummary`, `EntryInput` y `UnlockReport` no contienen secretos. Ningún tipo de cruce deriva `Debug` con secretos; `NewSecret` no deriva `Debug`.
-- Las contraseñas y notas que entran pasan a `SecretString::from(String)`, que mueve el búfer sin copiarlo. Las reglas de la entrada (recortes, límites, etiquetas) las aplican `SearchData::new` y `Secret::new` en el núcleo.
-- Las contraseñas maestras (`create`, `unlock`, `import_backup`) entran como `String` y pasan igual a `SecretString`.
+- Las contraseñas y notas que entran se copian con `SecretString::from(s.as_str())` (reserva exactamente el largo, como en `Secret::decode` del núcleo) y el `String` recibido se borra con `zeroize`. No se usa `SecretString::from(String)`: si la capacidad supera el largo, `into_boxed_str` reasigna y deja una copia sin borrar. Para esto `mobile/rust` depende de `secrecy` 0.10 y `zeroize` 1.9, las mismas versiones que ya usa el núcleo (no entran crates nuevos a `Cargo.lock`). Las reglas de la entrada (recortes, límites, etiquetas) las aplican `SearchData::new` y `Secret::new` en el núcleo.
+- Las contraseñas maestras (`create`, `unlock`, `import_backup`) entran como `String` y se tratan igual.
+- Al revelar, la fachada copia el valor con `expose_secret().to_owned()` y entrega ese `String` a frb. Esa copia y los búferes de frb son de mejor esfuerzo.
 
 ### Identificador de entrada en hexadecimal
 
