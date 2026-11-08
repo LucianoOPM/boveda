@@ -17,6 +17,7 @@ use std::path::{Path, PathBuf};
 
 use secrecy::SecretString;
 
+use super::header::VaultHeader;
 use super::storage::{Storage, require_absolute};
 use super::{UnlockReport, Unlocked, Vault};
 use crate::error::{Error, Result, StorageErrorKind};
@@ -68,7 +69,16 @@ pub(super) fn import(
     // para soltarse después de ella: en Windows no se borra un archivo
     // abierto.
     let temp = copy_to_temp(backup, &with_suffix(dest, IMPORT_SUFFIX))?;
-    let (unlocked, report) = validate(&temp.0, password)?;
+    let (unlocked, report, upgraded) = validate(&temp.0, password)?;
+    // Un respaldo de la versión 1 se migra en la copia temporal, antes del
+    // renombrado: así `dest` nunca queda en la versión 1. La cabecera nueva
+    // ya viene armada con la llave derivada de la validación, sin un
+    // segundo Argon2id.
+    if let Some(header) = upgraded {
+        let mut storage = Storage::open(&temp.0)?;
+        storage.migrate_header(&header)?;
+        storage.close()?;
+    }
 
     settle_dest(dest)?;
     fs::rename(&temp.0, dest).map_err(io_error)?;
@@ -133,13 +143,19 @@ fn same_file(a: &Path, b: &Path) -> bool {
 /// Abre la copia en solo lectura (rechaza un archivo ajeno, en WAL o de una
 /// versión desconocida), revisa su integridad, la desbloquea y descifra los
 /// datos de búsqueda. Cierra la conexión antes de volver.
-fn validate(path: &Path, password: &SecretString) -> Result<(Unlocked, UnlockReport)> {
+///
+/// Si la copia es de la versión de formato 1, devuelve también la cabecera
+/// de la versión 2 para migrarla (ver [`VaultHeader::unlock_upgrading`]).
+fn validate(
+    path: &Path,
+    password: &SecretString,
+) -> Result<(Unlocked, UnlockReport, Option<VaultHeader>)> {
     let storage = Storage::open_read_only(path)?;
     storage.check_integrity()?;
-    let key = storage.read_header()?.unlock(password)?;
-    let loaded = Vault::load_entries(&storage, key)?;
+    let (key, upgraded) = storage.read_header()?.unlock_upgrading(password)?;
+    let (unlocked, report) = Vault::load_entries(&storage, key)?;
     storage.close()?;
-    Ok(loaded)
+    Ok((unlocked, report, upgraded))
 }
 
 /// Si `dest` tiene un `-journal` o un `-wal` (un cierre forzado a mitad de
