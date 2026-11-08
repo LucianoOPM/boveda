@@ -340,3 +340,96 @@ fn swapped_secret_between_entries_is_rejected() {
         "clave-completa-ñ"
     );
 }
+
+#[test]
+fn backup_restore_recovers_everything() {
+    let (dir, path, vault) = unlocked_fixture();
+    let backup = dir.path().join("respaldo.db");
+    vault.export(&backup).unwrap();
+    // En Windows no se puede borrar un archivo que SQLite tiene abierto.
+    drop(vault);
+    fs::remove_file(&path).unwrap();
+
+    let (mut imported, report) =
+        Vault::import(&backup, &path, &password(FIXTURE_V1_PASSWORD)).unwrap();
+
+    assert_eq!(report, clean_report());
+    assert_eq!(services(&imported), ["Banco", "Correo Electrónico", "Nube"]);
+    assert_eq!(
+        revealed(&mut imported, "Correo Electrónico"),
+        (
+            "clave-completa-ñ".to_owned(),
+            Some("Línea uno\nLínea dos".to_owned())
+        )
+    );
+    assert_eq!(
+        revealed(&mut imported, "Banco"),
+        ("clave-minima".to_owned(), None)
+    );
+    assert_eq!(
+        revealed(&mut imported, "Nube"),
+        ("clave-nube".to_owned(), None)
+    );
+}
+
+/// Crear, agregar, bloquear, desbloquear, buscar, revelar, cambiar la
+/// contraseña maestra, exportar e importar, sobre la misma bóveda.
+#[test]
+fn full_flow_through_public_api() {
+    let (dir, path) = temp_path();
+    let mut vault = Vault::create(&path, &password("maestra-vieja")).unwrap();
+    let gmail = SearchData::new(
+        "gmail",
+        Some("https://mail.google.com"),
+        Some("yo@example.com"),
+        &[],
+    )
+    .unwrap();
+    let gmail = vault
+        .add(gmail, Secret::new(password("clave-gmail"), None).unwrap())
+        .unwrap();
+    let banco = SearchData::new("banco", None, None, &[]).unwrap();
+    let banco = vault
+        .add(banco, Secret::new(password("clave-banco"), None).unwrap())
+        .unwrap();
+
+    vault.lock();
+    assert_eq!(vault.entries().err(), Some(Error::Locked));
+    assert_eq!(
+        vault.unlock(&password("maestra-vieja")).unwrap(),
+        clean_report()
+    );
+
+    // Con un error de escritura.
+    let found = vault.search("gmial").unwrap();
+    assert_eq!(found[0].id(), gmail);
+    assert_eq!(
+        vault.reveal(gmail).unwrap().password().expose_secret(),
+        "clave-gmail"
+    );
+
+    vault
+        .change_master_password(&password("maestra-vieja"), &password("maestra-nueva"))
+        .unwrap();
+    vault.lock();
+    assert_eq!(
+        vault.unlock(&password("maestra-vieja")).err(),
+        Some(Error::WrongPassword)
+    );
+    vault.unlock(&password("maestra-nueva")).unwrap();
+
+    let backup = dir.path().join("respaldo.db");
+    vault.export(&backup).unwrap();
+    drop(vault);
+    fs::remove_file(&path).unwrap();
+
+    let (mut imported, report) = Vault::import(&backup, &path, &password("maestra-nueva")).unwrap();
+    assert_eq!(report, clean_report());
+    assert_eq!(imported.entries().unwrap().len(), 2);
+    for (id, expected) in [(gmail, "clave-gmail"), (banco, "clave-banco")] {
+        assert_eq!(
+            imported.reveal(id).unwrap().password().expose_secret(),
+            expected
+        );
+    }
+}
