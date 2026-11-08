@@ -63,10 +63,11 @@ boveda/
 │   ├── integration_test/   # pruebas en dispositivo que cargan la librería de Rust
 │   ├── test_driver/        # punto de entrada para correr integration_test con flutter drive
 │   ├── lib/
-│   │   ├── main.dart
+│   │   ├── main.dart       # arma las dependencias reales y arranca la app
+│   │   ├── app.dart        # BovedaApp y VaultGate: la pantalla según el estado de la sesión
 │   │   ├── src/rust/       # código generado por flutter_rust_bridge; no se edita
-│   │   ├── screens/        # futuro: desbloqueo, búsqueda, detalle, edición, ajustes
-│   │   ├── widgets/        # futuro
+│   │   ├── screens/        # first_run_screen.dart, placeholder_screen.dart; futuro: desbloqueo, búsqueda, detalle, edición, ajustes
+│   │   ├── widgets/        # password_field.dart, strength_indicator.dart
 │   │   └── services/       # vault_location.dart (ruta en noBackupFilesDir); futuro: huella, Keystore, selector
 │   ├── android/
 │   └── build/              # ignorado; cargokit compila Rust en build/rust_lib_boveda/build
@@ -111,6 +112,7 @@ Sin dependencias de interfaz ni de plataforma.
 
 - `rust/`: crate puente expuesto con flutter_rust_bridge. Dart guarda un objeto opaco `VaultSession` (la ruta y un `Mutex<Option<Vault>>`) y le pide todas las operaciones; los errores cruzan como un enum plano `VaultError`, sin datos.
 - `lib/src/rust/`: código generado; no se edita a mano.
+- `lib/app.dart`: widget raíz que elige la pantalla según el estado de la sesión (sin bóveda, bloqueada, desbloqueada, error al abrir), sin go_router. Recibe la sesión y la regla de fortaleza inyectadas, para que las pruebas de widgets usen dobles escritos a mano.
 - `lib/screens/`, `lib/widgets/`: interfaz.
 - `lib/services/`: ruta de la bóveda (`noBackupFilesDir`, por un canal de Kotlin), huella, Keystore, selector de archivos.
 
