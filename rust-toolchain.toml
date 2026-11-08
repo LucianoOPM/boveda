@@ -1,12 +1,10 @@
 # Toolchain compartido por el núcleo y las dos apps.
 # La versión está fijada para que la CI y la PC compilen igual. Subirla es un
 # commit propio que cambia este archivo (ver CLAUDE.md de la raíz).
-# Los targets de Android se instalan solos la primera vez que cargo lo lea.
+# Sin targets de Android: cargokit compila la app con el toolchain `stable`,
+# no con este archivo, y les instala sus targets por su cuenta. Listarlos aquí
+# solo haría que rustup los descargara para 1.99.1 sin que nadie los use. La
+# #48 decide si vuelven cuando la librería de Android use este toolchain.
 [toolchain]
 channel = "1.99.1"
 components = ["rustfmt", "clippy"]
-targets = [
-    "aarch64-linux-android",   # celulares físicos
-    "armv7-linux-androideabi", # celulares antiguos de 32 bits
-    "x86_64-linux-android",    # emulador
-]
