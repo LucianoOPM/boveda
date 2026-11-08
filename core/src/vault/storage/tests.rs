@@ -938,3 +938,15 @@ fn migrate_header_on_v2_does_nothing() {
     drop(storage);
     assert_eq!(fs::read(&path).unwrap(), before);
 }
+
+#[test]
+fn migrate_header_without_header_row_is_corrupt() {
+    let (_dir, path) = fixture_v1_copy();
+    let mut storage = Storage::open(&path).unwrap();
+    let (header, _) = new_header();
+    raw(&path).execute("DELETE FROM header", []).unwrap();
+    assert_eq!(
+        storage.migrate_header(&header).err(),
+        Some(Error::Storage(StorageErrorKind::Corrupt))
+    );
+}

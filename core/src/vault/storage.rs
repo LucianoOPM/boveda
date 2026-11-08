@@ -366,7 +366,12 @@ impl Storage {
                 [],
                 |row| row.get(0),
             )
-            .map_err(map_sqlite_error)?;
+            // Sin fila de cabecera no hay bóveda: el mismo error que en
+            // `read_header`.
+            .map_err(|e| match e {
+                rusqlite::Error::QueryReturnedNoRows => Error::Storage(StorageErrorKind::Corrupt),
+                other => map_sqlite_error(other),
+            })?;
         if current != i64::from(FORMAT_VERSION_V1) {
             // Al soltar `tx` sin confirmar, SQLite revierte (no hubo cambios).
             return Ok(Migration::NotNeeded);

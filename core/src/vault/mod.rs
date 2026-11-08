@@ -173,6 +173,12 @@ impl Vault {
     /// versión 1 sí. Si la migración falla, devuelve el error de
     /// almacenamiento, la bóveda sigue bloqueada y el archivo sigue siendo
     /// de la versión 1. Sobre una versión 2 no escribe nada.
+    ///
+    /// Si otra conexión migró la cabecera mientras esta derivaba, no se
+    /// sobrescribe: se vuelve a derivar contra la cabecera actual (una
+    /// segunda derivación), y si esa conexión cambió la contraseña el
+    /// resultado es [`Error::WrongPassword`], con el archivo ya en la
+    /// versión 2.
     pub fn unlock(&mut self, password: &SecretString) -> Result<UnlockReport> {
         if self.unlocked.is_some() {
             return Err(Error::AlreadyUnlocked);
