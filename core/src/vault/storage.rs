@@ -294,8 +294,10 @@ impl Storage {
 
     /// Copia consistente y compacta de la bóveda en `dest` con `VACUUM INTO`.
     /// `dest` debe no existir o estar vacío. La ruta va como parámetro,
-    /// nunca dentro del SQL; una que no es UTF-8 da `Storage(Io)`.
+    /// nunca dentro del SQL; una que no es UTF-8 o relativa da
+    /// `Storage(Io)` (`VACUUM INTO` también acepta URIs).
     pub(crate) fn vacuum_into(&self, dest: &Path) -> Result<()> {
+        require_absolute(dest)?;
         let dest = dest.to_str().ok_or(Error::Storage(StorageErrorKind::Io))?;
         self.conn
             .execute("VACUUM INTO ?1", [dest])

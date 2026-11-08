@@ -825,6 +825,18 @@ fn format_version_out_of_u16_is_corrupt() {
 // --- Respaldos (#9) ----------------------------------------------------
 
 #[test]
+fn vacuum_into_relative_path_is_io_and_creates_nothing() {
+    let (_vault_dir, _path, storage) = new_vault();
+    let (_dir, absolute, relative) = relative_temp_path();
+
+    assert_eq!(
+        storage.vacuum_into(&relative),
+        Err(Error::Storage(StorageErrorKind::Io))
+    );
+    assert!(!absolute.exists());
+}
+
+#[test]
 fn vacuum_into_copies_with_synchronous_full() {
     let (dir, _path, mut storage) = new_vault();
     storage
