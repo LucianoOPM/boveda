@@ -216,6 +216,7 @@ Ninguna. `VACUUM INTO` ya está en el SQLite empaquetado de `rusqlite`, y `tempf
 ## Pendiente para otras issues
 
 - `Storage::open` y `Storage::create` también reciben rutas que SQLite interpretaría como URI si empiezan con `file:`. Hoy las rutas de la app son absolutas, pero conviene la misma comprobación ahí.
+  - (Resuelto en la #22.) `require_absolute` pasó a `storage.rs` y la llaman `Storage::create`, `Storage::open` y `Storage::open_read_only`; `Vault::create` la llama además antes de calibrar.
 
 ## Commits previstos
 
