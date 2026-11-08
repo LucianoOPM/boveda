@@ -626,8 +626,12 @@ fn import_deletes_orphan_journal_without_dest() {
 fn import_deletes_orphan_wal_and_shm_without_dest() {
     let dir = tempfile::tempdir().unwrap();
     let (backup, entries) = make_backup(dir.path());
+    let old = dir.path().join("vieja.db");
+    make_current(&old);
     let dest = dir.path().join("boveda.db");
-    fs::write(sibling(&dest, "-wal"), [0xAA_u8; 1024]).unwrap();
+    // `-wal` válido de otra bóveda: si sobreviviera al `rename`, SQLite lo
+    // integraría al abrir y cambiaría la cabecera del respaldo.
+    copy_live_wal(&old, &dest);
     fs::write(sibling(&dest, "-shm"), [0xBB_u8; 1024]).unwrap();
 
     let (imported, _) = Vault::import(&backup, &dest, &password("respaldo")).unwrap();
@@ -636,6 +640,33 @@ fn import_deletes_orphan_wal_and_shm_without_dest() {
 
     assert!(!sibling(&dest, "-wal").exists());
     assert!(!sibling(&dest, "-shm").exists());
+    let mut reopened = Vault::open(&dest).unwrap();
+    let report = reopened.unlock(&password("respaldo")).unwrap();
+    assert!(report.corrupt.is_empty());
+    assert_eq!(ids_and_services(&reopened), entries);
+    assert_eq!(Storage::open(&dest).unwrap().check_integrity(), Ok(()));
+}
+
+/// `dest` es un enlace simbólico roto: existe como enlace, así que su
+/// diario no es huérfano y no se borra (`symlink_metadata` no sigue el
+/// enlace; `Path::exists` lo daría por ausente).
+#[cfg(unix)]
+#[test]
+fn import_keeps_journal_of_dangling_symlink_dest() {
+    let dir = tempfile::tempdir().unwrap();
+    let (backup, _) = make_backup(dir.path());
+    let dest = dir.path().join("boveda.db");
+    std::os::unix::fs::symlink(dir.path().join("no-existe.db"), &dest).unwrap();
+    let journal = sibling(&dest, "-journal");
+    fs::write(&journal, [0xAA_u8; 1024]).unwrap();
+
+    assert_import_fails_intact(
+        &backup,
+        &dest,
+        "respaldo",
+        Error::Storage(StorageErrorKind::Io),
+    );
+    assert_eq!(fs::read(&journal).unwrap(), [0xAA_u8; 1024]);
 }
 
 #[cfg(windows)]
