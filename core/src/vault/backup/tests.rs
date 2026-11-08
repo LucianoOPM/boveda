@@ -369,10 +369,12 @@ fn import_does_not_check_secrets() {
     assert_eq!(ids_and_services(&imported), entries);
     assert_eq!(imported.reveal(damaged).err(), Some(Error::CorruptEntry));
     let service = &entries[1].1;
+    let secret = imported.reveal(healthy).unwrap();
     assert_eq!(
-        imported.reveal(healthy).unwrap().password().expose_secret(),
+        secret.password().expose_secret(),
         format!("clave-{service}")
     );
+    assert_eq!(secret.notes().unwrap().expose_secret(), "notas de prueba");
 }
 
 #[test]
