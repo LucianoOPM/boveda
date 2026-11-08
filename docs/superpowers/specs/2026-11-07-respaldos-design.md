@@ -45,6 +45,7 @@ Además de la contraseña y la versión de formato que pide la issue:
 - `PRAGMA integrity_check` sobre la copia. Revisa páginas, registros, `CHECK`, `NOT NULL` y la unicidad de la llave primaria. Su costo es O(N log N), irrelevante con cientos de filas, y verifica más que `quick_check`, que omite índices y unicidad. Cualquier resultado distinto de una sola fila `ok` da `Storage(Corrupt)`. Los mensajes se descartan sin leerlos.
 - Desbloqueo real: se listan las entradas y se descifran sus datos de búsqueda.
 - Las entradas dañadas sueltas no impiden importar: se reportan en el `UnlockReport`, igual que en `unlock`. Rechazar la importación por una sola entrada impediría recuperar un respaldo que es casi todo bueno.
+- (Agregado en la #21.) "Dañadas" aquí son las filas ilegibles y las de datos de búsqueda dañados: los secretos no se descifran al importar, así que uno dañado no aparece en el `UnlockReport` y se descubre al usar `reveal`, con `CorruptEntry`. Es intencional: un secreto se descifra solo al copiar, mostrar o enviar, y validarlos al importar pondría todas las contraseñas en memoria a la vez.
 
 ### `VACUUM INTO` y durabilidad
 

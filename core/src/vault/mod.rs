@@ -99,7 +99,10 @@ impl EntrySummary {
 /// con [`Vault::entries`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UnlockReport {
-    /// Entradas que no se pudieron descifrar.
+    /// Ids de las entradas con la fila ilegible o con los datos de búsqueda dañados.
+    /// Los secretos no se descifran al desbloquear: un secreto dañado no
+    /// aparece aquí, sino al usar [`Vault::reveal`], con
+    /// [`Error::CorruptEntry`].
     pub corrupt: Vec<EntryId>,
     /// Filas dañadas sin un id de 16 bytes: no hay un id que reportar.
     pub unidentified_corrupt: usize,
@@ -152,8 +155,10 @@ impl Vault {
 
     /// Desbloquea con la contraseña maestra y descifra los datos de búsqueda.
     ///
-    /// Las entradas que no se pueden descifrar no impiden abrir las demás: se
-    /// reportan en [`UnlockReport`]. Si falla, la bóveda sigue bloqueada.
+    /// Las entradas con la fila ilegible o con los datos de búsqueda dañados
+    /// no impiden abrir las demás: se reportan en [`UnlockReport`]. Los
+    /// secretos no se descifran aquí; uno dañado aparece al usar
+    /// [`Vault::reveal`]. Si falla, la bóveda sigue bloqueada.
     pub fn unlock(&mut self, password: &SecretString) -> Result<UnlockReport> {
         if self.unlocked.is_some() {
             return Err(Error::AlreadyUnlocked);
@@ -165,8 +170,9 @@ impl Vault {
     }
 
     /// Lista las entradas vivas de `storage` y descifra sus datos de
-    /// búsqueda con `key`. Las que no se pueden descifrar van al reporte,
-    /// sin fallar. La usan `unlock` y la importación de respaldos.
+    /// búsqueda con `key` (los secretos no). Las filas ilegibles y las de
+    /// datos de búsqueda dañados van al reporte, sin fallar. La usan
+    /// `unlock` y la importación de respaldos.
     fn load_entries(storage: &Storage, key: VaultKey) -> Result<(Unlocked, UnlockReport)> {
         let listing = storage.list_entries()?;
 
@@ -331,11 +337,20 @@ impl Vault {
     /// con su [`UnlockReport`].
     ///
     /// `password` es la contraseña maestra del respaldo, que puede ser
-    /// distinta de la actual. Antes de reemplazar nada, una copia temporal
-    /// junto a `dest` se abre en solo lectura, se revisa su integridad, se
-    /// desbloquea y se descifran sus datos de búsqueda. Si algo falla,
-    /// `dest` queda intacta. Las entradas dañadas no impiden importar: se
-    /// reportan como en [`Vault::unlock`].
+    /// distinta de la actual. Antes de reemplazar nada, se valida una copia
+    /// temporal junto a `dest`: se abre en solo lectura (versión de
+    /// formato), se revisa su integridad (`PRAGMA integrity_check`), se
+    /// desbloquea con `password` y se descifran sus datos de búsqueda. Si
+    /// algo falla, `dest` queda intacta.
+    /// Las entradas con la fila ilegible o con los datos de búsqueda dañados
+    /// no impiden importar: se reportan como en [`Vault::unlock`].
+    ///
+    /// Los secretos (contraseña y notas) **no** se descifran al importar: un
+    /// secreto dañado no aparece en el [`UnlockReport`] y se descubre al
+    /// usar [`Vault::reveal`], que devuelve [`Error::CorruptEntry`]. Es
+    /// intencional: un secreto se descifra solo al copiarlo, mostrarlo o
+    /// enviarlo, y validarlos aquí pondría todas las contraseñas en memoria
+    /// a la vez.
     ///
     /// Quien llama debe soltar antes cualquier `Vault` abierta sobre `dest`
     /// y, si la importación falla, volver a abrirla con [`Vault::open`].
