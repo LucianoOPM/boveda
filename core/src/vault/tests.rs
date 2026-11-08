@@ -723,7 +723,11 @@ const FIXTURE_V1_PASSWORD: &str = "prueba-bóveda-v1";
 /// archivo ya existe, falla a propósito con `AlreadyExists`.
 ///
 /// Se ejecuta una sola vez, al introducir una versión de formato nueva:
-/// `cargo test -p vault-core -- --ignored generate_fixture_v1`
+/// `cargo test -p vault-core --lib -- --ignored --exact vault::tests::generate_fixture_v1`
+///
+/// Nunca con `--ignored` sin filtro: también correría este generador, que
+/// fallaría con `AlreadyExists` (o crearía una bóveda distinta si falta el
+/// archivo).
 ///
 /// Contenido y contraseña: `core/tests/fixtures/README.md`.
 #[test]

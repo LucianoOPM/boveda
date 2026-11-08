@@ -18,8 +18,10 @@ Son bóvedas de prueba, con contraseñas de prueba. Nunca agregues aquí bóveda
 - Generador: `generate_fixture_v1`, en `core/src/vault/tests.rs`. Se ejecutó una sola vez con:
 
   ```
-  cargo test -p vault-core -- --ignored generate_fixture_v1
+  cargo test -p vault-core --lib -- --ignored --exact vault::tests::generate_fixture_v1
   ```
+
+  Nunca uses `--ignored` sin filtro (por ejemplo, para la prueba lenta de calibración): también ejecutaría el generador, que fallaría con `AlreadyExists` o, si falta el archivo, crearía una bóveda distinta.
 
   Si el archivo ya existe, el generador falla con `AlreadyExists` y no lo toca.
 

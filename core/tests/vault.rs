@@ -402,7 +402,7 @@ fn full_flow_through_public_api() {
 
     // Con un error de escritura.
     let found = vault.search("gmial").unwrap();
-    assert_eq!(found[0].id(), gmail);
+    assert_eq!(found.first().map(|e| e.id()), Some(gmail));
     assert_eq!(
         vault.reveal(gmail).unwrap().password().expose_secret(),
         "clave-gmail"
