@@ -151,19 +151,21 @@ fn validate(path: &Path, password: &SecretString) -> Result<(Unlocked, UnlockRep
 /// Reemplazar `dest` sin hacerlo dañaría el respaldo: "Overwriting a
 /// database file with another without also deleting any hot journal
 /// associated with the original database" es una causa de corrupción
-/// ("How To Corrupt Your Database Files", §1.4). El diario no se borra:
-/// antes del `rename` dañaría la bóveda actual si el `rename` falla, y
-/// después dejaría un intervalo en el que un corte de luz lo aplicaría
-/// sobre el respaldo. Si `dest` no se puede abrir, se devuelve el error
-/// sin reemplazar nada.
+/// ("How To Corrupt Your Database Files", §1.4). Si `dest` existe, el
+/// diario no se borra: antes del `rename` dañaría la bóveda actual si el
+/// `rename` falla, y después dejaría un intervalo en el que un corte de luz
+/// lo aplicaría sobre el respaldo. Si `dest` no se puede abrir, se devuelve
+/// el error sin reemplazar nada.
 ///
 /// Si `dest` no existe, sus `-journal`, `-wal` y `-shm` son huérfanos (una
 /// bóveda borrada a mano, restos de otra instalación): no hay base que
 /// revertir ni que dañar, así que se borran y se sincroniza el directorio
-/// antes del `rename`. Si quedaran, SQLite aplicaría el diario viejo sobre
-/// el respaldo. Se usa `symlink_metadata` y no `Path::exists`, que da
-/// `false` ante cualquier error (por ejemplo, sin permisos) y haría borrar
-/// el diario de una bóveda que sí existe.
+/// antes del `rename`. Si quedaran, SQLite aplicaría el diario o el WAL
+/// viejo sobre el respaldo. Si la sincronización falla, se devuelve
+/// `Storage(Io)` sin reemplazar nada: no está garantizado que el borrado
+/// persista antes del `rename`. Se usa `symlink_metadata` y no
+/// `Path::exists`, que da `false` ante cualquier error (por ejemplo, sin
+/// permisos) y haría borrar el diario de una bóveda que sí existe.
 fn settle_dest(dest: &Path) -> Result<()> {
     match fs::symlink_metadata(dest) {
         Ok(_) => {}
@@ -175,7 +177,7 @@ fn settle_dest(dest: &Path) -> Result<()> {
                     Err(e) => return Err(io_error(e)),
                 }
             }
-            sync_parent(dest);
+            sync_dir_of(dest).map_err(io_error)?;
             return Ok(());
         }
         Err(e) => return Err(io_error(e)),
@@ -206,16 +208,25 @@ fn with_suffix(path: &Path, suffix: &str) -> PathBuf {
 }
 
 /// Sincroniza el directorio de `path` para que el `rename` sobreviva a un
-/// corte de luz. Mejor esfuerzo; en Windows no aplica.
-#[cfg(unix)]
+/// corte de luz. Mejor esfuerzo: ignora el error.
 fn sync_parent(path: &Path) {
-    if let Some(parent) = path.parent() {
-        let _ = fs::File::open(parent).and_then(|dir| dir.sync_all());
+    let _ = sync_dir_of(path);
+}
+
+/// Sincroniza el directorio de `path`, para que un `rename` o un borrado
+/// persistan ante un corte de luz. En Windows no aplica.
+#[cfg(unix)]
+fn sync_dir_of(path: &Path) -> io::Result<()> {
+    match path.parent() {
+        Some(parent) => fs::File::open(parent)?.sync_all(),
+        None => Ok(()),
     }
 }
 
 #[cfg(not(unix))]
-fn sync_parent(_path: &Path) {}
+fn sync_dir_of(_path: &Path) -> io::Result<()> {
+    Ok(())
+}
 
 /// Los errores de E/S se descartan: pueden traer rutas.
 fn io_error(_: io::Error) -> Error {
