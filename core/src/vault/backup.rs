@@ -8,10 +8,8 @@
 //!   behind no forensic traces" (`lang_vacuum.html`). Tampoco hace falta
 //!   sincronizarla a mano: con `synchronous` en `NORMAL` o `FULL` (aquí,
 //!   siempre `FULL`), SQLite hace el fsync del archivo generado.
-//! - Las rutas deben ser absolutas: el SQLite empaquetado se compila con
-//!   `SQLITE_USE_URI`, y una ruta que empiece con `file:` se interpretaría
-//!   como URI (con parámetros como `?mode=` o `?vfs=`). Una ruta absoluta
-//!   no puede empezar así.
+//! - Las rutas deben ser absolutas, como en todo el almacenamiento (ver
+//!   [`require_absolute`]).
 
 use std::fs::{self, OpenOptions};
 use std::io;
@@ -19,7 +17,7 @@ use std::path::{Path, PathBuf};
 
 use secrecy::SecretString;
 
-use super::storage::Storage;
+use super::storage::{Storage, require_absolute};
 use super::{UnlockReport, Unlocked, Vault};
 use crate::error::{Error, Result, StorageErrorKind};
 
@@ -231,16 +229,6 @@ fn sync_dir_of(_path: &Path) -> io::Result<()> {
 /// Los errores de E/S se descartan: pueden traer rutas.
 fn io_error(_: io::Error) -> Error {
     Error::Storage(StorageErrorKind::Io)
-}
-
-/// Rechaza una ruta relativa con `Storage(Io)` (ver el comentario del
-/// módulo sobre `SQLITE_USE_URI`).
-fn require_absolute(path: &Path) -> Result<()> {
-    if path.is_absolute() {
-        Ok(())
-    } else {
-        Err(Error::Storage(StorageErrorKind::Io))
-    }
 }
 
 #[cfg(test)]

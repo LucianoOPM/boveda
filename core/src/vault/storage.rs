@@ -7,6 +7,13 @@
 //!
 //! Los errores de SQLite se traducen en [`map_sqlite_error`] y se descartan:
 //! pueden traer SQL, rutas o valores de columnas.
+//!
+//! Todas las rutas deben ser absolutas ([`require_absolute`]): el SQLite
+//! empaquetado se compila con `SQLITE_USE_URI`, así que una ruta que empiece
+//! con `file:` se interpretaría como URI (con parámetros como `?mode=` o
+//! `?vfs=`), aunque la conexión no use `SQLITE_OPEN_URI`. Las comprobaciones
+//! previas de Rust tocarían el archivo literal y SQLite abriría otro. Una
+//! ruta absoluta no puede empezar con `file:`.
 
 use std::fs::{self, OpenOptions};
 use std::io;
@@ -64,8 +71,10 @@ impl Storage {
     /// Crea un archivo de bóveda nuevo con su esquema y su cabecera.
     ///
     /// Falla con `Error::AlreadyExists` si la ruta ya existe, sin tocarla.
-    /// Si algo falla después de crear el archivo, lo borra.
+    /// Si algo falla después de crear el archivo, lo borra. Una ruta
+    /// relativa da `Storage(Io)` sin crear nada.
     pub(crate) fn create(path: &Path, header: &VaultHeader) -> Result<Self> {
+        require_absolute(path)?;
         // `create_new` falla de forma atómica si la ruta ya existe.
         OpenOptions::new()
             .write(true)
@@ -127,13 +136,14 @@ impl Storage {
     }
 
     /// Abre una bóveda existente en lectura y escritura. Nunca crea el
-    /// archivo: una ruta inexistente da `Storage(Io)`.
+    /// archivo: una ruta inexistente o relativa da `Storage(Io)`.
     ///
     /// Orden: `application_id` (primero en los bytes del archivo, después
     /// con SQLite) → cabecera → pragmas. Así un archivo ajeno se rechaza
     /// antes de que SQLite lo toque, y una versión futura antes de fijar
     /// `journal_mode`, que persiste en el archivo.
     pub(crate) fn open(path: &Path) -> Result<Self> {
+        require_absolute(path)?;
         check_file_header(path)?;
         let conn = Connection::open_with_flags(
             path,
@@ -151,8 +161,10 @@ impl Storage {
     ///
     /// No fija pragmas (cambiar `journal_mode` es escribir): solo comprueba
     /// que el modo sea `delete`. Un archivo en WAL o con un `-journal`
-    /// caliente se rechaza y nunca se repara.
+    /// caliente se rechaza y nunca se repara. Una ruta relativa da
+    /// `Storage(Io)`.
     pub(crate) fn open_read_only(path: &Path) -> Result<Self> {
+        require_absolute(path)?;
         // Leer una base en WAL, aun en solo lectura, crea los archivos `-wal`
         // y `-shm`. Por eso el modo se revisa en la cabecera del archivo
         // antes de abrirlo con SQLite.
@@ -587,6 +599,16 @@ fn check_application_id(conn: &Connection) -> Result<()> {
         return Err(Error::NotAVault);
     }
     Ok(())
+}
+
+/// Rechaza una ruta relativa con `Storage(Io)` (ver el comentario del
+/// módulo sobre `SQLITE_USE_URI`).
+pub(crate) fn require_absolute(path: &Path) -> Result<()> {
+    if path.is_absolute() {
+        Ok(())
+    } else {
+        Err(Error::Storage(StorageErrorKind::Io))
+    }
 }
 
 /// Traduce un error de SQLite a un [`Error`] del núcleo y lo descarta.
