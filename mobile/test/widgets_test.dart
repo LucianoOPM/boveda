@@ -85,6 +85,51 @@ void main() {
     expect(controller.text, 'abc');
   });
 
+  testWidgets(
+    'PasswordField pasa textInputAction, onSubmitted, autofocus y focusNode',
+    (tester) async {
+      final focus = FocusNode();
+      addTearDown(focus.dispose);
+      final submitted = <String>[];
+      await pumpInScaffold(
+        tester,
+        PasswordField(
+          controller: controller,
+          label: 'Contraseña maestra',
+          textInputAction: TextInputAction.done,
+          onSubmitted: submitted.add,
+          autofocus: true,
+          focusNode: focus,
+        ),
+      );
+      await tester.pump();
+
+      final field = textField(tester);
+      expect(field.textInputAction, TextInputAction.done);
+      expect(field.autofocus, isTrue);
+      expect(field.focusNode, same(focus));
+      expect(focus.hasFocus, isTrue);
+
+      await tester.enterText(find.byType(TextField), 'abc');
+      await tester.testTextInput.receiveAction(TextInputAction.done);
+      expect(submitted, ['abc']);
+    },
+  );
+
+  testWidgets('PasswordField sin los parámetros nuevos conserva los valores '
+      'por omisión', (tester) async {
+    await pumpInScaffold(
+      tester,
+      PasswordField(controller: controller, label: 'Contraseña maestra'),
+    );
+
+    final field = textField(tester);
+    expect(field.textInputAction, isNull);
+    expect(field.onSubmitted, isNull);
+    expect(field.autofocus, isFalse);
+    expect(field.focusNode, isNull);
+  });
+
   for (final (strength, label) in [
     (PasswordStrength.tooShort, 'Demasiado corta'),
     (PasswordStrength.acceptable, 'Aceptable'),
