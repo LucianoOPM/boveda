@@ -565,6 +565,73 @@ fn delete_corrupt_entry() {
     assert!(relock(&mut vault).corrupt.is_empty());
 }
 
+/// Pone en la fila de `id` una versión de estructura que no cabe en `u16`.
+fn set_out_of_range_schema_version(path: &Path, id: EntryId) {
+    raw(path)
+        .execute(
+            "UPDATE entries SET entry_schema_version = 70000 WHERE id = ?1",
+            [id.as_bytes().as_slice()],
+        )
+        .unwrap();
+}
+
+#[test]
+fn replace_repairs_out_of_range_schema_version() {
+    let (_dir, path, mut vault) = new_vault();
+    add_sample(&mut vault, "a");
+    let b = add_sample(&mut vault, "b");
+    set_out_of_range_schema_version(&path, b);
+    assert_eq!(relock(&mut vault).corrupt, vec![b]);
+
+    let secret = Secret::new(password("reparada"), None).unwrap();
+    vault
+        .edit(b, search_with_tags("b", &[]), SecretChange::Replace(secret))
+        .unwrap();
+    assert!(ids(&vault).contains(&b));
+
+    let report = relock(&mut vault);
+    assert!(report.corrupt.is_empty());
+    assert!(ids(&vault).contains(&b));
+    assert_eq!(
+        vault.reveal(b).unwrap().password().expose_secret(),
+        "reparada"
+    );
+}
+
+#[test]
+fn keep_with_out_of_range_schema_version_is_corrupt_and_unchanged() {
+    let (_dir, path, mut vault) = new_vault();
+    let b = add_sample(&mut vault, "b");
+    set_out_of_range_schema_version(&path, b);
+    relock(&mut vault);
+    let before = fs::read(&path).unwrap();
+
+    assert_eq!(
+        vault
+            .edit(b, search_with_tags("b", &[]), SecretChange::Keep)
+            .err(),
+        Some(Error::CorruptEntry)
+    );
+    assert_eq!(fs::read(&path).unwrap(), before);
+}
+
+#[test]
+fn replace_on_missing_entry_is_not_found() {
+    let (_dir, _path, mut vault) = new_vault();
+    let missing = EntryId::from_bytes([7; 16]);
+    let secret = Secret::new(password("nueva"), None).unwrap();
+    assert_eq!(
+        vault
+            .edit(
+                missing,
+                search_with_tags("x", &[]),
+                SecretChange::Replace(secret)
+            )
+            .err(),
+        Some(Error::EntryNotFound)
+    );
+}
+
 // --- change_master_password --------------------------------------------
 
 /// La fila de `header` completa: sal, nonce y llave cifrada.
