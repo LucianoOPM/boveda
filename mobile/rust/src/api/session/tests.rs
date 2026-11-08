@@ -133,7 +133,7 @@ fn unlock_reports_corrupt_entry_and_rest_still_opens() {
     let banco_id = entries
         .iter()
         .find(|e| e.service == "Banco")
-        .unwrap()
+        .expect("el fixture debe tener la entrada Banco")
         .id
         .clone();
 

@@ -179,7 +179,7 @@ Una prueba nueva en `api/session/tests.rs`:
 - `open` y `unlock` con `FIXTURE_PASSWORD`: el `UnlockReport` trae 1 id de 32 caracteres hexadecimales igual al de la entrada alterada, y `unidentified_corrupt == 0`.
 - `search("")` sigue devolviendo las otras dos entradas vivas (`Correo Electrónico` y `Nube` o `Banco`, según la alterada): la entrada dañada falla sola.
 
-**Dependencia de desarrollo nueva en `mobile/rust`: `rusqlite = { version = "0.41", features = ["bundled"] }`**, la misma versión y características que `vault-core`. No entra ningún crate nuevo a `Cargo.lock`, y no es criptográfica ni de red. Pendiente de tu confirmación al revisar este diseño.
+**Dependencia de desarrollo nueva en `mobile/rust`: `rusqlite = { version = "0.41", features = ["bundled"] }`**, la misma versión y características que `vault-core`. No entra ningún crate nuevo a `Cargo.lock`, y no es criptográfica ni de red. Aprobada al revisar este diseño.
 
 ### A mano, en el emulador
 
