@@ -597,6 +597,47 @@ fn import_keeps_unopenable_dest_with_journal() {
     assert_eq!(fs::read(&journal).unwrap(), [0xAA_u8; 1024]);
 }
 
+#[test]
+fn import_deletes_orphan_journal_without_dest() {
+    let dir = tempfile::tempdir().unwrap();
+    let (backup, entries) = make_backup(dir.path());
+    let old = dir.path().join("vieja.db");
+    make_current(&old);
+    let dest = dir.path().join("boveda.db");
+    // Diario caliente real que queda huérfano: si sobreviviera al
+    // `rename`, SQLite lo aplicaría sobre el respaldo.
+    make_hot_journal_copy(&old, &dest);
+    fs::remove_file(&dest).unwrap();
+
+    let (imported, _) = Vault::import(&backup, &dest, &password("respaldo")).unwrap();
+    assert_eq!(ids_and_services(&imported), entries);
+    drop(imported);
+
+    assert!(!sibling(&dest, "-journal").exists());
+    let mut reopened = Vault::open(&dest).unwrap();
+    let report = reopened.unlock(&password("respaldo")).unwrap();
+    assert_eq!(report.unidentified_corrupt, 0);
+    assert!(report.corrupt.is_empty());
+    assert_eq!(ids_and_services(&reopened), entries);
+    assert_eq!(Storage::open(&dest).unwrap().check_integrity(), Ok(()));
+}
+
+#[test]
+fn import_deletes_orphan_wal_and_shm_without_dest() {
+    let dir = tempfile::tempdir().unwrap();
+    let (backup, entries) = make_backup(dir.path());
+    let dest = dir.path().join("boveda.db");
+    fs::write(sibling(&dest, "-wal"), [0xAA_u8; 1024]).unwrap();
+    fs::write(sibling(&dest, "-shm"), [0xBB_u8; 1024]).unwrap();
+
+    let (imported, _) = Vault::import(&backup, &dest, &password("respaldo")).unwrap();
+    assert_eq!(ids_and_services(&imported), entries);
+    drop(imported);
+
+    assert!(!sibling(&dest, "-wal").exists());
+    assert!(!sibling(&dest, "-shm").exists());
+}
+
 #[cfg(windows)]
 #[test]
 fn import_fails_while_dest_is_open() {

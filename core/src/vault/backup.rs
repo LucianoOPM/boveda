@@ -156,7 +156,30 @@ fn validate(path: &Path, password: &SecretString) -> Result<(Unlocked, UnlockRep
 /// después dejaría un intervalo en el que un corte de luz lo aplicaría
 /// sobre el respaldo. Si `dest` no se puede abrir, se devuelve el error
 /// sin reemplazar nada.
+///
+/// Si `dest` no existe, sus `-journal`, `-wal` y `-shm` son huérfanos (una
+/// bóveda borrada a mano, restos de otra instalación): no hay base que
+/// revertir ni que dañar, así que se borran y se sincroniza el directorio
+/// antes del `rename`. Si quedaran, SQLite aplicaría el diario viejo sobre
+/// el respaldo. Se usa `symlink_metadata` y no `Path::exists`, que da
+/// `false` ante cualquier error (por ejemplo, sin permisos) y haría borrar
+/// el diario de una bóveda que sí existe.
 fn settle_dest(dest: &Path) -> Result<()> {
+    match fs::symlink_metadata(dest) {
+        Ok(_) => {}
+        Err(e) if e.kind() == io::ErrorKind::NotFound => {
+            for suffix in ["-journal", "-wal", "-shm"] {
+                match fs::remove_file(with_suffix(dest, suffix)) {
+                    Ok(()) => {}
+                    Err(e) if e.kind() == io::ErrorKind::NotFound => {}
+                    Err(e) => return Err(io_error(e)),
+                }
+            }
+            sync_parent(dest);
+            return Ok(());
+        }
+        Err(e) => return Err(io_error(e)),
+    }
     let journal = with_suffix(dest, "-journal").exists();
     let wal = with_suffix(dest, "-wal").exists();
     if journal || wal {
