@@ -72,7 +72,7 @@ class RustLib extends BaseEntrypoint<RustLibApi, RustLibApiImpl, RustLibWire> {
   String get codegenVersion => '2.13.0';
 
   @override
-  int get rustContentHash => -715753731;
+  int get rustContentHash => -2061894107;
 
   static const kDefaultExternalLibraryLoaderConfig =
       ExternalLibraryLoaderConfig(
@@ -112,6 +112,10 @@ abstract class RustLibApi extends BaseApi {
     required String dest,
   });
 
+  Future<Uint8List> crateApiSessionVaultSessionExportVaultKey({
+    required VaultSession that,
+  });
+
   Future<UnlockReport> crateApiSessionVaultSessionImportBackup({
     required VaultSession that,
     required String backup,
@@ -146,6 +150,11 @@ abstract class RustLibApi extends BaseApi {
   Future<UnlockReport> crateApiSessionVaultSessionUnlock({
     required VaultSession that,
     required String password,
+  });
+
+  Future<UnlockReport> crateApiSessionVaultSessionUnlockWithKey({
+    required VaultSession that,
+    required List<int> key,
   });
 
   Future<void> crateApiInitApp();
@@ -366,6 +375,42 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       );
 
   @override
+  Future<Uint8List> crateApiSessionVaultSessionExportVaultKey({
+    required VaultSession that,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerVaultSession(
+            that,
+            serializer,
+          );
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 6,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_list_prim_u_8_strict,
+          decodeErrorData: sse_decode_vault_error,
+        ),
+        constMeta: kCrateApiSessionVaultSessionExportVaultKeyConstMeta,
+        argValues: [that],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiSessionVaultSessionExportVaultKeyConstMeta =>
+      const TaskConstMeta(
+        debugName: "VaultSession_export_vault_key",
+        argNames: ["that"],
+      );
+
+  @override
   Future<UnlockReport> crateApiSessionVaultSessionImportBackup({
     required VaultSession that,
     required String backup,
@@ -384,7 +429,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 6,
+            funcId: 7,
             port: port_,
           );
         },
@@ -420,7 +465,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 7,
+            funcId: 8,
             port: port_,
           );
         },
@@ -454,7 +499,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 8,
+            funcId: 9,
             port: port_,
           );
         },
@@ -479,7 +524,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         callFfi: () {
           final serializer = SseSerializer(generalizedFrbRustBinding);
           sse_encode_String(path, serializer);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 9)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 10)!;
         },
         codec: SseCodec(
           decodeSuccessData:
@@ -509,7 +554,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 10,
+            funcId: 11,
             port: port_,
           );
         },
@@ -544,7 +589,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 11,
+            funcId: 12,
             port: port_,
           );
         },
@@ -582,7 +627,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 12,
+            funcId: 13,
             port: port_,
           );
         },
@@ -620,7 +665,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 13,
+            funcId: 14,
             port: port_,
           );
         },
@@ -658,7 +703,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 14,
+            funcId: 15,
             port: port_,
           );
         },
@@ -680,6 +725,44 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       );
 
   @override
+  Future<UnlockReport> crateApiSessionVaultSessionUnlockWithKey({
+    required VaultSession that,
+    required List<int> key,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerVaultSession(
+            that,
+            serializer,
+          );
+          sse_encode_list_prim_u_8_loose(key, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 16,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_unlock_report,
+          decodeErrorData: sse_decode_vault_error,
+        ),
+        constMeta: kCrateApiSessionVaultSessionUnlockWithKeyConstMeta,
+        argValues: [that, key],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiSessionVaultSessionUnlockWithKeyConstMeta =>
+      const TaskConstMeta(
+        debugName: "VaultSession_unlock_with_key",
+        argNames: ["that", "key"],
+      );
+
+  @override
   Future<void> crateApiInitApp() {
     return handler.executeNormal(
       NormalTask(
@@ -688,7 +771,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 15,
+            funcId: 17,
             port: port_,
           );
         },
@@ -715,7 +798,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         callFfi: () {
           final serializer = SseSerializer(generalizedFrbRustBinding);
           sse_encode_String(password, serializer);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 16)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 18)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_password_strength,
@@ -852,6 +935,12 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   List<EntrySummary> dco_decode_list_entry_summary(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return (raw as List<dynamic>).map(dco_decode_entry_summary).toList();
+  }
+
+  @protected
+  List<int> dco_decode_list_prim_u_8_loose(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return raw as List<int>;
   }
 
   @protected
@@ -1077,6 +1166,13 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       ans_.add(sse_decode_entry_summary(deserializer));
     }
     return ans_;
+  }
+
+  @protected
+  List<int> sse_decode_list_prim_u_8_loose(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var len_ = sse_decode_i_32(deserializer);
+    return deserializer.buffer.getUint8List(len_);
   }
 
   @protected
@@ -1310,6 +1406,18 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  void sse_encode_list_prim_u_8_loose(
+    List<int> self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_32(self.length, serializer);
+    serializer.buffer.putUint8List(
+      self is Uint8List ? self : Uint8List.fromList(self),
+    );
+  }
+
+  @protected
   void sse_encode_list_prim_u_8_strict(
     Uint8List self,
     SseSerializer serializer,
@@ -1460,6 +1568,15 @@ class VaultSessionImpl extends RustOpaque implements VaultSession {
   Future<void> exportBackup({required String dest}) => RustLib.instance.api
       .crateApiSessionVaultSessionExportBackup(that: this, dest: dest);
 
+  /// Entrega la llave de bóveda para la copia del Keystore. Con la bóveda
+  /// bloqueada da `Locked`.
+  ///
+  /// El `Vec` es la copia que sale del núcleo, como al revelar una
+  /// contraseña: su borrado es de mejor esfuerzo. En Dart lo pone en ceros
+  /// `enableBiometric` después de entregarlo a Kotlin.
+  Future<Uint8List> exportVaultKey() => RustLib.instance.api
+      .crateApiSessionVaultSessionExportVaultKey(that: this);
+
   /// Importa el respaldo `backup` sobre la bóveda de la sesión, exista o
   /// no. `password` es la del respaldo.
   ///
@@ -1511,4 +1628,16 @@ class VaultSessionImpl extends RustOpaque implements VaultSession {
       .instance
       .api
       .crateApiSessionVaultSessionUnlock(that: this, password: password);
+
+  /// Desbloquea con la llave que liberó el Keystore.
+  ///
+  /// La llave recibida se pone en ceros al soltarse, en todos los caminos.
+  /// Un largo distinto de 32 da `WrongVaultKey` sin tocar la bóveda, así
+  /// que con la bóveda ya desbloqueada da `WrongVaultKey` y no
+  /// `AlreadyUnlocked`; en la práctica no ocurre, porque la pantalla de
+  /// desbloqueo solo existe con la bóveda bloqueada.
+  Future<UnlockReport> unlockWithKey({required List<int> key}) => RustLib
+      .instance
+      .api
+      .crateApiSessionVaultSessionUnlockWithKey(that: this, key: key);
 }

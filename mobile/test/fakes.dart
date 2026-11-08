@@ -1,6 +1,8 @@
 // Dobles escritos a mano para las pruebas de widgets: reemplazan la sesión
 // de Rust y la regla de fortaleza sin cargar la librería nativa.
 
+import 'dart:typed_data';
+
 import 'package:boveda/src/rust/api/entries.dart';
 import 'package:boveda/src/rust/api/password.dart';
 import 'package:boveda/src/rust/api/session.dart';
@@ -74,6 +76,13 @@ class FakeVaultSession implements VaultSession {
     required String backup,
     required String password,
   }) => throw UnimplementedError();
+
+  @override
+  Future<Uint8List> exportVaultKey() => throw UnimplementedError();
+
+  @override
+  Future<UnlockReport> unlockWithKey({required List<int> key}) =>
+      throw UnimplementedError();
 
   @override
   Future<bool> isLocked() => throw UnimplementedError();

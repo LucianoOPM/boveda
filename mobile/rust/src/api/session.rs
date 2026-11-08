@@ -13,9 +13,12 @@ use std::path::PathBuf;
 use std::sync::{Mutex, MutexGuard};
 
 use flutter_rust_bridge::frb;
-use secrecy::SecretString;
+use secrecy::{ExposeSecret, ExposeSecretMut, SecretBox, SecretString};
 use vault_core::vault::{self, Vault};
-use zeroize::Zeroize;
+use zeroize::{Zeroize, Zeroizing};
+
+/// Largo de la llave de bóveda, en bytes.
+const VAULT_KEY_LEN: usize = 32;
 
 use super::entries::entry_id_to_hex;
 use super::error::{FacadeResult, VaultError};
@@ -84,6 +87,37 @@ impl VaultSession {
     pub fn unlock(&self, password: String) -> FacadeResult<UnlockReport> {
         let password = secret_from(password);
         self.with_vault(|vault| vault.unlock(&password))
+            .map(UnlockReport::from)
+    }
+
+    /// Entrega la llave de bóveda para la copia del Keystore. Con la bóveda
+    /// bloqueada da `Locked`.
+    ///
+    /// El `Vec` es la copia que sale del núcleo, como al revelar una
+    /// contraseña: su borrado es de mejor esfuerzo. En Dart lo pone en ceros
+    /// `enableBiometric` después de entregarlo a Kotlin.
+    pub fn export_vault_key(&self) -> FacadeResult<Vec<u8>> {
+        self.with_vault(Vault::export_vault_key)
+            .map(|key| key.expose_secret().to_vec())
+    }
+
+    /// Desbloquea con la llave que liberó el Keystore.
+    ///
+    /// La llave recibida se pone en ceros al soltarse, en todos los caminos.
+    /// Un largo distinto de 32 da `WrongVaultKey` sin tocar la bóveda, así
+    /// que con la bóveda ya desbloqueada da `WrongVaultKey` y no
+    /// `AlreadyUnlocked`; en la práctica no ocurre, porque la pantalla de
+    /// desbloqueo solo existe con la bóveda bloqueada.
+    pub fn unlock_with_key(&self, key: Vec<u8>) -> FacadeResult<UnlockReport> {
+        let key = Zeroizing::new(key);
+        if key.len() != VAULT_KEY_LEN {
+            return Err(VaultError::WrongVaultKey);
+        }
+        // Como `Vault::export_vault_key`: la copia se escribe directamente
+        // dentro del `SecretBox`, sin pasar por la pila.
+        let mut vault_key = SecretBox::<[u8; VAULT_KEY_LEN]>::default();
+        vault_key.expose_secret_mut().copy_from_slice(&key);
+        self.with_vault(|vault| vault.unlock_with_key(vault_key))
             .map(UnlockReport::from)
     }
 

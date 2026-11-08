@@ -34,6 +34,14 @@ abstract class VaultSession implements RustOpaqueInterface {
   /// Exige la bóveda desbloqueada.
   Future<void> exportBackup({required String dest});
 
+  /// Entrega la llave de bóveda para la copia del Keystore. Con la bóveda
+  /// bloqueada da `Locked`.
+  ///
+  /// El `Vec` es la copia que sale del núcleo, como al revelar una
+  /// contraseña: su borrado es de mejor esfuerzo. En Dart lo pone en ceros
+  /// `enableBiometric` después de entregarlo a Kotlin.
+  Future<Uint8List> exportVaultKey();
+
   /// Importa el respaldo `backup` sobre la bóveda de la sesión, exista o
   /// no. `password` es la del respaldo.
   ///
@@ -75,6 +83,15 @@ abstract class VaultSession implements RustOpaqueInterface {
   Future<List<EntrySummary>> search({required String query});
 
   Future<UnlockReport> unlock({required String password});
+
+  /// Desbloquea con la llave que liberó el Keystore.
+  ///
+  /// La llave recibida se pone en ceros al soltarse, en todos los caminos.
+  /// Un largo distinto de 32 da `WrongVaultKey` sin tocar la bóveda, así
+  /// que con la bóveda ya desbloqueada da `WrongVaultKey` y no
+  /// `AlreadyUnlocked`; en la práctica no ocurre, porque la pantalla de
+  /// desbloqueo solo existe con la bóveda bloqueada.
+  Future<UnlockReport> unlockWithKey({required List<int> key});
 }
 
 /// Resultado de desbloquear o importar, sin texto plano.
