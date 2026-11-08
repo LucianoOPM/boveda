@@ -351,6 +351,30 @@ fn import_reports_corrupt_entry() {
     assert_eq!(imported.entries().unwrap().len(), 1);
 }
 
+/// Importar no descifra los secretos (a propósito: solo se descifran al
+/// copiar, mostrar o enviar). Un secreto dañado pasa la importación sin
+/// aparecer en `corrupt` y se descubre con `reveal`.
+#[test]
+fn import_does_not_check_secrets() {
+    let dir = tempfile::tempdir().unwrap();
+    let (backup, entries) = make_backup(dir.path());
+    let (damaged, healthy) = (entries[0].0, entries[1].0);
+    tamper(&backup, damaged, "secret");
+    let dest = dir.path().join("boveda.db");
+
+    let (mut imported, report) = Vault::import(&backup, &dest, &password("respaldo")).unwrap();
+
+    assert!(report.corrupt.is_empty());
+    assert_eq!(report.unidentified_corrupt, 0);
+    assert_eq!(ids_and_services(&imported), entries);
+    assert_eq!(imported.reveal(damaged).err(), Some(Error::CorruptEntry));
+    let service = &entries[1].1;
+    assert_eq!(
+        imported.reveal(healthy).unwrap().password().expose_secret(),
+        format!("clave-{service}")
+    );
+}
+
 #[test]
 fn import_into_missing_dest() {
     let dir = tempfile::tempdir().unwrap();
