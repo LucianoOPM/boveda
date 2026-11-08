@@ -130,8 +130,9 @@ impl Storage {
     /// archivo: una ruta inexistente da `Storage(Io)`.
     ///
     /// Orden: `application_id` (primero en los bytes del archivo, después
-    /// con SQLite) → pragmas → cabecera. Así un archivo ajeno se rechaza
-    /// antes de que SQLite lo toque.
+    /// con SQLite) → cabecera → pragmas. Así un archivo ajeno se rechaza
+    /// antes de que SQLite lo toque, y una versión futura antes de fijar
+    /// `journal_mode`, que persiste en el archivo.
     pub(crate) fn open(path: &Path) -> Result<Self> {
         check_file_header(path)?;
         let conn = Connection::open_with_flags(
@@ -140,9 +141,9 @@ impl Storage {
         )
         .map_err(map_sqlite_error)?;
         check_application_id(&conn)?;
-        apply_pragmas(&conn)?;
         let storage = Self { conn };
         storage.read_header()?;
+        apply_pragmas(&storage.conn)?;
         Ok(storage)
     }
 

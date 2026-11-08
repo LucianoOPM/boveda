@@ -49,14 +49,15 @@ Guardar la bóveda en un archivo SQLite administrado por el núcleo: una tabla d
 - Orden al abrir:
   0. (Agregado en la revisión final.) Antes de abrir con SQLite se leen los primeros 100 bytes del archivo: sin el magic de SQLite, más corto que la cabecera o con otro `application_id` (bytes 68..72, big-endian) da `NotAVault`. Así SQLite nunca toca un archivo ajeno, que podría modificar al revertir su `-journal` o integrar su `-wal`. Los mismos bytes dicen si el archivo está en WAL (bytes 18 y 19), que `open_read_only` rechaza sin abrirlo.
   1. Leer `application_id`. `rusqlite` abre de forma perezosa, así que un archivo que no es SQLite falla en esta primera consulta con `SQLITE_NOTADB` → `Error::NotAVault`. Un `application_id` distinto, incluido `0` (un SQLite vacío o ajeno), también da `NotAVault`.
-  2. Pragmas (ver abajo).
-  3. Leer `format_version` sola y, si no es la actual, devolver su error antes de leer las demás columnas (una versión futura puede tenerlas distintas). Después, leer la cabecera y validarla con `VaultHeader::from_parts`. Una `format_version` desconocida da el error que ya existe, `Error::UnsupportedFormatVersion(u16)`, distinto de `NotAVault`.
+  2. Leer `format_version` sola y, si no es la actual, devolver su error antes de leer las demás columnas (una versión futura puede tenerlas distintas). Después, leer la cabecera y validarla con `VaultHeader::from_parts`. Una `format_version` desconocida da el error que ya existe, `Error::UnsupportedFormatVersion(u16)`, distinto de `NotAVault`.
+  3. Pragmas (ver abajo). (Cambiado en la #15: antes iban antes de la cabecera.) Van después porque `journal_mode` persiste en el archivo: una bóveda de versión futura en WAL se rechaza sin pasarla a `delete`.
 
 ### Diario y durabilidad
 
 - `journal_mode = DELETE` y `synchronous = FULL`, fijados en cada apertura de lectura y escritura junto con `secure_delete`.
 - `PRAGMA journal_mode = DELETE` devuelve el modo resultante. Si no es `delete`, se devuelve `Error::Storage(JournalMode)` en vez de seguir en silencio.
-- El modo WAL persiste en el archivo. Si llegara un archivo en WAL, abrirlo en lectura y escritura lo convierte de vuelta a `delete`.
+- El modo WAL persiste en el archivo. Si llegara un archivo en WAL, abrirlo en lectura y escritura lo convierte de vuelta a `delete`, solo si su `format_version` es la actual.
+- Límite conocido (#15): si una bóveda en WAL trae transacciones pendientes en su `-wal` (un cierre forzado) y la apertura falla después de que SQLite la abrió (una versión futura o una cabecera corrupta), al cerrar la conexión SQLite hace un checkpoint y las integra al archivo principal. Los bytes cambian, pero el contenido se conserva: sigue en WAL y con su `format_version`. Evitarlo requeriría `SQLITE_DBCONFIG_NO_CKPT_ON_CLOSE`; queda fuera del alcance. Del mismo modo, la primera lectura en lectura y escritura revierte un `-journal` caliente antes de validar la versión; el respaldo depende de eso (ver `import`).
 - `open_read_only` no puede fijar `journal_mode`, porque cambiarlo es escribir. Solo comprueba que el modo sea `delete`.
 - Con un `-journal` caliente, una conexión de solo lectura no puede revertir la transacción. Ese archivo se rechaza con `Error::Storage(HotJournal)` y nunca se repara. Los respaldos hechos con `VACUUM INTO` nunca traen un `-journal`.
 - **Fuera del modelo de amenazas:** al confirmar una transacción se borra el `-journal`, pero sus bytes (cifrados) pueden seguir en la memoria flash hasta que el sistema reutilice esos bloques. `secure_delete` no cubre eso.

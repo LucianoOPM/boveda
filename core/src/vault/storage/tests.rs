@@ -83,13 +83,7 @@ fn open_sets_pragmas() {
 fn open_converts_wal_back_to_delete() {
     let (_dir, path, storage) = new_vault();
     storage.close().unwrap();
-    {
-        let conn = raw(&path);
-        let mode: String = conn
-            .pragma_update_and_check(None, "journal_mode", "WAL", |row| row.get(0))
-            .unwrap();
-        assert_eq!(mode, "wal");
-    }
+    set_wal(&raw(&path));
 
     let storage = Storage::open(&path).unwrap();
     assert_eq!(journal_mode(&storage.conn), "delete");
@@ -179,6 +173,73 @@ fn open_rejects_future_format_version() {
         .execute("UPDATE header SET format_version = 2", [])
         .unwrap();
     assert_open_fails_unchanged(&path, Error::UnsupportedFormatVersion(2));
+}
+
+/// Pasa a WAL la base de `conn` y comprueba el modo resultante.
+fn set_wal(conn: &rusqlite::Connection) {
+    let mode: String = conn
+        .pragma_update_and_check(None, "journal_mode", "WAL", |row| row.get(0))
+        .unwrap();
+    assert_eq!(mode, "wal");
+}
+
+#[test]
+fn open_rejects_future_format_version_in_wal() {
+    let (_dir, path, storage) = new_vault();
+    storage.close().unwrap();
+    {
+        let conn = raw(&path);
+        conn.execute("UPDATE header SET format_version = 2", [])
+            .unwrap();
+        set_wal(&conn);
+    }
+    assert!(!sibling(&path, "-wal").exists());
+
+    assert_open_fails_unchanged(&path, Error::UnsupportedFormatVersion(2));
+    assert!(!sibling(&path, "-wal").exists());
+    assert!(!sibling(&path, "-shm").exists());
+}
+
+/// Límite conocido: si la bóveda futura trae transacciones pendientes en su
+/// `-wal`, el checkpoint de SQLite al cerrar la última conexión las integra
+/// al archivo principal. Los bytes cambian, pero el contenido se conserva:
+/// sigue en WAL y con su `format_version`.
+#[test]
+fn open_future_wal_with_pending_frames_checkpoints_and_keeps_content() {
+    let (dir, src, storage) = new_vault();
+    storage.close().unwrap();
+    let path = dir.path().join("futura-copia.db");
+    {
+        let conn = raw(&src);
+        set_wal(&conn);
+        conn.pragma_update(None, "wal_autocheckpoint", 0).unwrap();
+        conn.execute("UPDATE header SET format_version = 2", [])
+            .unwrap();
+        // Copia sin checkpoint, como tras un cierre forzado.
+        fs::copy(&src, &path).unwrap();
+        fs::copy(sibling(&src, "-wal"), sibling(&path, "-wal")).unwrap();
+    }
+    assert!(fs::metadata(sibling(&path, "-wal")).unwrap().len() > 0);
+    let before = fs::read(&path).unwrap();
+
+    assert_eq!(
+        Storage::open(&path).err(),
+        Some(Error::UnsupportedFormatVersion(2))
+    );
+    // El checkpoint al cerrar integró el `-wal` y lo borró.
+    assert!(!sibling(&path, "-wal").exists());
+    assert_ne!(fs::read(&path).unwrap(), before);
+
+    let conn = raw(&path);
+    assert_eq!(journal_mode(&conn), "wal");
+    let version: i64 = conn
+        .query_row(
+            "SELECT format_version FROM header WHERE id = 1",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(version, 2);
 }
 
 // --- Cabecera y solo lectura ---
