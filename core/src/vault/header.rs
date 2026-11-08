@@ -4,15 +4,23 @@
 //! Los campos (sin la llave cifrada) van como dato autenticado al cifrar la
 //! llave de bóveda, así que alterar cualquiera hace fallar el desbloqueo.
 //! Guardarla en SQLite corresponde al módulo de almacenamiento.
+//!
+//! Desde la versión 2 incluye `key_check`, el verificador de la llave de
+//! bóveda (ver `crypto::keys::seal_key_check`). Una cabecera de la versión 1
+//! leída del disco no lo tiene.
 
 use secrecy::SecretString;
 
 use crate::crypto::kdf::{self, KdfParams, SALT_LEN};
-use crate::crypto::keys::{self, EncryptedKey, VaultKey};
-use crate::error::{Error, Result};
+use crate::crypto::keys::{self, EncryptedKey, KEY_CHECK_LEN, VaultKey};
+use crate::error::{Error, Result, StorageErrorKind};
 
 /// Versión actual del formato de la bóveda.
-pub(crate) const FORMAT_VERSION: u16 = 1;
+pub(crate) const FORMAT_VERSION: u16 = 2;
+
+/// Versión 1 del formato: sin verificador de la llave. Solo se lee, para
+/// migrarla.
+pub(crate) const FORMAT_VERSION_V1: u16 = 1;
 
 /// Longitud del dato autenticado:
 /// versión (2) | algoritmo (1) | memoria (4) | iteraciones (4) | paralelismo (4) | sal (16).
@@ -47,6 +55,8 @@ pub(crate) struct VaultHeader {
     params: KdfParams,
     salt: [u8; SALT_LEN],
     encrypted_key: EncryptedKey,
+    /// Verificador de la llave de bóveda. `None` solo en una versión 1.
+    key_check: Option<[u8; KEY_CHECK_LEN]>,
 }
 
 impl VaultHeader {
@@ -78,6 +88,7 @@ impl VaultHeader {
             encode_associated_data(FORMAT_VERSION, KdfAlgorithm::Argon2idV13, &params, &salt);
         let encrypted_key =
             keys::seal_vault_key(vault_key, password, &salt, &params, &associated_data)?;
+        let key_check = keys::seal_key_check(vault_key, FORMAT_VERSION)?;
 
         Ok(Self {
             format_version: FORMAT_VERSION,
@@ -85,20 +96,30 @@ impl VaultHeader {
             params,
             salt,
             encrypted_key,
+            key_check: Some(key_check),
         })
     }
 
     /// Reconstruye una cabecera leída del almacenamiento y valida la versión
     /// del formato, el algoritmo y los parámetros.
+    ///
+    /// Acepta las versiones 1 (sin `key_check`) y 2 (con él); otra versión
+    /// da [`Error::UnsupportedFormatVersion`]. Una versión conocida con la
+    /// presencia equivocada de `key_check` da `Storage(Corrupt)`.
     pub(crate) fn from_parts(
         format_version: u16,
         algorithm: u8,
         params: KdfParams,
         salt: [u8; SALT_LEN],
         encrypted_key: EncryptedKey,
+        key_check: Option<[u8; KEY_CHECK_LEN]>,
     ) -> Result<Self> {
-        if format_version != FORMAT_VERSION {
-            return Err(Error::UnsupportedFormatVersion(format_version));
+        match (format_version, key_check.is_some()) {
+            (FORMAT_VERSION_V1, false) | (FORMAT_VERSION, true) => {}
+            (FORMAT_VERSION_V1 | FORMAT_VERSION, _) => {
+                return Err(Error::Storage(StorageErrorKind::Corrupt));
+            }
+            (other, _) => return Err(Error::UnsupportedFormatVersion(other)),
         }
         let algorithm = KdfAlgorithm::try_from(algorithm)?;
         params.validate()?;
@@ -108,7 +129,21 @@ impl VaultHeader {
             params,
             salt,
             encrypted_key,
+            key_check,
         })
+    }
+
+    /// Comprueba que `key` es la llave de esta bóveda con `key_check`.
+    ///
+    /// Una cabecera de la versión 1 (sin verificador), otra llave o un
+    /// verificador dañado dan [`Error::WrongVaultKey`].
+    pub(crate) fn verify_key(&self, key: &VaultKey) -> Result<()> {
+        let key_check = self.key_check.as_ref().ok_or(Error::WrongVaultKey)?;
+        keys::verify_key_check(key, self.format_version, key_check)
+    }
+
+    pub(crate) fn key_check(&self) -> Option<&[u8; KEY_CHECK_LEN]> {
+        self.key_check.as_ref()
     }
 
     /// Descifra la llave de bóveda con la contraseña maestra.

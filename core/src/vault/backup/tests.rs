@@ -286,7 +286,7 @@ fn import_future_version_keeps_dest() {
     let dir = tempfile::tempdir().unwrap();
     let (backup, _) = make_backup(dir.path());
     raw(&backup)
-        .execute("UPDATE header SET format_version = 2", [])
+        .execute("UPDATE header SET format_version = 3", [])
         .unwrap();
     let dest = dir.path().join("boveda.db");
     make_current(&dest);
@@ -295,7 +295,7 @@ fn import_future_version_keeps_dest() {
         &backup,
         &dest,
         "respaldo",
-        Error::UnsupportedFormatVersion(2),
+        Error::UnsupportedFormatVersion(3),
     );
 }
 

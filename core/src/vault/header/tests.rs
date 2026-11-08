@@ -18,7 +18,7 @@ fn associated_data_has_fixed_little_endian_layout() {
     header.salt = core::array::from_fn(|i| i as u8);
 
     let expected: [u8; ASSOCIATED_DATA_LEN] = [
-        0x01, 0x00, // versión 1
+        0x02, 0x00, // versión 2
         0x01, // algoritmo 1 = Argon2id v0x13
         0x00, 0x00, 0x01, 0x00, // memoria 65 536 KiB
         0x03, 0x00, 0x00, 0x00, // 3 iteraciones
@@ -125,6 +125,7 @@ fn from_parts_rebuilds_a_header_that_unlocks() {
         header.params(),
         *header.salt(),
         header.encrypted_key().clone(),
+        header.key_check().copied(),
     )
     .unwrap();
     assert_eq!(rebuilt.associated_data(), header.associated_data());
@@ -142,20 +143,21 @@ fn from_parts_rejects_unknown_version_algorithm_or_params() {
             params,
             *header.salt(),
             header.encrypted_key().clone(),
+            header.key_check().copied(),
         )
         .err()
     };
 
     assert_eq!(
-        rebuild(2, 1, KdfParams::MIN),
-        Some(Error::UnsupportedFormatVersion(2))
+        rebuild(3, 1, KdfParams::MIN),
+        Some(Error::UnsupportedFormatVersion(3))
     );
     assert_eq!(
-        rebuild(1, 0, KdfParams::MIN),
+        rebuild(2, 0, KdfParams::MIN),
         Some(Error::UnsupportedAlgorithm(0))
     );
     assert_eq!(
-        rebuild(1, 2, KdfParams::MIN),
+        rebuild(2, 2, KdfParams::MIN),
         Some(Error::UnsupportedAlgorithm(2))
     );
     let too_much_memory = KdfParams {
@@ -163,7 +165,7 @@ fn from_parts_rejects_unknown_version_algorithm_or_params() {
         ..KdfParams::MIN
     };
     assert_eq!(
-        rebuild(1, 1, too_much_memory),
+        rebuild(2, 1, too_much_memory),
         Some(Error::InvalidKdfParams)
     );
 }
@@ -181,4 +183,61 @@ fn rekey_keeps_vault_key() {
     ));
     assert_ne!(new.salt(), old.salt());
     assert_ne!(new.encrypted_key().nonce, old.encrypted_key().nonce);
+}
+
+#[test]
+fn new_header_is_v2_with_valid_key_check() {
+    let (header, key) = new_header();
+    assert_eq!(header.format_version(), 2);
+    assert!(header.key_check().is_some());
+    assert_eq!(header.verify_key(&key), Ok(()));
+}
+
+#[test]
+fn verify_key_rejects_other_key() {
+    let (header, _) = new_header();
+    let other = keys::generate_vault_key().unwrap();
+    assert_eq!(header.verify_key(&other), Err(Error::WrongVaultKey));
+}
+
+#[test]
+fn rekey_creates_new_key_check_for_same_key() {
+    let (old, vault_key) = new_header();
+    let new = VaultHeader::rekey(&vault_key, &password("nueva"), KdfParams::MIN).unwrap();
+    assert_ne!(old.key_check(), new.key_check());
+    assert_eq!(new.verify_key(&vault_key), Ok(()));
+}
+
+#[test]
+fn from_parts_versions_and_key_check_presence() {
+    let (header, key) = new_header();
+    let check = *header.key_check().unwrap();
+    let rebuild = |version: u16, key_check: Option<[u8; KEY_CHECK_LEN]>| {
+        VaultHeader::from_parts(
+            version,
+            1,
+            header.params(),
+            *header.salt(),
+            header.encrypted_key().clone(),
+            key_check,
+        )
+    };
+
+    assert!(rebuild(2, Some(check)).is_ok());
+    let v1 = rebuild(1, None).unwrap();
+    assert_eq!(v1.format_version(), 1);
+    assert_eq!(v1.key_check(), None);
+    assert_eq!(v1.verify_key(&key), Err(Error::WrongVaultKey));
+    assert_eq!(
+        rebuild(1, Some(check)).err(),
+        Some(Error::Storage(StorageErrorKind::Corrupt))
+    );
+    assert_eq!(
+        rebuild(2, None).err(),
+        Some(Error::Storage(StorageErrorKind::Corrupt))
+    );
+    assert_eq!(
+        rebuild(3, Some(check)).err(),
+        Some(Error::UnsupportedFormatVersion(3))
+    );
 }
