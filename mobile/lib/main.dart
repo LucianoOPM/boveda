@@ -1,26 +1,20 @@
 import 'package:flutter/material.dart';
-import 'package:boveda/src/rust/api/simple.dart';
 import 'package:boveda/src/rust/frb_generated.dart';
 
 Future<void> main() async {
   await RustLib.init();
-  runApp(const MyApp());
+  runApp(const BovedaApp());
 }
 
-class MyApp extends StatelessWidget {
-  const MyApp({super.key});
+/// Marcador hasta que la #36 agregue el primer uso y la navegación.
+class BovedaApp extends StatelessWidget {
+  const BovedaApp({super.key});
 
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(
-      home: Scaffold(
-        appBar: AppBar(title: const Text('flutter_rust_bridge quickstart')),
-        body: Center(
-          child: Text(
-            'Action: Call Rust `greet("Tom")`\nResult: `${greet(name: "Tom")}`',
-          ),
-        ),
-      ),
+    return const MaterialApp(
+      title: 'Bóveda',
+      home: Scaffold(body: Center(child: Text('Bóveda'))),
     );
   }
 }
