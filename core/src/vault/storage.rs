@@ -378,6 +378,22 @@ impl Storage {
         }
     }
 
+    /// Lee solo `last_used_at` de una entrada viva, aunque las demás columnas
+    /// de la fila no se puedan leer (para reparar sin perder el último uso).
+    /// Una lápida o un id inexistente dan [`Error::EntryNotFound`].
+    pub(crate) fn get_last_used_at(&self, id: EntryId) -> Result<Option<i64>> {
+        self.conn
+            .query_row(
+                "SELECT last_used_at FROM entries WHERE id = ?1 AND deleted = 0",
+                [id.as_bytes().as_slice()],
+                |row| row.get(0),
+            )
+            .map_err(|e| match e {
+                rusqlite::Error::QueryReturnedNoRows => Error::EntryNotFound,
+                other => map_sqlite_error(other),
+            })
+    }
+
     /// Lista las entradas vivas. Una fila mal formada no aborta el listado;
     /// un error de SQLite (por ejemplo, el archivo dañado) sí.
     pub(crate) fn list_entries(&self) -> Result<EntryListing> {

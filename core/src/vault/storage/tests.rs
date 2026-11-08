@@ -516,7 +516,28 @@ fn missing_or_deleted_entry_is_not_found() {
         assert_eq!(storage.delete_entry(id, T3).err(), not_found);
         assert_eq!(storage.touch_entry(id, T3).err(), not_found);
         assert_eq!(storage.get_entry(id).err(), not_found);
+        assert_eq!(storage.get_last_used_at(id).err(), not_found);
     }
+}
+
+#[test]
+fn get_last_used_at_reads_unreadable_row() {
+    let (_dir, path, mut storage) = new_vault();
+    let id = EntryId::from_bytes([1; 16]);
+    storage
+        .insert_entry(&fake_entry(1, b"b", b"s"), T1)
+        .unwrap();
+    assert_eq!(storage.get_last_used_at(id), Ok(None));
+
+    storage.touch_entry(id, T2).unwrap();
+    raw(&path)
+        .execute(
+            "UPDATE entries SET entry_schema_version = 70000 WHERE id = ?1",
+            [id.as_bytes().as_slice()],
+        )
+        .unwrap();
+    assert_eq!(storage.get_entry(id).err(), Some(Error::CorruptEntry));
+    assert_eq!(storage.get_last_used_at(id), Ok(Some(T2)));
 }
 
 #[test]

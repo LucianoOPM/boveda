@@ -238,7 +238,7 @@ impl Vault {
     /// estructura actual. Actualiza `modified_at`, no `last_used_at`. Con
     /// [`SecretChange::Replace`] repara una entrada dañada, incluida una fila
     /// que no se puede leer (por ejemplo, con la versión de estructura fuera
-    /// de rango); esa pierde su `last_used_at`. Con
+    /// de rango), y conserva su `last_used_at`. Con
     /// [`SecretChange::Keep`] y el secreto dañado devuelve
     /// [`Error::CorruptEntry`] sin tocar el archivo.
     pub fn edit(&mut self, id: EntryId, search: SearchData, change: SecretChange) -> Result<()> {
@@ -252,11 +252,13 @@ impl Vault {
                 stored.last_used_at,
             ),
             (Ok(stored), SecretChange::Replace(secret)) => (secret, stored.last_used_at),
-            // Una fila que no se pudo leer (p. ej. con la versión de
-            // estructura fuera de rango) se reescribe completa y pierde su
-            // último uso. Si no existe o es una lápida, `update_entry` da
-            // `EntryNotFound`.
-            (Err(Error::CorruptEntry), SecretChange::Replace(secret)) => (secret, None),
+            // Una fila viva que no se pudo leer (p. ej. con la versión de
+            // estructura fuera de rango) se reescribe completa y conserva su
+            // último uso, que se lee aparte. Un id inexistente o una lápida
+            // ya dieron `EntryNotFound` en `get_entry`.
+            (Err(Error::CorruptEntry), SecretChange::Replace(secret)) => {
+                (secret, self.storage.get_last_used_at(id)?)
+            }
             (Err(e), _) => return Err(e),
         };
         let sealed = SealedEntry::seal(&unlocked.key, id, &search, &secret)?;
