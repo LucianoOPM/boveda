@@ -482,6 +482,43 @@ fn imported_vault_is_writable_and_exportable() {
     assert_eq!(again.entries().unwrap().len(), 3);
 }
 
+#[test]
+fn backup_errors_do_not_leak() {
+    let dir = tempfile::tempdir().unwrap();
+    let origin = dir.path().join("origen.db");
+    let mut vault =
+        Vault::create_with_params(&origin, &password("maestra-secreta"), KdfParams::MIN).unwrap();
+    add_sample(&mut vault, "servicio-secreto");
+    let backup = dir.path().join("respaldo.db");
+    vault.export(&backup).unwrap();
+    let damaged = dir.path().join("danado.db");
+    fs::copy(&backup, &damaged).unwrap();
+    damage_entries_root_page(&damaged);
+    let text = dir.path().join("texto.db");
+    fs::write(&text, b"hola").unwrap();
+    let dest = dir.path().join("boveda.db");
+
+    let mut errors = vec![vault.export(&backup).err().unwrap()];
+    vault.lock();
+    errors.push(vault.export(&dir.path().join("otro.db")).err().unwrap());
+    for (file, pw) in [
+        (&backup, "maestra-incorrecta"),
+        (&text, "maestra-secreta"),
+        (&damaged, "maestra-secreta"),
+    ] {
+        errors.push(Vault::import(file, &dest, &password(pw)).err().unwrap());
+    }
+
+    let dir_name = dir.path().file_name().unwrap().to_str().unwrap();
+    for err in &errors {
+        for text in [format!("{err}"), format!("{err:?}")] {
+            for needle in ["maestra", "clave-", "servicio-secreto", dir_name] {
+                assert!(!text.contains(needle), "{text:?} contiene {needle:?}");
+            }
+        }
+    }
+}
+
 // --- El -journal de la bóveda actual -----------------------------------
 
 #[test]

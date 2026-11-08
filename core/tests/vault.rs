@@ -80,3 +80,33 @@ fn search_with_public_api() {
     vault.lock();
     assert_eq!(vault.search("gm").err(), Some(Error::Locked));
 }
+
+#[test]
+fn export_delete_import_with_calibration() {
+    let (dir, path) = temp_path();
+    let mut vault = Vault::create(&path, &password("maestra")).unwrap();
+    let mut expected = Vec::new();
+    for service in ["gmail", "banco"] {
+        let search = SearchData::new(service, None, Some("yo@example.com"), &[]).unwrap();
+        let secret = Secret::new(password(&format!("clave-{service}")), None).unwrap();
+        expected.push((vault.add(search, secret).unwrap(), service));
+    }
+    let backup = dir.path().join("respaldo.db");
+    vault.export(&backup).unwrap();
+    drop(vault);
+    std::fs::remove_file(&path).unwrap();
+
+    let (mut imported, report) = Vault::import(&backup, &path, &password("maestra")).unwrap();
+
+    assert!(report.corrupt.is_empty());
+    assert_eq!(report.unidentified_corrupt, 0);
+    assert_eq!(imported.entries().unwrap().len(), expected.len());
+    for (id, service) in expected {
+        let entry = imported.entries().unwrap().iter().find(|e| e.id() == id);
+        assert_eq!(entry.unwrap().search().service(), service);
+        assert_eq!(
+            imported.reveal(id).unwrap().password().expose_secret(),
+            format!("clave-{service}")
+        );
+    }
+}
