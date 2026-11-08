@@ -27,6 +27,9 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - name: Toolchain de rust-toolchain.toml
+        # bash también en Windows: con pwsh, un fallo de rustup quedaría oculto
+        # por el código de salida de `rustc --version`.
+        shell: bash
         run: |
           rustup toolchain install
           rustc --version
@@ -44,6 +47,9 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - name: Toolchain de rust-toolchain.toml
+        # bash también en Windows: con pwsh, un fallo de rustup quedaría oculto
+        # por el código de salida de `rustc --version`.
+        shell: bash
         run: |
           rustup toolchain install
           rustc --version
@@ -60,6 +66,9 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - name: Toolchain de rust-toolchain.toml
+        # bash también en Windows: con pwsh, un fallo de rustup quedaría oculto
+        # por el código de salida de `rustc --version`.
+        shell: bash
         run: |
           rustup toolchain install
           rustc --version
