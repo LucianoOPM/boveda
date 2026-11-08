@@ -9,11 +9,11 @@
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use secrecy::SecretString;
+use secrecy::{ExposeSecret, ExposeSecretMut, SecretBox, SecretString};
 use zeroize::ZeroizeOnDrop;
 
 use crate::crypto::kdf::{self, KdfParams};
-use crate::crypto::keys::VaultKey;
+use crate::crypto::keys::{self, VAULT_KEY_LEN, VaultKey};
 
 mod backup;
 pub(crate) mod entry;
@@ -424,6 +424,63 @@ impl Vault {
     fn rekey_with_params(&mut self, new: &SecretString, params: KdfParams) -> Result<()> {
         let header = VaultHeader::rekey(&self.unlocked()?.key, new, params)?;
         self.storage.replace_header(&header)
+    }
+
+    /// Entrega una copia de la llave de bóveda, para que la app la guarde
+    /// protegida con huella (en Android, en el Keystore). Exige la bóveda
+    /// desbloqueada ([`Error::Locked`]).
+    ///
+    /// Antes comprueba el verificador `key_check` con la llave en memoria.
+    /// Si no se autentica, lo regenera con un nonce nuevo y lo escribe; si
+    /// esa escritura falla, devuelve el error sin entregar la llave, para no
+    /// activar una huella que no va a funcionar. Regenerarlo es seguro: la
+    /// llave en memoria ya se autenticó al desbloquear (con `encrypted_key`
+    /// o con `key_check`), así que un `key_check` que no se autentica solo
+    /// puede estar dañado; nunca significa que la llave en memoria sea la
+    /// equivocada. Con el verificador válido no escribe nada.
+    ///
+    /// La llave sigue valiendo después de
+    /// [`Vault::change_master_password`], que no cambia la llave de bóveda.
+    pub fn export_vault_key(&mut self) -> Result<SecretBox<[u8; VAULT_KEY_LEN]>> {
+        let unlocked = self.unlocked.as_ref().ok_or(Error::Locked)?;
+        let header = self.storage.read_header()?;
+        match header.verify_key(&unlocked.key) {
+            Ok(()) => {}
+            Err(Error::WrongVaultKey) => {
+                let key_check = keys::seal_key_check(&unlocked.key, header.format_version())?;
+                self.storage.replace_key_check(&key_check)?;
+            }
+            Err(e) => return Err(e),
+        }
+
+        // La copia se escribe directamente dentro del `SecretBox` nuevo,
+        // sin pasar por la pila.
+        let mut copy = VaultKey::default();
+        copy.expose_secret_mut()
+            .copy_from_slice(unlocked.key.expose_secret());
+        Ok(copy)
+    }
+
+    /// Desbloquea con la llave de bóveda que entregó
+    /// [`Vault::export_vault_key`] y descifra los datos de búsqueda, como
+    /// [`Vault::unlock`]: el mismo [`UnlockReport`] y la misma caché.
+    ///
+    /// Sobre una bóveda desbloqueada devuelve [`Error::AlreadyUnlocked`].
+    /// Una llave de otra bóveda, alterada, un verificador dañado o una
+    /// bóveda de la versión de formato 1 dan [`Error::WrongVaultKey`], y la
+    /// bóveda sigue bloqueada.
+    ///
+    /// Recibe la llave por valor: si falla, se descarta y se borra de
+    /// memoria al soltarse. Quien llama no la recupera: para reintentar,
+    /// debe pedirla de nuevo al Keystore.
+    pub fn unlock_with_key(&mut self, key: SecretBox<[u8; VAULT_KEY_LEN]>) -> Result<UnlockReport> {
+        if self.unlocked.is_some() {
+            return Err(Error::AlreadyUnlocked);
+        }
+        self.storage.read_header()?.verify_key(&key)?;
+        let (unlocked, report) = Self::load_entries(&self.storage, key)?;
+        self.unlocked = Some(unlocked);
+        Ok(report)
     }
 
     fn unlocked(&self) -> Result<&Unlocked> {

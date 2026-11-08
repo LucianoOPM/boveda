@@ -312,6 +312,20 @@ impl Storage {
         tx.commit().map_err(map_sqlite_error)
     }
 
+    /// Reemplaza solo `key_check` (al repararlo en
+    /// `Vault::export_vault_key`). Si no cambia exactamente una fila, da
+    /// `Storage(Corrupt)`.
+    pub(crate) fn replace_key_check(&mut self, key_check: &[u8; KEY_CHECK_LEN]) -> Result<()> {
+        let changed = self.write(
+            "UPDATE header SET key_check = ?1 WHERE id = 1",
+            params![key_check.as_slice()],
+        )?;
+        if changed != 1 {
+            return Err(Error::Storage(StorageErrorKind::Corrupt));
+        }
+        Ok(())
+    }
+
     /// Migra la tabla `header` de la versión 1 a la 2 con `header`, ya
     /// armada por [`VaultHeader::unlock_upgrading`].
     ///
