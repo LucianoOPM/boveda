@@ -1,0 +1,133 @@
+name: Mobile
+
+# Filtro de rutas: el job solo corre cuando cambia algo que afecta a la app.
+# Si algún día se protege dev y este job se vuelve obligatorio, hay que quitar
+# el filtro: un workflow que no se dispara deja el check pendiente para siempre
+# y bloquea el merge.
+on:
+  push:
+    branches: [main, dev]
+    paths:
+      - "mobile/**"
+      - "core/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "rust-toolchain.toml"
+      - ".github/workflows/mobile.yml"
+  pull_request:
+    paths:
+      - "mobile/**"
+      - "core/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "rust-toolchain.toml"
+      - ".github/workflows/mobile.yml"
+
+# Grupo propio: no cancela ni lo cancela una ejecución de ci.yml.
+concurrency:
+  group: mobile-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  mobile:
+    # Imagen fija: un cambio de ubuntu-latest no altera el entorno sin un commit.
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: mobile
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: JDK 17
+        # 17 es el mínimo de AGP 9.1 y coincide con sourceCompatibility y
+        # jvmTarget de android/app/build.gradle.kts.
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Toolchain de rust-toolchain.toml
+        # Igual que en ci.yml: rustup instala la versión, los componentes y los
+        # targets de Android del archivo.
+        shell: bash
+        run: |
+          rustup toolchain install
+          rustc --version
+
+      - name: Caché de Rust
+        # Cargokit no compila en target/: usa su propio --target-dir dentro de
+        # mobile/build. Se declara aquí para que rust-cache lo guarde.
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ". -> mobile/build/rust_lib_boveda/build"
+
+      - name: Flutter
+        # El :hash: de subosito es el commit de Flutter, no el lock: la clave
+        # de pub incluye pubspec.lock para que la caché cambie con él.
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: 3.47.9
+          cache: true
+          pub-cache-key: "flutter-pub-:os:-:channel:-:version:-:arch:-:hash:-${{ hashFiles('mobile/pubspec.lock') }}"
+
+      - name: Gradle
+        # Caché sobre actions/cache. Solo se guarda en pushes a dev (la rama
+        # por defecto); en las demás ramas solo se lee.
+        # NDK: no se instala aparte. Sale de flutter.ndkVersion en
+        # android/app/build.gradle.kts; Flutter 3.47.9 lo resuelve como
+        # 28.2.13676358 y Gradle lo descarga si la imagen no lo trae.
+        uses: gradle/actions/setup-gradle@v6
+        with:
+          cache-provider: basic
+
+      - name: Instalar flutter_rust_bridge_codegen
+        # Debe coincidir con flutter_rust_bridge en mobile/pubspec.yaml y en
+        # mobile/rust/Cargo.toml; si se actualiza, se cambian los tres en el
+        # mismo commit. rust-cache guarda ~/.cargo/bin: con caché, no recompila.
+        run: cargo install flutter_rust_bridge_codegen --version 2.13.0 --locked
+
+      - name: Instalar cargo-expand
+        # El codegen 2.13.0 ejecuta cargo expand y, si falta, lo instala sin
+        # versión; por eso se fija aquí. Si se actualiza el codegen, se revisa
+        # también esta versión.
+        run: cargo install cargo-expand --version 1.0.127 --locked
+
+      - name: Versiones del codegen y de cargo-expand
+        run: |
+          flutter_rust_bridge_codegen --version
+          cargo expand --version
+
+      - name: Dependencias de Dart
+        run: flutter pub get
+
+      - name: Análisis
+        run: flutter analyze
+
+      - name: Pruebas
+        run: flutter test
+
+      - name: Regenerar el puente
+        run: flutter_rust_bridge_codegen generate
+
+      - name: Código generado al día
+        # git diff no ve archivos nuevos sin seguimiento (p. ej. un archivo
+        # nuevo en rust/src/api/ genera un .dart nuevo): git status sí.
+        shell: bash
+        run: |
+          generated=(lib/src/rust/ rust/src/frb_generated.rs)
+          git diff --exit-code -- "${generated[@]}"
+          untracked=$(git status --porcelain -- "${generated[@]}")
+          if [ -n "$untracked" ]; then
+            echo "Código generado desactualizado; ejecuta flutter_rust_bridge_codegen generate:"
+            echo "$untracked"
+            exit 1
+          fi
+
+      - name: APK debug
+        # Además de arm64 y x64, el APK debug incluye i686: cargokit lo agrega
+        # siempre en debug. El release no lo incluye.
+        run: flutter build apk --debug --target-platform android-arm64,android-x64
