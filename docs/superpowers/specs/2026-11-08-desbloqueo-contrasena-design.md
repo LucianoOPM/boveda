@@ -50,11 +50,11 @@ Verificado con Context7 (API de Flutter) y en el código de la #35 y la #36:
 Contenido, de arriba abajo:
 
 1. Título "Bóveda bloqueada".
-2. `PasswordField` con la etiqueta "Contraseña maestra", `autofocus: true`, `textInputAction: TextInputAction.done`, `onSubmitted` conectado a `_unlock` y un `FocusNode` propio de la pantalla.
+2. `PasswordField` con la etiqueta "Contraseña maestra", `textInputAction: TextInputAction.done`, `onSubmitted` conectado a `_unlock` y un `FocusNode` propio de la pantalla.
 3. Mensaje de error, si hay.
 4. Botón "Desbloquear". Mientras desbloquea, muestra un indicador indeterminado y "Desbloqueando…".
 
-Sin "¿Olvidaste tu contraseña?" ni acceso a importar un respaldo. Sin `PopScope`: interrumpir `unlock` no deja nada a medias, a diferencia de `create`.
+El campo **no** se enfoca al abrir la pantalla (ver "Sin foco inicial", abajo). Sin "¿Olvidaste tu contraseña?" ni acceso a importar un respaldo. Sin `PopScope`: interrumpir `unlock` no deja nada a medias, a diferencia de `create`.
 
 Estado: `TextEditingController _password`, `FocusNode _focus`, `bool _unlocking`, `String? _error`. Nunca guarda la contraseña en un campo.
 
@@ -84,13 +84,12 @@ Otras reglas:
 
 ### Campo de contraseña (`PasswordField`)
 
-Cuatro parámetros opcionales nuevos, que se pasan tal cual al `TextField`:
+Tres parámetros opcionales nuevos, que se pasan tal cual al `TextField`:
 
 | Parámetro | Por omisión |
 | --- | --- |
 | `textInputAction` | `null` (el valor por omisión del `TextField`) |
 | `onSubmitted` | `null` |
-| `autofocus` | `false` |
 | `focusNode` | `null` |
 
 `FirstRunScreen` no cambia: no pasa ninguno.
@@ -103,6 +102,16 @@ Cuatro parámetros opcionales nuevos, que se pasan tal cual al `TextField`:
 - Va **en el árbol**, no con `ScaffoldMessenger.showMaterialBanner`: ese método lo muestra en todos los `Scaffold` registrados, así que podría seguir visible en la pantalla de desbloqueo cuando la #39 bloquee.
 - El estado de oculto vive en el propio widget. Es correcto porque entre dos desbloqueos siempre se pasa por `locked` y el banner sale del árbol, así que cada desbloqueo lo muestra una vez. **La #40 debe mantenerlo dentro de la pantalla principal**, en una posición que salga del árbol al bloquear; si lo moviera a un ancestro que sobrevive al bloqueo, el estado de oculto se arrastraría al siguiente desbloqueo.
 - Cumple "una entrada corrupta se marca como dañada sin bloquear el resto" sin adelantar la #40, que marcará cada entrada en la lista.
+
+### Sin foco inicial
+
+El desbloqueo no enfoca el campo al abrir, porque Android no permite abrir el teclado durante la animación de arranque en frío. Tras un intento fallido sí se reenfoca: el teclado ya está abierto y funciona. Se probaron en el emulador (Android 16, API 37), tres arranques en frío cada uno, sin éxito:
+
+1. `autofocus`, y después pedir el foco al llegar a `AppLifecycleState.resumed`: el `showSoftInput` de Flutter llega antes de que Android sirva la vista (`Ignoring showSoftInput() ... is not served`).
+2. Canal de Kotlin con `WindowInsetsController.show(ime())`: la petición llega antes de que la ventana tenga el foco y el sistema la cancela al dárselo (`HIDE_UNSPECIFIED_WINDOW`).
+3. Canal de Kotlin que espera el foco de la ventana y `InputMethodManager.isActive(view)` antes de `showSoftInput`: llega al servidor, que la aborta durante la animación de apertura (`PHASE_SERVER_ABORT_SHOW_IME_POST_LAYOUT`).
+
+Con la huella (#38), el arranque muestra primero su diálogo; el foco se pide solo si se cancela o falla, cuando la animación ya terminó.
 
 ### Intentos fallidos
 
@@ -119,7 +128,7 @@ Si la app pasa a segundo plano mientras corre Argon2id, el evento de bloqueo lle
 | `mobile/lib/app.dart` | `_damagedEntries`, `UnlockScreen` en `locked`, banner en `unlocked` |
 | `mobile/lib/screens/unlock_screen.dart` | `UnlockScreen` |
 | `mobile/lib/screens/placeholder_screen.dart` | parámetro opcional `banner` |
-| `mobile/lib/widgets/password_field.dart` | `textInputAction`, `onSubmitted`, `autofocus`, `focusNode` |
+| `mobile/lib/widgets/password_field.dart` | `textInputAction`, `onSubmitted`, `focusNode` |
 | `mobile/lib/widgets/damaged_entries_banner.dart` | `DamagedEntriesBanner` |
 | `mobile/test/fakes.dart` | `unlock` en `FakeVaultSession` |
 | `mobile/test/unlock_screen_test.dart` | pruebas de la pantalla (nuevo) |
@@ -138,7 +147,6 @@ Si la app pasa a segundo plano mientras corre Argon2id, el evento de bloqueo lle
 `unlock_screen_test.dart`:
 
 - El botón está desactivado con el campo vacío y se activa al escribir.
-- Al entrar, el campo tiene el foco.
 - Durante el desbloqueo: indicador y "Desbloqueando…" visibles, campo y botón desactivados, y `unlock` recibió la contraseña escrita.
 - Éxito: `onUnlocked` recibe `corrupt.length + unidentifiedCorrupt` (2 ids y 1 sin id → 3).
 - `alreadyUnlocked`: `onUnlocked(0)`.
@@ -160,7 +168,7 @@ Si la app pasa a segundo plano mientras corre Argon2id, el evento de bloqueo lle
 
 `widgets_test.dart`:
 
-- `PasswordField` pasa `textInputAction`, `onSubmitted`, `autofocus` y `focusNode` al `TextField`; sin ellos, los valores por omisión no cambian.
+- `PasswordField` pasa `textInputAction`, `onSubmitted` y `focusNode` al `TextField`; sin ellos, los valores por omisión no cambian.
 - `DamagedEntriesBanner`: con 0 no muestra nada; singular y plural; "Entendido" lo oculta.
 
 ### Fachada (`mobile/rust`)
@@ -175,7 +183,7 @@ Una prueba nueva en `api/session/tests.rs`:
 
 ### A mano, en el emulador
 
-1. Instalación limpia → primer uso → cerrar la app (quitarla de recientes) → abrir: aparece el desbloqueo con el teclado abierto.
+1. Instalación limpia → primer uso → cerrar la app (quitarla de recientes) → abrir: aparece el desbloqueo; un toque en el campo abre el teclado.
 2. Contraseña incorrecta: "Contraseña incorrecta", campo vacío, teclado abierto.
 3. Contraseña correcta: el indicador se anima durante Argon2id y se llega a la pantalla principal, sin banner.
 4. Entrada dañada (nada entra al repositorio):
