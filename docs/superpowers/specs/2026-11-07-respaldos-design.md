@@ -69,6 +69,7 @@ El SQLite empaquetado se compila con `-DSQLITE_USE_URI` (`build.rs` de `libsqlit
 - Antes de reemplazar, si existe `<dest>-journal` o `<dest>-wal`, se abre `dest` con `Storage::open` y se cierra: eso revierte el diario (o integra el WAL y lo pasa a `delete`).
 - Si esa apertura falla (por ejemplo, `dest` no es una bóveda, así que SQLite nunca la toca), se devuelve el error sin reemplazar nada.
 - Se descartaron dos alternativas. Borrar el diario antes de renombrar dañaría la bóveda actual si después falla el renombrado. Borrarlo después de renombrar deja un intervalo en el que, si hay un corte de luz, SQLite aplicaría el diario viejo sobre el respaldo.
+- (Agregado en la #20.) Si `dest` no existe, su `-journal`, `-wal` y `-shm` son huérfanos (la bóveda se borró a mano, o un celular con restos de otra instalación): no hay base que revertir ni que dañar. Se borran antes del `rename` y, en Unix, se sincroniza el directorio (mejor esfuerzo), para que un corte de luz no deje el `rename` hecho y el borrado perdido. Si un borrado falla → `Storage(Io)`, sin reemplazar nada. Dejarlos no es opción: SQLite aplicaría el diario viejo sobre el respaldo. Para saber si `dest` existe se usa `fs::symlink_metadata`, no `Path::exists`, que da `false` ante cualquier error (por ejemplo, sin permisos) y haría borrar el diario de una bóveda que sí existe. Solo `NotFound` cuenta como ausente; otro error → `Storage(Io)`.
 
 ### Reemplazo con `rename`
 
@@ -138,7 +139,7 @@ Los nombres internos de `backup.rs` se fijan en el plan.
 6. `read_header()?.unlock(password)` → `WrongPassword` si no corresponde.
 7. `load_entries`: caché y `UnlockReport`.
 8. `close()` de la conexión de solo lectura (en Windows hace falta para renombrar).
-9. Si existe `<dest>-journal` o `<dest>-wal`: `Storage::open(dest)` y `close()`. Si falla → error, sin reemplazar.
+9. Si existe `<dest>-journal` o `<dest>-wal`: `Storage::open(dest)` y `close()`. Si falla → error, sin reemplazar. Si `dest` no existe, en cambio, se borran `<dest>-journal`, `<dest>-wal` y `<dest>-shm` huérfanos y se sincroniza el directorio (#20).
 10. `fs::rename(copia, dest)`. En Unix, `fsync` del directorio como mejor esfuerzo.
 11. `Storage::open(dest)`, que fija los pragmas, y se devuelve `Vault` con el `Unlocked` del paso 7 y el `UnlockReport`.
 
