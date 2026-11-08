@@ -1280,13 +1280,48 @@ fn concurrent_migration_without_password_change_unlocks() {
 /// Contraseña válida para las pruebas de esta sección (16 caracteres).
 const LONG_PASSWORD: &str = "maestra-de-16-ch";
 
+/// Justo debajo del mínimo (11 caracteres) y justo en el mínimo (12).
+const ELEVEN_CHARS: &str = "corta-11-ch";
+const TWELVE_CHARS: &str = "justa-12-chr";
+
+#[test]
+fn boundary_constants_have_their_length() {
+    assert_eq!(ELEVEN_CHARS.chars().count(), 11);
+    assert_eq!(TWELVE_CHARS.chars().count(), 12);
+}
+
+#[test]
+fn create_accepts_exactly_twelve() {
+    let (_dir, path) = temp_path();
+    let mut vault =
+        Vault::create_with_params(&path, &password(TWELVE_CHARS), KdfParams::MIN).unwrap();
+    vault.lock();
+    vault.unlock(&password(TWELVE_CHARS)).unwrap();
+}
+
+#[test]
+fn change_master_password_accepts_exactly_twelve() {
+    let (_dir, path) = temp_path();
+    let mut vault =
+        Vault::create_with_params(&path, &password(LONG_PASSWORD), KdfParams::MIN).unwrap();
+    vault
+        .change_master_password_with_params(
+            &password(LONG_PASSWORD),
+            &password(TWELVE_CHARS),
+            KdfParams::MIN,
+        )
+        .unwrap();
+    vault.lock();
+    vault.unlock(&password(TWELVE_CHARS)).unwrap();
+}
+
 #[test]
 fn create_rejects_short_password_before_touching_disk() {
     let (_dir, path) = temp_path();
     // `Vault::create` real: debe regresar antes de calibrar.
     DERIVE_CALLS.with(|c| c.set(0));
     assert_eq!(
-        Vault::create(&path, &password("corta-11ch")).err(),
+        Vault::create(&path, &password(ELEVEN_CHARS)).err(),
         Some(Error::PasswordTooShort)
     );
     assert_eq!(DERIVE_CALLS.with(|c| c.get()), 0);
@@ -1297,7 +1332,7 @@ fn create_rejects_short_password_before_touching_disk() {
 fn create_with_params_rejects_short_password() {
     let (_dir, path) = temp_path();
     assert_eq!(
-        Vault::create_with_params(&path, &password("corta-11ch"), KdfParams::MIN).err(),
+        Vault::create_with_params(&path, &password(ELEVEN_CHARS), KdfParams::MIN).err(),
         Some(Error::PasswordTooShort)
     );
     assert!(!path.exists());
@@ -1315,7 +1350,7 @@ fn change_master_password_rejects_short_before_deriving() {
         vault
             .change_master_password_with_params(
                 &password(LONG_PASSWORD),
-                &password("corta-11ch"),
+                &password(ELEVEN_CHARS),
                 KdfParams::MIN,
             )
             .err(),
@@ -1326,7 +1361,7 @@ fn change_master_password_rejects_short_before_deriving() {
         vault
             .change_master_password_with_params(
                 &password("incorrecta-y-larga"),
-                &password("corta-11ch"),
+                &password(ELEVEN_CHARS),
                 KdfParams::MIN,
             )
             .err(),

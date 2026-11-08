@@ -135,8 +135,8 @@ void main() {
     await pumpScreen(tester, session);
 
     // Corta, confirmada y con la casilla.
-    await typePassword(tester, 'corta-11ch');
-    await typeConfirm(tester, 'corta-11ch');
+    await typePassword(tester, 'corta-11-ch');
+    await typeConfirm(tester, 'corta-11-ch');
     await toggleAccept(tester);
     expect(button(tester).onPressed, isNull);
 
