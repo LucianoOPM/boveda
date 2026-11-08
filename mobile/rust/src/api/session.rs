@@ -97,6 +97,11 @@ impl VaultSession {
         Ok(self.slot()?.as_ref().is_none_or(Vault::is_locked))
     }
 
+    /// Ruta de la bóveda de esta sesión.
+    pub(crate) fn path(&self) -> &std::path::Path {
+        &self.path
+    }
+
     /// Toma el candado de la sesión.
     pub(crate) fn slot(&self) -> FacadeResult<MutexGuard<'_, Option<Vault>>> {
         self.vault.lock().map_err(|_| VaultError::SessionPoisoned)

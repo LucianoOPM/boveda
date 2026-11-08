@@ -9,7 +9,7 @@ import 'error.dart';
 
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
-// These functions are ignored because they are not marked as `pub`: `secret_from`, `slot`, `with_vault`
+// These functions are ignored because they are not marked as `pub`: `path`, `secret_from`, `slot`, `with_vault`
 // These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `clone`, `eq`, `fmt`, `from`
 
 // Rust type: RustOpaqueMoi<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<VaultSession>>
@@ -28,6 +28,24 @@ abstract class VaultSession implements RustOpaqueInterface {
     required String id,
     required EntryInput input,
     NewSecret? newSecret,
+  });
+
+  /// Exporta un respaldo a `dest`, que debe ser absoluta y no existir.
+  /// Exige la bóveda desbloqueada.
+  Future<void> export_({required String dest});
+
+  /// Importa el respaldo `backup` sobre la bóveda de la sesión, exista o
+  /// no. `password` es la del respaldo.
+  ///
+  /// Suelta la bóveda actual y llama a `Vault::import`. Si sale bien, la
+  /// sesión queda con la importada, desbloqueada. Si falla, vuelve a abrir
+  /// la de la ruta: queda bloqueada, o la sesión queda sin bóveda si no se
+  /// puede abrir (por ejemplo, en un celular nuevo). En ambos casos
+  /// devuelve el error de la importación. El candado se mantiene todo el
+  /// ciclo, para que ninguna otra operación se intercale.
+  Future<UnlockReport> importBackup({
+    required String backup,
+    required String password,
   });
 
   /// `true` también sin bóveda.

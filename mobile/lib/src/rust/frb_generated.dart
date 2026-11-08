@@ -71,7 +71,7 @@ class RustLib extends BaseEntrypoint<RustLibApi, RustLibApiImpl, RustLibWire> {
   String get codegenVersion => '2.13.0';
 
   @override
-  int get rustContentHash => 1785614487;
+  int get rustContentHash => 1583652807;
 
   static const kDefaultExternalLibraryLoaderConfig =
       ExternalLibraryLoaderConfig(
@@ -104,6 +104,17 @@ abstract class RustLibApi extends BaseApi {
     required String id,
     required EntryInput input,
     NewSecret? newSecret,
+  });
+
+  Future<void> crateApiSessionVaultSessionExport({
+    required VaultSession that,
+    required String dest,
+  });
+
+  Future<UnlockReport> crateApiSessionVaultSessionImportBackup({
+    required VaultSession that,
+    required String backup,
+    required String password,
   });
 
   Future<bool> crateApiSessionVaultSessionIsLocked({
@@ -314,6 +325,84 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       );
 
   @override
+  Future<void> crateApiSessionVaultSessionExport({
+    required VaultSession that,
+    required String dest,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerVaultSession(
+            that,
+            serializer,
+          );
+          sse_encode_String(dest, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 5,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_unit,
+          decodeErrorData: sse_decode_vault_error,
+        ),
+        constMeta: kCrateApiSessionVaultSessionExportConstMeta,
+        argValues: [that, dest],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiSessionVaultSessionExportConstMeta =>
+      const TaskConstMeta(
+        debugName: "VaultSession_export",
+        argNames: ["that", "dest"],
+      );
+
+  @override
+  Future<UnlockReport> crateApiSessionVaultSessionImportBackup({
+    required VaultSession that,
+    required String backup,
+    required String password,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerVaultSession(
+            that,
+            serializer,
+          );
+          sse_encode_String(backup, serializer);
+          sse_encode_String(password, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 6,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_unlock_report,
+          decodeErrorData: sse_decode_vault_error,
+        ),
+        constMeta: kCrateApiSessionVaultSessionImportBackupConstMeta,
+        argValues: [that, backup, password],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiSessionVaultSessionImportBackupConstMeta =>
+      const TaskConstMeta(
+        debugName: "VaultSession_import_backup",
+        argNames: ["that", "backup", "password"],
+      );
+
+  @override
   Future<bool> crateApiSessionVaultSessionIsLocked({
     required VaultSession that,
   }) {
@@ -328,7 +417,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 5,
+            funcId: 7,
             port: port_,
           );
         },
@@ -362,7 +451,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 6,
+            funcId: 8,
             port: port_,
           );
         },
@@ -387,7 +476,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         callFfi: () {
           final serializer = SseSerializer(generalizedFrbRustBinding);
           sse_encode_String(path, serializer);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 7)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 9)!;
         },
         codec: SseCodec(
           decodeSuccessData:
@@ -417,7 +506,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 8,
+            funcId: 10,
             port: port_,
           );
         },
@@ -452,7 +541,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 9,
+            funcId: 11,
             port: port_,
           );
         },
@@ -490,7 +579,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 10,
+            funcId: 12,
             port: port_,
           );
         },
@@ -528,7 +617,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 11,
+            funcId: 13,
             port: port_,
           );
         },
@@ -566,7 +655,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 12,
+            funcId: 14,
             port: port_,
           );
         },
@@ -596,7 +685,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 13,
+            funcId: 15,
             port: port_,
           );
         },
@@ -1311,6 +1400,29 @@ class VaultSessionImpl extends RustOpaque implements VaultSession {
     id: id,
     input: input,
     newSecret: newSecret,
+  );
+
+  /// Exporta un respaldo a `dest`, que debe ser absoluta y no existir.
+  /// Exige la bóveda desbloqueada.
+  Future<void> export_({required String dest}) => RustLib.instance.api
+      .crateApiSessionVaultSessionExport(that: this, dest: dest);
+
+  /// Importa el respaldo `backup` sobre la bóveda de la sesión, exista o
+  /// no. `password` es la del respaldo.
+  ///
+  /// Suelta la bóveda actual y llama a `Vault::import`. Si sale bien, la
+  /// sesión queda con la importada, desbloqueada. Si falla, vuelve a abrir
+  /// la de la ruta: queda bloqueada, o la sesión queda sin bóveda si no se
+  /// puede abrir (por ejemplo, en un celular nuevo). En ambos casos
+  /// devuelve el error de la importación. El candado se mantiene todo el
+  /// ciclo, para que ninguna otra operación se intercale.
+  Future<UnlockReport> importBackup({
+    required String backup,
+    required String password,
+  }) => RustLib.instance.api.crateApiSessionVaultSessionImportBackup(
+    that: this,
+    backup: backup,
+    password: password,
   );
 
   /// `true` también sin bóveda.
