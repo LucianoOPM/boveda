@@ -12,6 +12,7 @@ La estructura de la raíz y de `core/` es la definitiva y debe seguirse desde ah
 boveda/
 ├── Cargo.toml              # workspace: core, mobile/rust, desktop/src-tauri
 ├── Cargo.lock
+├── rust-toolchain.toml     # versión fija de Rust; subirla es un commit propio
 ├── deny.toml               # reglas de cargo deny
 ├── .gitignore
 ├── .github/workflows/ci.yml
