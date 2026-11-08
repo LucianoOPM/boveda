@@ -26,7 +26,7 @@ pub use crate::error::{Error, InvalidEntryField, Result, StorageErrorKind};
 use entry::sealed::SealedEntry;
 pub use entry::{EntryId, SearchData, Secret};
 use header::VaultHeader;
-use storage::Storage;
+use storage::{Migration, Storage};
 
 /// Bóveda abierta sobre un archivo. No deriva `Debug`.
 ///
@@ -178,9 +178,33 @@ impl Vault {
             return Err(Error::AlreadyUnlocked);
         }
         let (key, upgraded) = self.storage.read_header()?.unlock_upgrading(password)?;
-        if let Some(header) = upgraded {
-            self.storage.migrate_header(&header)?;
-        }
+        self.finish_unlock(password, key, upgraded)
+    }
+
+    /// Segunda mitad de [`Vault::unlock`], después de derivar: migra si
+    /// hace falta y carga las entradas. Separada para que las pruebas
+    /// puedan intercalar otra `Vault` entre la derivación y la migración.
+    ///
+    /// Si otra conexión migró la cabecera mientras esta derivaba
+    /// ([`Migration::NotNeeded`]), no se sobrescribe nada: se vuelve a leer
+    /// la cabecera y se verifica `password` contra ella. Si esa otra
+    /// conexión cambió la contraseña, el resultado es
+    /// [`Error::WrongPassword`] y la contraseña nueva sigue valiendo.
+    fn finish_unlock(
+        &mut self,
+        password: &SecretString,
+        key: VaultKey,
+        upgraded: Option<VaultHeader>,
+    ) -> Result<UnlockReport> {
+        let key = match upgraded {
+            Some(header) => match self.storage.migrate_header(&header)? {
+                Migration::Done => key,
+                // La llave derivada de la cabecera vieja se suelta (y se
+                // borra); vale la que abre la cabecera actual.
+                Migration::NotNeeded => self.storage.read_header()?.unlock(password)?,
+            },
+            None => key,
+        };
         let (unlocked, report) = Self::load_entries(&self.storage, key)?;
         self.unlocked = Some(unlocked);
         Ok(report)

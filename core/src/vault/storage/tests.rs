@@ -922,3 +922,19 @@ fn replace_header_writes_key_check() {
     assert_eq!(stored.key_check(), rekeyed.key_check());
     assert_eq!(stored.verify_key(&key), Ok(()));
 }
+
+#[test]
+fn migrate_header_on_v2_does_nothing() {
+    let (_dir, path) = temp_path();
+    let (header, _) = new_header();
+    let mut storage = Storage::create(&path, &header).unwrap();
+    let before = fs::read(&path).unwrap();
+
+    let (other, _) = new_header();
+    assert_eq!(
+        storage.migrate_header(&other).unwrap(),
+        Migration::NotNeeded
+    );
+    drop(storage);
+    assert_eq!(fs::read(&path).unwrap(), before);
+}

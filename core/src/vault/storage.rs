@@ -82,6 +82,16 @@ CREATE TABLE entries (
 "
 );
 
+/// Resultado de [`Storage::migrate_header`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Migration {
+    /// La cabecera era de la versión 1 y quedó en la 2.
+    Done,
+    /// La cabecera ya no era de la versión 1 al abrir la transacción (otra
+    /// conexión la migró): no se tocó nada.
+    NotNeeded,
+}
+
 /// Conexión a la bóveda. No deriva `Debug`.
 pub(crate) struct Storage {
     conn: Connection,
@@ -338,11 +348,29 @@ impl Storage {
     /// `header` no tiene índices, triggers, vistas ni llaves foráneas que
     /// reconstruir. Si algo falla, la transacción se revierte y el archivo
     /// sigue siendo de la versión 1.
-    pub(crate) fn migrate_header(&mut self, header: &VaultHeader) -> Result<()> {
+    ///
+    /// Antes de tocar nada, ya con el candado de escritura, vuelve a leer
+    /// `format_version`: entre la lectura de la cabecera v1 y esta
+    /// transacción (Argon2id tarda) otra conexión pudo migrarla y cambiar la
+    /// contraseña. Si ya no es la versión 1, no escribe nada y devuelve
+    /// [`Migration::NotNeeded`]; quien llama decide cómo seguir. Sobrescribir
+    /// revertiría ese cambio de contraseña sin aviso.
+    pub(crate) fn migrate_header(&mut self, header: &VaultHeader) -> Result<Migration> {
         let tx = self
             .conn
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(map_sqlite_error)?;
+        let current: i64 = tx
+            .query_row(
+                "SELECT format_version FROM header WHERE id = 1",
+                [],
+                |row| row.get(0),
+            )
+            .map_err(map_sqlite_error)?;
+        if current != i64::from(FORMAT_VERSION_V1) {
+            // Al soltar `tx` sin confirmar, SQLite revierte (no hubo cambios).
+            return Ok(Migration::NotNeeded);
+        }
         tx.execute_batch(concat!(
             "CREATE TABLE header_v2 ",
             header_v2_columns!(),
@@ -363,7 +391,8 @@ impl Storage {
         if (version, key_check_len) != (i64::from(FORMAT_VERSION), KEY_CHECK_LEN as i64) {
             return Err(Error::Storage(StorageErrorKind::Corrupt));
         }
-        tx.commit().map_err(map_sqlite_error)
+        tx.commit().map_err(map_sqlite_error)?;
+        Ok(Migration::Done)
     }
 
     /// Copia consistente y compacta de la bóveda en `dest` con `VACUUM INTO`.

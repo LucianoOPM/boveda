@@ -18,7 +18,7 @@ use std::path::{Path, PathBuf};
 use secrecy::SecretString;
 
 use super::header::VaultHeader;
-use super::storage::{Storage, require_absolute};
+use super::storage::{Migration, Storage, require_absolute};
 use super::{UnlockReport, Unlocked, Vault};
 use crate::error::{Error, Result, StorageErrorKind};
 
@@ -76,7 +76,12 @@ pub(super) fn import(
     // segundo Argon2id.
     if let Some(header) = upgraded {
         let mut storage = Storage::open(&temp.0)?;
-        storage.migrate_header(&header)?;
+        // La copia temporal la creó esta llamada: si al migrar ya no es la
+        // versión 1, alguien la cambió después de validarla. No se instala
+        // algo distinto de lo validado; el guardián borra la copia.
+        if storage.migrate_header(&header)? == Migration::NotNeeded {
+            return Err(Error::Storage(StorageErrorKind::Corrupt));
+        }
         storage.close()?;
     }
 

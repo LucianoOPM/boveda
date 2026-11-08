@@ -1195,3 +1195,76 @@ fn failed_unlock_with_key_then_password_works() {
     vault.unlock(&password("correcta")).unwrap();
     assert_eq!(vault.entries().unwrap().len(), 1);
 }
+
+// --- Migración concurrente (#34, hallazgo de la revisión) -----------------
+
+/// Ejecuta la primera mitad de `unlock` en `vault` (leer la cabecera v1 y
+/// derivar), como si estuviera a mitad de Argon2id.
+fn derive_for_unlock(vault: &Vault, pw: &str) -> (VaultKey, Option<VaultHeader>) {
+    vault
+        .storage
+        .read_header()
+        .unwrap()
+        .unlock_upgrading(&password(pw))
+        .unwrap()
+}
+
+#[test]
+fn concurrent_migration_does_not_revert_password_change() {
+    let (_dir, path) = fixture_v1_copy();
+    let mut a = Vault::open(&path).unwrap();
+    let mut b = Vault::open(&path).unwrap();
+
+    // La A derivó con la cabecera v1; antes de que migre, la B migra y
+    // cambia la contraseña.
+    let (key, upgraded) = derive_for_unlock(&a, FIXTURE_V1_PASSWORD);
+    assert!(upgraded.is_some());
+    b.unlock(&password(FIXTURE_V1_PASSWORD)).unwrap();
+    b.change_master_password_with_params(
+        &password(FIXTURE_V1_PASSWORD),
+        &password("nueva"),
+        KdfParams::MIN,
+    )
+    .unwrap();
+    drop(b);
+
+    // La A termina: no sobrescribe la cabecera de la B.
+    assert_eq!(
+        a.finish_unlock(&password(FIXTURE_V1_PASSWORD), key, upgraded)
+            .err(),
+        Some(Error::WrongPassword)
+    );
+    assert!(a.is_locked());
+
+    // La contraseña nueva sigue abriendo y la vieja no.
+    a.unlock(&password("nueva")).unwrap();
+    assert_eq!(a.entries().unwrap().len(), 3);
+    a.lock();
+    assert_eq!(
+        a.unlock(&password(FIXTURE_V1_PASSWORD)).err(),
+        Some(Error::WrongPassword)
+    );
+}
+
+#[test]
+fn concurrent_migration_without_password_change_unlocks() {
+    let (_dir, path) = fixture_v1_copy();
+    let mut a = Vault::open(&path).unwrap();
+    let mut b = Vault::open(&path).unwrap();
+
+    let (key, upgraded) = derive_for_unlock(&a, FIXTURE_V1_PASSWORD);
+    b.unlock(&password(FIXTURE_V1_PASSWORD)).unwrap();
+    let check_from_b = b.storage.read_header().unwrap().key_check().copied();
+    drop(b);
+
+    let report = a
+        .finish_unlock(&password(FIXTURE_V1_PASSWORD), key, upgraded)
+        .unwrap();
+    assert!(report.corrupt.is_empty());
+    assert_eq!(a.entries().unwrap().len(), 3);
+    // La cabecera es la que escribió la B: la A no migró otra vez.
+    assert_eq!(
+        a.storage.read_header().unwrap().key_check().copied(),
+        check_from_b
+    );
+}
