@@ -35,6 +35,8 @@ Resultado: el crate `vault-core` crea, abre y respalda una bóveda cifrada, prob
 
 **Se cierra cuando** todas esas pruebas pasan en la integración continua.
 
+**Cerrada el 2026-11-07:** las nueve tareas están hechas y la integración continua pasa en `dev` (commit `fd75324`).
+
 ## Etapa 2 — App Android con respaldos
 
 Resultado: un gestor de contraseñas usable en tu celular, con búsqueda y respaldos, aunque todavía no envíe nada a la PC.
