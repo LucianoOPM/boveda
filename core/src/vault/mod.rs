@@ -121,8 +121,14 @@ impl Vault {
     /// Crea una bóveda nueva en `path` y la devuelve desbloqueada y vacía.
     ///
     /// Calibra Argon2id en este dispositivo. Una ruta que ya existe da
-    /// [`Error::AlreadyExists`] sin tocarla.
+    /// [`Error::AlreadyExists`] sin tocarla. `path` debe ser absoluta (si
+    /// no, `Storage(Io)`): el SQLite empaquetado interpretaría como URI una
+    /// ruta que empiece con `file:`.
     pub fn create(path: &Path, password: &SecretString) -> Result<Self> {
+        // La protección real está en `Storage::create`; esta comprobación
+        // solo sirve para fallar antes de calibrar (medio segundo y al
+        // menos 64 MiB) con una ruta que se va a rechazar igual.
+        storage::require_absolute(path)?;
         let params = kdf::calibrate()?;
         Self::create_with_params(path, password, params)
     }
@@ -145,7 +151,8 @@ impl Vault {
         })
     }
 
-    /// Abre una bóveda existente. La devuelve bloqueada.
+    /// Abre una bóveda existente. La devuelve bloqueada. `path` debe ser
+    /// absoluta (si no, `Storage(Io)`), como en [`Vault::create`].
     pub fn open(path: &Path) -> Result<Self> {
         Ok(Self {
             storage: Storage::open(path)?,

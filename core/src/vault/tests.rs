@@ -66,6 +66,55 @@ fn snapshot(vault: &Vault) -> Vec<Row> {
 
 fn assert_zod<T: ZeroizeOnDrop>() {}
 
+// --- Rutas relativas (#22) ----------------------------------------------
+
+/// `file:<relativa>?mode=ro`, con `/` como separador: una URI que SQLite
+/// interpretaría por `SQLITE_USE_URI`.
+///
+/// Los casos con esta URI son solo de regresión, no un rojo real: aun sin
+/// `require_absolute`, las comprobaciones previas de Rust fallan sobre el
+/// archivo literal `file:…`, que no existe. Reproducir el riesgo exigiría
+/// crear ese archivo literal bajo `core/` (en Windows ni siquiera es un
+/// nombre válido) o cambiar el directorio de trabajo, global al proceso.
+fn uri_of(relative: &Path) -> PathBuf {
+    let path = relative.to_str().unwrap().replace('\\', "/");
+    PathBuf::from(format!("file:{path}?mode=ro"))
+}
+
+#[test]
+fn create_with_relative_path_is_io_and_creates_nothing() {
+    let (_dir, absolute, relative) = relative_temp_path();
+    let io = Some(Error::Storage(StorageErrorKind::Io));
+
+    for path in [relative.clone(), uri_of(&relative)] {
+        assert_eq!(
+            Vault::create_with_params(&path, &password("correcta"), KdfParams::MIN).err(),
+            io
+        );
+        assert!(!absolute.exists());
+    }
+    // `Vault::create` también da `Storage(Io)`. La comprobación temprana
+    // busca evitar la calibración; esta prueba no lo verifica (sin ella,
+    // `Storage::create` daría el mismo error después de calibrar).
+    assert_eq!(Vault::create(&relative, &password("correcta")).err(), io);
+    assert!(!absolute.exists());
+}
+
+#[test]
+fn open_with_relative_path_is_io_and_keeps_vault() {
+    let (_dir, absolute, relative) = relative_temp_path();
+    drop(Vault::create_with_params(&absolute, &password("correcta"), KdfParams::MIN).unwrap());
+    let before = fs::read(&absolute).unwrap();
+
+    for path in [relative.clone(), uri_of(&relative)] {
+        assert_eq!(
+            Vault::open(&path).err(),
+            Some(Error::Storage(StorageErrorKind::Io))
+        );
+        assert_eq!(fs::read(&absolute).unwrap(), before);
+    }
+}
+
 // --- create, open, unlock, lock, entries y add --------------------------
 
 #[test]

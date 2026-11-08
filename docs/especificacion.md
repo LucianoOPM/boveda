@@ -128,6 +128,7 @@ Decisiones tomadas el 2026-11-07 (detalle en `docs/superpowers/specs/2026-11-07-
 - En cada apertura de lectura y escritura se fijan `secure_delete = ON`, `journal_mode = DELETE` y `synchronous = FULL`, después de validar `format_version`: una bóveda de versión futura se rechaza sin cambiarle el modo de diario. La apertura en solo lectura (para validar un respaldo) no los fija: rechaza un archivo en WAL o con un `-journal` caliente, y nunca lo repara.
 - Las filas eliminadas son lápidas: `deleted = 1`, `modified_at` actualizado y las dos partes cifradas en `NULL`. Un `CHECK` impide una entrada viva sin partes y una lápida con partes. Una lápida nunca cuenta como entrada dañada.
 - Una fila con un id que no mide 16 bytes o una versión fuera de `u16` cuenta como entrada dañada y falla sola.
+- Decidido el 2026-11-07 (#22): todas las rutas de la API pública deben ser absolutas; una relativa da `Storage(Io)` sin crear ni modificar nada. El SQLite empaquetado de `rusqlite` se compila con `SQLITE_USE_URI`, así que una ruta que empiece con `file:` se interpretaría como URI (con parámetros como `?mode=`) aunque la conexión no use `SQLITE_OPEN_URI`: las comprobaciones previas tocarían el archivo literal y SQLite abriría otro. Una ruta absoluta no puede empezar así. La comprobación vive en el almacenamiento (`create`, `open`, la apertura en solo lectura y `VACUUM INTO`, que también acepta URIs); `export` e `import` la repiten al principio, antes de tocar el disco.
 
 Esquema de la versión de formato 1:
 
@@ -168,6 +169,7 @@ CREATE TABLE entries (
 - `reveal()` actualiza `last_used_at` como mejor esfuerzo: si la escritura en disco falla, devuelve el secreto igual.
 - `change_master_password` verifica la contraseña actual antes de calibrar y solo vuelve a cifrar la llave de bóveda, con sal y nonce nuevos.
 - `create` sobre una ruta que ya existe devuelve `Error::AlreadyExists`. Un reloj anterior a 1970 devuelve `Error::Clock`.
+- Decidido el 2026-11-07 (#22): todas las rutas de la API pública deben ser absolutas (`create`, `open`, `export` e `import`); una relativa da `Storage(Io)` (motivo en "Almacenamiento"). `create` la rechaza antes de calibrar Argon2id.
 - Como `rusqlite::Connection` no es `Sync`, el `Mutex` vive en la fachada de `mobile/rust`, no en el núcleo.
 
 **Entradas dañadas.** `unlock()` devuelve en su `UnlockReport` los identificadores de las entradas con la fila ilegible o con los datos de búsqueda dañados, y el número de filas dañadas sin un identificador válido, sin fallar por ellas. Los secretos no se descifran al desbloquear, así que un secreto dañado no aparece en el `UnlockReport`: `reveal()` sobre esa entrada devuelve `CorruptEntry`. Ambos casos tienen su prueba: alterar un byte de una sola entrada y comprobar que el resto abre, y que `reveal()` de la dañada devuelve ese error.
@@ -185,7 +187,7 @@ Decisiones tomadas el 2026-11-07 (detalle en `docs/superpowers/specs/2026-11-07-
 - `Vault::import(backup, dest, password)` es una función asociada, como `create`: sirve para restaurar sobre una bóveda existente y en un celular nuevo. Quien llama suelta antes su `Vault` sobre `dest` y, si la importación falla, la vuelve a abrir. La contraseña es la del respaldo. Devuelve la bóveda importada, desbloqueada, con su `UnlockReport`.
 - Se valida una copia temporal junto a `dest`: se abre en solo lectura, se revisa con `PRAGMA integrity_check`, se desbloquea y se descifran los datos de búsqueda. Las entradas con la fila ilegible o con los datos de búsqueda dañados se reportan y no impiden importar. Después la copia se renombra sobre `dest`. Los secretos no se descifran al importar: uno dañado aparece al usar `reveal()`, con `CorruptEntry`. Es intencional: un secreto se descifra solo al copiar, mostrar o enviar, y validarlos al importar pondría todas las contraseñas en memoria a la vez.
 - Si `dest` tiene un `-journal` o un `-wal` (un cierre forzado), se aplica abriéndola antes de reemplazarla; si no se puede abrir, no se reemplaza nada. Reemplazar una base sin su diario caliente la corrompería al aplicarlo sobre el respaldo. Si `dest` no existe, sus `-journal`, `-wal` y `-shm` son huérfanos: se borran antes de instalar el respaldo, porque no hay base que revertir y SQLite aplicaría el diario o el `-wal` viejo sobre el respaldo.
-- `export` e `import` exigen rutas absolutas: el SQLite empaquetado se compila con `SQLITE_USE_URI`, y una ruta que empiece con `file:` se interpretaría como URI.
+- `export` e `import` exigen rutas absolutas, como toda la API pública (ver "Almacenamiento").
 - Único punto sin vuelta atrás: si falla la apertura final, `dest` ya es el respaldo validado y se puede reintentar con `Vault::open`.
 
 **Búsqueda.** `Vault::search(query)` sobre la caché de datos de búsqueda descifrados; nunca toca el secreto ni el disco. Decisiones tomadas el 2026-11-07 (detalle en `docs/superpowers/specs/2026-11-07-busqueda-design.md`):

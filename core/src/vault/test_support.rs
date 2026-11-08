@@ -19,6 +19,34 @@ pub(crate) fn temp_path() -> (tempfile::TempDir, PathBuf) {
     (dir, path)
 }
 
+/// Directorio temporal único dentro de `<workspace>/target` (misma unidad
+/// que el repositorio, ignorado por git) y la ruta `boveda.db` en él, en
+/// dos formas: absoluta y relativa al directorio de trabajo de las pruebas
+/// (`core/`), por ejemplo `../target/boveda-rel-XXXX/boveda.db`.
+///
+/// No usa `set_current_dir`, que es global al proceso. Tampoco sigue
+/// `CARGO_TARGET_DIR`: si el `target` real está en otra parte, igual crea
+/// `<workspace>/target` (ignorado por git), donde queda vacío al terminar.
+pub(crate) fn relative_temp_path() -> (tempfile::TempDir, PathBuf, PathBuf) {
+    let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let root = manifest.parent().unwrap();
+    let target = root.join("target");
+    fs::create_dir_all(&target).unwrap();
+    let dir = tempfile::Builder::new()
+        .prefix("boveda-rel-")
+        .tempdir_in(&target)
+        .unwrap();
+    let absolute = dir.path().join("boveda.db");
+    let relative = Path::new("..").join(absolute.strip_prefix(root).unwrap());
+    assert!(relative.is_relative());
+    // Las pruebas corren con `core/` como directorio de trabajo.
+    assert_eq!(
+        fs::canonicalize(".").unwrap(),
+        fs::canonicalize(manifest).unwrap()
+    );
+    (dir, absolute, relative)
+}
+
 /// Conexión directa, para leer pragmas y escribir o alterar filas.
 pub(crate) fn raw(path: &Path) -> rusqlite::Connection {
     rusqlite::Connection::open(path).unwrap()

@@ -319,6 +319,34 @@ fn read_only_rejects_writes() {
 }
 
 #[test]
+fn open_read_only_with_relative_path_is_io_and_keeps_vault() {
+    let (_dir, absolute, relative) = relative_temp_path();
+    let (header, _) = new_header();
+    Storage::create(&absolute, &header)
+        .unwrap()
+        .close()
+        .unwrap();
+    let before = fs::read(&absolute).unwrap();
+
+    assert_eq!(
+        Storage::open_read_only(&relative).err(),
+        Some(Error::Storage(StorageErrorKind::Io))
+    );
+    assert_eq!(fs::read(&absolute).unwrap(), before);
+}
+
+/// En Windows, `C:boveda.db` (relativa a la unidad) y `\boveda.db`
+/// (relativa a la raíz de la unidad actual) no son absolutas.
+#[cfg(windows)]
+#[test]
+fn require_absolute_rejects_windows_partial_paths() {
+    let io = Err(Error::Storage(StorageErrorKind::Io));
+    assert_eq!(require_absolute(Path::new(r"C:boveda.db")), io);
+    assert_eq!(require_absolute(Path::new(r"\boveda.db")), io);
+    assert_eq!(require_absolute(Path::new(r"C:\boveda.db")), Ok(()));
+}
+
+#[test]
 fn open_read_only_rejects_wal() {
     let (_dir, path, storage) = new_vault();
     storage.close().unwrap();
@@ -795,6 +823,18 @@ fn format_version_out_of_u16_is_corrupt() {
 }
 
 // --- Respaldos (#9) ----------------------------------------------------
+
+#[test]
+fn vacuum_into_relative_path_is_io_and_creates_nothing() {
+    let (_vault_dir, _path, storage) = new_vault();
+    let (_dir, absolute, relative) = relative_temp_path();
+
+    assert_eq!(
+        storage.vacuum_into(&relative),
+        Err(Error::Storage(StorageErrorKind::Io))
+    );
+    assert!(!absolute.exists());
+}
 
 #[test]
 fn vacuum_into_copies_with_synchronous_full() {
