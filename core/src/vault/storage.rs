@@ -151,10 +151,6 @@ impl Storage {
     /// No fija pragmas (cambiar `journal_mode` es escribir): solo comprueba
     /// que el modo sea `delete`. Un archivo en WAL o con un `-journal`
     /// caliente se rechaza y nunca se repara.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "lo usará la importación de respaldos")
-    )]
     pub(crate) fn open_read_only(path: &Path) -> Result<Self> {
         // Leer una base en WAL, aun en solo lectura, crea los archivos `-wal`
         // y `-shm`. Por eso el modo se revisa en la cabecera del archivo
@@ -182,10 +178,6 @@ impl Storage {
     }
 
     /// Cierra la conexión sin perder un error al cerrar.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "lo usará la importación de respaldos")
-    )]
     pub(crate) fn close(self) -> Result<()> {
         self.conn.close().map_err(|(_, e)| map_sqlite_error(e))
     }
@@ -285,6 +277,34 @@ impl Storage {
             return Err(Error::Storage(StorageErrorKind::Corrupt));
         }
         tx.commit().map_err(map_sqlite_error)
+    }
+
+    /// Copia consistente y compacta de la bóveda en `dest` con `VACUUM INTO`.
+    /// `dest` debe no existir o estar vacío. La ruta va como parámetro,
+    /// nunca dentro del SQL; una que no es UTF-8 da `Storage(Io)`.
+    pub(crate) fn vacuum_into(&self, dest: &Path) -> Result<()> {
+        let dest = dest.to_str().ok_or(Error::Storage(StorageErrorKind::Io))?;
+        self.conn
+            .execute("VACUUM INTO ?1", [dest])
+            .map_err(map_sqlite_error)?;
+        Ok(())
+    }
+
+    /// `PRAGMA integrity_check`: páginas, registros, `CHECK`, `NOT NULL` y
+    /// unicidad de la llave primaria. Con `(1)` se detiene en el primer
+    /// problema; sin problemas devuelve una sola fila `ok`. El mensaje de
+    /// error se descarta sin mostrarlo: cualquier otra respuesta da
+    /// `Storage(Corrupt)`.
+    pub(crate) fn check_integrity(&self) -> Result<()> {
+        let result: String = self
+            .conn
+            .query_row("PRAGMA integrity_check(1)", [], |row| row.get(0))
+            .map_err(map_sqlite_error)?;
+        if result == "ok" {
+            Ok(())
+        } else {
+            Err(Error::Storage(StorageErrorKind::Corrupt))
+        }
     }
 
     /// Guarda una entrada nueva con `modified_at = now` y sin uso registrado.

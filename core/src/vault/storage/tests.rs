@@ -10,20 +10,10 @@ use crate::crypto::aead::EncryptedPart;
 use crate::crypto::kdf::KdfParams;
 use crate::crypto::keys::VaultKey;
 use crate::vault::entry::{ENTRY_SCHEMA_VERSION, EntryId};
-
-fn password(text: &str) -> SecretString {
-    SecretString::from(text)
-}
+use crate::vault::test_support::*;
 
 fn new_header() -> (VaultHeader, VaultKey) {
     VaultHeader::create(&password("correcta"), KdfParams::MIN).unwrap()
-}
-
-/// Directorio temporal (debe vivir toda la prueba) y una ruta que no existe.
-fn temp_path() -> (tempfile::TempDir, PathBuf) {
-    let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("boveda.db");
-    (dir, path)
 }
 
 fn new_vault() -> (tempfile::TempDir, PathBuf, Storage) {
@@ -31,11 +21,6 @@ fn new_vault() -> (tempfile::TempDir, PathBuf, Storage) {
     let (header, _) = new_header();
     let storage = Storage::create(&path, &header).unwrap();
     (dir, path, storage)
-}
-
-/// Conexión directa, para leer pragmas y escribir filas anómalas.
-fn raw(path: &Path) -> rusqlite::Connection {
-    rusqlite::Connection::open(path).unwrap()
 }
 
 fn journal_mode(conn: &rusqlite::Connection) -> String {
@@ -272,13 +257,6 @@ fn read_only_rejects_writes() {
     assert_eq!(fs::read(&path).unwrap(), before);
 }
 
-/// Ruta con un sufijo agregado al nombre del archivo (`-journal`, `-wal`...).
-fn sibling(path: &Path, suffix: &str) -> PathBuf {
-    let mut name = path.as_os_str().to_owned();
-    name.push(suffix);
-    PathBuf::from(name)
-}
-
 #[test]
 fn open_read_only_rejects_wal() {
     let (_dir, path, storage) = new_vault();
@@ -297,33 +275,6 @@ fn open_read_only_rejects_wal() {
     assert_eq!(fs::read(&path).unwrap(), before);
     assert!(!sibling(&path, "-wal").exists());
     assert!(!sibling(&path, "-shm").exists());
-}
-
-/// Copia `src` a `dst` en mitad de una transacción que ya escribió páginas
-/// en el archivo, junto con su `-journal`: la copia queda con un diario
-/// caliente, como tras un corte de energía.
-fn make_hot_journal_copy(src: &Path, dst: &Path) {
-    let conn = raw(src);
-    conn.pragma_update(None, "cache_size", 1).unwrap();
-    conn.execute_batch("BEGIN IMMEDIATE").unwrap();
-    let part = vec![0xAB_u8; 4096];
-    for i in 0..200_u32 {
-        let mut id = [0_u8; 16];
-        id[..4].copy_from_slice(&i.to_le_bytes());
-        conn.execute(
-            "INSERT INTO entries (id, entry_schema_version, search, secret, modified_at) \
-             VALUES (?1, 1, ?2, ?2, 0)",
-            rusqlite::params![id.as_slice(), part.as_slice()],
-        )
-        .unwrap();
-    }
-    fs::copy(src, dst).unwrap();
-    fs::copy(sibling(src, "-journal"), sibling(dst, "-journal")).unwrap();
-    conn.execute_batch("ROLLBACK").unwrap();
-    drop(conn);
-
-    let journal = fs::metadata(sibling(dst, "-journal")).unwrap();
-    assert!(journal.len() > 512, "el diario copiado no está caliente");
 }
 
 #[test]
@@ -626,36 +577,13 @@ fn damaged_entries_page_is_storage_corrupt() {
             .unwrap();
     }
     storage.close().unwrap();
-    let (page_size, root_page): (i64, i64) = {
-        let conn = raw(&path);
-        let page_size = conn
-            .pragma_query_value(None, "page_size", |row| row.get(0))
-            .unwrap();
-        let root_page = conn
-            .query_row(
-                "SELECT rootpage FROM sqlite_schema WHERE name = 'entries'",
-                [],
-                |row| row.get(0),
-            )
-            .unwrap();
-        (page_size, root_page)
-    };
-    assert!(root_page > 1);
-
-    let mut bytes = fs::read(&path).unwrap();
-    let offset = usize::try_from((root_page - 1) * page_size).unwrap();
-    bytes[offset..offset + 8].fill(0xFF);
-    fs::write(&path, bytes).unwrap();
+    damage_entries_root_page(&path);
 
     let storage = Storage::open(&path).unwrap();
     assert_eq!(
         storage.list_entries().err(),
         Some(Error::Storage(StorageErrorKind::Corrupt))
     );
-}
-
-fn contains(haystack: &[u8], needle: &[u8]) -> bool {
-    haystack.windows(needle.len()).any(|w| w == needle)
 }
 
 #[test]
@@ -781,5 +709,60 @@ fn format_version_out_of_u16_is_corrupt() {
     assert_eq!(
         Storage::open(&path).err(),
         Some(Error::Storage(StorageErrorKind::Corrupt))
+    );
+}
+
+// --- Respaldos (#9) ----------------------------------------------------
+
+#[test]
+fn vacuum_into_copies_with_synchronous_full() {
+    let (dir, _path, mut storage) = new_vault();
+    storage
+        .insert_entry(&fake_entry(1, b"b1", b"s1"), T1)
+        .unwrap();
+    storage
+        .insert_entry(&fake_entry(2, b"b2", b"s2"), T1)
+        .unwrap();
+    // Con `synchronous = FULL`, SQLite hace el fsync del archivo generado
+    // por `VACUUM INTO` (lang_vacuum.html). Si esto cambia, hay que
+    // sincronizar el respaldo a mano.
+    let synchronous: i64 = storage
+        .conn
+        .pragma_query_value(None, "synchronous", |row| row.get(0))
+        .unwrap();
+    assert_eq!(synchronous, 2);
+
+    let dest = dir.path().join("respaldo.db");
+    fs::File::create(&dest).unwrap();
+    storage.vacuum_into(&dest).unwrap();
+
+    let copy = Storage::open_read_only(&dest).unwrap();
+    let listing = copy.list_entries().unwrap();
+    assert_eq!(listing.entries.len(), 2);
+    let one = copy.get_entry(EntryId::from_bytes([1; 16])).unwrap();
+    assert_parts(&one, b"b1", b"s1");
+}
+
+#[test]
+fn check_integrity_ok_on_new_vault() {
+    let (_dir, _path, storage) = new_vault();
+    assert_eq!(storage.check_integrity(), Ok(()));
+}
+
+#[test]
+fn check_integrity_detects_damaged_page() {
+    let (_dir, path, mut storage) = new_vault();
+    for i in 1..=3 {
+        storage
+            .insert_entry(&fake_entry(i, b"b", b"s"), T1)
+            .unwrap();
+    }
+    storage.close().unwrap();
+    damage_entries_root_page(&path);
+
+    let storage = Storage::open_read_only(&path).unwrap();
+    assert_eq!(
+        storage.check_integrity(),
+        Err(Error::Storage(StorageErrorKind::Corrupt))
     );
 }

@@ -89,7 +89,7 @@ Los miembros del workspace se agregan conforme existen: `core` en la etapa 1, `m
 | Módulo | Responsabilidad |
 | --- | --- |
 | `crypto/` | Argon2id (`kdf.rs`); generar la llave de bóveda, derivar la llave maestra y cifrar o descifrar con ella la llave de bóveda (`keys.rs`); cifrar y descifrar cada parte de una entrada con XChaCha20-Poly1305 y su dato autenticado (`aead.rs`) |
-| `vault/` | API de la bóveda (`mod.rs`, estructura `Vault`); cabecera: codificarla como dato autenticado, leerla y validarla (`header.rs`); modelo de entrada (`entry.rs`) y entrada cifrada (`entry/sealed.rs`), almacenamiento SQLite con lápidas para las eliminadas (`storage.rs`), respaldos |
+| `vault/` | API de la bóveda (`mod.rs`, estructura `Vault`); cabecera: codificarla como dato autenticado, leerla y validarla (`header.rs`); modelo de entrada (`entry.rs`) y entrada cifrada (`entry/sealed.rs`), almacenamiento SQLite con lápidas para las eliminadas (`storage.rs`), respaldos: exportar con `VACUUM INTO` e importar validando una copia temporal (`backup.rs`) |
 | `search.rs` | Búsqueda tolerante a errores sobre los datos de búsqueda |
 | `protocol/` | Identidades X25519, emparejamiento y envío con Noise (`snow`), descubrimiento mDNS |
 

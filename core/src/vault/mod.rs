@@ -1,5 +1,5 @@
-//! Bóveda: cabecera, entradas, almacenamiento y la API pública `Vault`.
-//! Los respaldos llegan más adelante.
+//! Bóveda: cabecera, entradas, almacenamiento, respaldos y la API pública
+//! `Vault`.
 //!
 //! `Vault` guarda la conexión al archivo y, mientras está desbloqueada, la
 //! llave de bóveda junto con los datos de búsqueda descifrados. Ambos viven
@@ -15,9 +15,12 @@ use zeroize::ZeroizeOnDrop;
 use crate::crypto::kdf::{self, KdfParams};
 use crate::crypto::keys::VaultKey;
 
+mod backup;
 pub(crate) mod entry;
 pub(crate) mod header;
 pub(crate) mod storage;
+#[cfg(test)]
+pub(crate) mod test_support;
 
 pub use crate::error::{Error, InvalidEntryField, Result, StorageErrorKind};
 use entry::sealed::SealedEntry;
@@ -156,7 +159,16 @@ impl Vault {
             return Err(Error::AlreadyUnlocked);
         }
         let key = self.storage.read_header()?.unlock(password)?;
-        let listing = self.storage.list_entries()?;
+        let (unlocked, report) = Self::load_entries(&self.storage, key)?;
+        self.unlocked = Some(unlocked);
+        Ok(report)
+    }
+
+    /// Lista las entradas vivas de `storage` y descifra sus datos de
+    /// búsqueda con `key`. Las que no se pueden descifrar van al reporte,
+    /// sin fallar. La usan `unlock` y la importación de respaldos.
+    fn load_entries(storage: &Storage, key: VaultKey) -> Result<(Unlocked, UnlockReport)> {
+        let listing = storage.list_entries()?;
 
         let mut corrupt = listing.corrupt;
         let mut entries = Vec::with_capacity(listing.entries.len());
@@ -172,11 +184,11 @@ impl Vault {
             }
         }
 
-        self.unlocked = Some(Unlocked { key, entries });
-        Ok(UnlockReport {
+        let report = UnlockReport {
             corrupt,
             unidentified_corrupt: listing.unidentified_corrupt,
-        })
+        };
+        Ok((Unlocked { key, entries }, report))
     }
 
     /// Bloquea: borra de memoria la llave de bóveda y los datos de búsqueda.
@@ -288,6 +300,43 @@ impl Vault {
             let _ = self.storage.touch_entry(id, now);
         }
         Ok(secret)
+    }
+
+    /// Exporta un respaldo: una copia consistente de la bóveda en `dest`,
+    /// con su cabecera, que abre con la misma contraseña maestra.
+    ///
+    /// Exige la bóveda desbloqueada ([`Error::Locked`]), para que nadie
+    /// exporte sin que el usuario esté presente. `dest` debe ser absoluta
+    /// (si no, `Storage(Io)`) y no existir ([`Error::AlreadyExists`]). Las
+    /// partes cifradas de las entradas eliminadas no viajan.
+    pub fn export(&self, dest: &Path) -> Result<()> {
+        self.unlocked()?;
+        backup::export(&self.storage, dest)
+    }
+
+    /// Importa el respaldo `backup` sobre `dest`, exista o no (un celular
+    /// nuevo no tiene bóveda), y devuelve la bóveda importada desbloqueada
+    /// con su [`UnlockReport`].
+    ///
+    /// `password` es la contraseña maestra del respaldo, que puede ser
+    /// distinta de la actual. Antes de reemplazar nada, una copia temporal
+    /// junto a `dest` se abre en solo lectura, se revisa su integridad, se
+    /// desbloquea y se descifran sus datos de búsqueda. Si algo falla,
+    /// `dest` queda intacta. Las entradas dañadas no impiden importar: se
+    /// reportan como en [`Vault::unlock`].
+    ///
+    /// Quien llama debe soltar antes cualquier `Vault` abierta sobre `dest`
+    /// y, si la importación falla, volver a abrirla con [`Vault::open`].
+    /// Ambas rutas deben ser absolutas (si no, `Storage(Io)`).
+    ///
+    /// Único caso sin vuelta atrás: si falla la apertura final, `dest` ya
+    /// es el respaldo validado; se puede reintentar con [`Vault::open`].
+    pub fn import(
+        backup: &Path,
+        dest: &Path,
+        password: &SecretString,
+    ) -> Result<(Self, UnlockReport)> {
+        backup::import(backup, dest, password)
     }
 
     /// Cambia la contraseña maestra: verifica `current`, calibra Argon2id y
