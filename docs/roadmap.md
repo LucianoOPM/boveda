@@ -1,6 +1,6 @@
 # Roadmap al MVP: gestor de contraseñas
 
-Actualizado: 2026-11-07
+Actualizado: 2026-11-08
 
 Cuatro etapas llevan del repositorio vacío al MVP; cada una termina en algo que ya funciona y tiene un criterio claro para darla por cerrada.
 
@@ -76,7 +76,7 @@ Resultado: el MVP completo, con el flujo diario reducido a segundos y los ajuste
 
 - [ ] Deslizar una entrada de la lista para enviarla a la PC sin abrirla.
 - [ ] Generador de contraseñas con longitud y tipos de caracteres configurables.
-- [ ] Pedir la contraseña maestra cada 7 días aunque se use huella.
+- [ ] Pedir la contraseña maestra cada 7 días aunque se use huella. Incluye guardar la fecha del último desbloqueo con contraseña fuera de la bóveda (movido desde la #38); sin fecha, se pide la contraseña.
 - [ ] Ajustes: tiempo de bloqueo automático y cambio de contraseña maestra.
 - [ ] Invitación a hacer el primer respaldo al terminar el primer uso.
 - [ ] Revisión final: `cargo audit` y `cargo deny` limpios, y una restauración completa de respaldo con tus datos reales.
