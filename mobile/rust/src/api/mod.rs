@@ -1,5 +1,6 @@
 //! Funciones y tipos expuestos a Dart. Un archivo por área.
 
+pub mod entries;
 pub mod error;
 pub mod session;
 

@@ -4,17 +4,31 @@
 // ignore_for_file: invalid_use_of_internal_member, unused_import, unnecessary_import
 
 import '../frb_generated.dart';
+import 'entries.dart';
 import 'error.dart';
 
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
-// These functions are ignored because they are not marked as `pub`: `entry_id_to_hex`, `secret_from`, `slot`, `with_vault`
+// These functions are ignored because they are not marked as `pub`: `secret_from`, `slot`, `with_vault`
 // These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `clone`, `eq`, `fmt`, `from`
 
 // Rust type: RustOpaqueMoi<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<VaultSession>>
 abstract class VaultSession implements RustOpaqueInterface {
+  /// Agrega una entrada y devuelve su id.
+  Future<String> add({required EntryInput input, required NewSecret secret});
+
   /// Crea la bóveda y la deja desbloqueada. Calibra Argon2id.
   Future<void> create({required String password});
+
+  Future<void> delete({required String id});
+
+  /// Reemplaza los datos de búsqueda. Con `new_secret` en `None` conserva
+  /// el secreto (no sale del núcleo); con `Some`, lo reemplaza.
+  Future<void> edit({
+    required String id,
+    required EntryInput input,
+    NewSecret? newSecret,
+  });
 
   /// `true` también sin bóveda.
   Future<bool> isLocked();
@@ -29,6 +43,18 @@ abstract class VaultSession implements RustOpaqueInterface {
 
   /// Abre la bóveda existente; queda bloqueada.
   Future<void> open();
+
+  /// Notas de una entrada, para mostrarlas. La contraseña se descarta sin
+  /// salir del núcleo.
+  Future<String?> revealNotes({required String id});
+
+  /// Contraseña de una entrada, para mostrarla o copiarla. Las notas se
+  /// descartan sin salir del núcleo.
+  Future<String> revealPassword({required String id});
+
+  /// Entradas que coinciden con `query`, la mejor primero. Sin texto,
+  /// todas: las usadas más recientemente primero.
+  Future<List<EntrySummary>> search({required String query});
 
   Future<UnlockReport> unlock({required String password});
 }

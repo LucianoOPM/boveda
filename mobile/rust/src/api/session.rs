@@ -14,9 +14,10 @@ use std::sync::{Mutex, MutexGuard};
 
 use flutter_rust_bridge::frb;
 use secrecy::SecretString;
-use vault_core::vault::{self, EntryId, Vault};
+use vault_core::vault::{self, Vault};
 use zeroize::Zeroize;
 
+use super::entries::entry_id_to_hex;
 use super::error::{FacadeResult, VaultError};
 
 /// Sesión sobre la bóveda de una ruta fija. Empieza sin bóveda.
@@ -121,11 +122,6 @@ pub(crate) fn secret_from(mut text: String) -> SecretString {
     let secret = SecretString::from(text.as_str());
     text.zeroize();
     secret
-}
-
-/// Id de entrada en 32 caracteres hexadecimales en minúsculas.
-pub(crate) fn entry_id_to_hex(id: EntryId) -> String {
-    id.as_bytes().iter().map(|b| format!("{b:02x}")).collect()
 }
 
 #[cfg(test)]
