@@ -109,3 +109,67 @@ fn create_with_short_password_fails_and_leaves_no_vault() {
     );
     assert!(!path.exists());
 }
+
+/// Convierte un id de la fachada (32 caracteres hexadecimales) a sus bytes.
+fn id_bytes(id: &str) -> Vec<u8> {
+    (0..id.len())
+        .step_by(2)
+        .map(|i| u8::from_str_radix(&id[i..i + 2], 16).unwrap())
+        .collect()
+}
+
+#[test]
+fn unlock_reports_corrupt_entry_and_rest_still_opens() {
+    let (_dir, path) = fixture_copy();
+
+    // Ids de las entradas vivas, leídos con una sesión que después se suelta.
+    let entries = {
+        let session = VaultSession::new(path_string(&path));
+        session.open().unwrap();
+        session.unlock(FIXTURE_PASSWORD.into()).unwrap();
+        session.search(String::new()).unwrap()
+    };
+    assert!(entries.len() >= 2, "hacen falta dos entradas vivas");
+    let banco_id = entries
+        .iter()
+        .find(|e| e.service == "Banco")
+        .unwrap()
+        .id
+        .clone();
+
+    // Altera un bit de los datos de búsqueda de `Banco`, solo en la copia.
+    {
+        let conn = rusqlite::Connection::open(&path).unwrap();
+        let id = id_bytes(&banco_id);
+        let mut blob: Vec<u8> = conn
+            .query_row("SELECT search FROM entries WHERE id = ?1", [&id], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        blob[30] ^= 1;
+        conn.execute(
+            "UPDATE entries SET search = ?1 WHERE id = ?2",
+            rusqlite::params![blob, id],
+        )
+        .unwrap();
+    }
+
+    let session = VaultSession::new(path_string(&path));
+    session.open().unwrap();
+    assert_eq!(
+        session.unlock(FIXTURE_PASSWORD.into()),
+        Ok(UnlockReport {
+            corrupt: vec![banco_id],
+            unidentified_corrupt: 0
+        })
+    );
+    let services: Vec<String> = session
+        .search(String::new())
+        .unwrap()
+        .into_iter()
+        .map(|e| e.service)
+        .collect();
+    assert_eq!(services.len(), 2);
+    assert!(services.contains(&"Correo Electrónico".to_owned()));
+    assert!(services.contains(&"Nube".to_owned()));
+}
