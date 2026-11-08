@@ -107,7 +107,6 @@ class BiometricVault(private val activity: Activity) {
             deleteAll()
             Cipher.getInstance(TRANSFORMATION).apply {
                 init(Cipher.ENCRYPT_MODE, createKey())
-                updateAAD(byteArrayOf(FILE_VERSION))
             }
         } catch (_: Exception) {
             deleteAll()
@@ -125,6 +124,10 @@ class BiometricVault(private val activity: Activity) {
         pendingCipher = null
         try {
             if (cipher == null || key == null) throw IllegalStateException()
+            // Después de la huella: con una llave que exige autenticación en
+            // cada uso, keystore2 rechaza `updateAad` antes de autenticar
+            // (KEY_USER_NOT_AUTHENTICATED) y aborta la operación.
+            cipher.updateAAD(byteArrayOf(FILE_VERSION))
             val ciphertext = cipher.doFinal(key)
             if (ciphertext.size != CIPHERTEXT_LEN || cipher.iv.size != IV_LEN) {
                 throw IllegalStateException()
@@ -170,7 +173,6 @@ class BiometricVault(private val activity: Activity) {
                 ?: return reply.error(INVALIDATED)
             Cipher.getInstance(TRANSFORMATION).apply {
                 init(Cipher.DECRYPT_MODE, key, GCMParameterSpec(TAG_BITS, iv))
-                updateAAD(byteArrayOf(FILE_VERSION))
             }
         } catch (_: KeyPermanentlyInvalidatedException) {
             return reply.error(INVALIDATED)
@@ -179,6 +181,8 @@ class BiometricVault(private val activity: Activity) {
         }
         prompt("Desbloquear Bóveda", "Usar contraseña", cipher, reply, onError = {}) {
             val plain = try {
+                // Después de la huella, como en `completeEnable`.
+                it.updateAAD(byteArrayOf(FILE_VERSION))
                 it.doFinal(ciphertext)
             } catch (_: AEADBadTagException) {
                 return@prompt reply.error(INVALIDATED)
