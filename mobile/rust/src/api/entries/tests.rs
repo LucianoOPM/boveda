@@ -175,3 +175,69 @@ fn locked_session_gives_locked() {
     session.lock().unwrap();
     assert_eq!(session.search(String::new()), Err(VaultError::Locked));
 }
+
+// El secreto se convierte (y el `String` recibido se borra) antes de
+// cualquier validación que pueda fallar: con datos y secreto inválidos, el
+// error que sale es el del secreto.
+#[test]
+fn add_converts_secret_before_validating_search_data() {
+    let (_dir, session) = unlocked_fixture();
+    assert_eq!(
+        session.add(input("   "), secret("")),
+        Err(VaultError::InvalidEntryPasswordEmpty)
+    );
+}
+
+#[test]
+fn edit_converts_secret_before_reading_id() {
+    let (_dir, session) = unlocked_fixture();
+    assert_eq!(
+        session.edit("no-es-un-id".into(), input("   "), Some(secret(""))),
+        Err(VaultError::InvalidEntryPasswordEmpty)
+    );
+}
+
+/// Cada operación que necesita la bóveda abierta y desbloqueada, con un id
+/// válido del fixture.
+fn every_operation(
+    session: &VaultSession,
+    id: &str,
+) -> Vec<(&'static str, Result<(), VaultError>)> {
+    let dest = std::env::temp_dir().join("boveda-no-se-crea.db");
+    vec![
+        ("search", session.search(String::new()).map(drop)),
+        ("add", session.add(input("X"), secret("clave")).map(drop)),
+        ("edit", session.edit(id.into(), input("X"), None)),
+        ("delete", session.delete(id.into())),
+        (
+            "reveal_password",
+            session.reveal_password(id.into()).map(drop),
+        ),
+        ("reveal_notes", session.reveal_notes(id.into()).map(drop)),
+        (
+            "export_backup",
+            session.export_backup(dest.to_str().unwrap().into()),
+        ),
+    ]
+}
+
+#[test]
+fn every_operation_without_vault_gives_no_vault() {
+    let (_dir, unlocked) = unlocked_fixture();
+    let id = id_of(&unlocked, "Banco");
+    let (_empty_dir, path) = crate::test_support::temp_path();
+    let session = VaultSession::new(path_string(&path));
+    for (name, result) in every_operation(&session, &id) {
+        assert_eq!(result, Err(VaultError::NoVault), "{name}");
+    }
+}
+
+#[test]
+fn every_operation_after_lock_gives_locked() {
+    let (_dir, session) = unlocked_fixture();
+    let id = id_of(&session, "Banco");
+    session.lock().unwrap();
+    for (name, result) in every_operation(&session, &id) {
+        assert_eq!(result, Err(VaultError::Locked), "{name}");
+    }
+}

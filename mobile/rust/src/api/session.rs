@@ -60,11 +60,14 @@ impl VaultSession {
 
     /// Crea la bóveda y la deja desbloqueada. Calibra Argon2id.
     pub fn create(&self, password: String) -> FacadeResult<()> {
+        // Antes de cualquier salida con error, para que el `String` recibido
+        // siempre se borre.
+        let password = secret_from(password);
         let mut slot = self.slot()?;
         if slot.is_some() {
             return Err(VaultError::VaultAlreadyOpen);
         }
-        *slot = Some(Vault::create(&self.path, &secret_from(password))?);
+        *slot = Some(Vault::create(&self.path, &password)?);
         Ok(())
     }
 

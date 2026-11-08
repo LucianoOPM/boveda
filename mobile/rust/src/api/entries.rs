@@ -53,8 +53,10 @@ impl VaultSession {
 
     /// Agrega una entrada y devuelve su id.
     pub fn add(&self, input: EntryInput, secret: NewSecret) -> FacadeResult<String> {
-        let search = search_data(&input)?;
+        // El secreto primero: así el `String` recibido se borra también
+        // cuando falla una validación posterior.
         let secret = secret_data(secret)?;
+        let search = search_data(&input)?;
         self.with_vault(|vault| vault.add(search, secret))
             .map(entry_id_to_hex)
     }
@@ -67,12 +69,13 @@ impl VaultSession {
         input: EntryInput,
         new_secret: Option<NewSecret>,
     ) -> FacadeResult<()> {
-        let id = entry_id_from_hex(&id)?;
-        let search = search_data(&input)?;
+        // El secreto primero, como en `add`.
         let change = match new_secret {
             None => SecretChange::Keep,
             Some(secret) => SecretChange::Replace(secret_data(secret)?),
         };
+        let id = entry_id_from_hex(&id)?;
+        let search = search_data(&input)?;
         self.with_vault(|vault| vault.edit(id, search, change))
     }
 
