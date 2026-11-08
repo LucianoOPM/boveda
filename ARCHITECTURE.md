@@ -52,7 +52,10 @@ boveda/
 │   │   ├── Cargo.toml      # edición 2021 por el código generado
 │   │   └── src/
 │   │       ├── lib.rs
-│   │       ├── api/        # funciones expuestas a Dart (mod.rs y un archivo por área)
+│   │       ├── api/        # expuesto a Dart, un archivo por área:
+│   │       │               #   mod.rs, error.rs (VaultError), session.rs (VaultSession),
+│   │       │               #   entries.rs y backup.rs; pruebas en <área>/tests.rs
+│   │       ├── test_support.rs   # ayudantes de pruebas (copia de vault-v2.db)
 │   │       └── frb_generated.rs  # generado; no se edita
 │   ├── rust_builder/       # generado por flutter_rust_bridge (cargokit); no se edita
 │   ├── test/               # pruebas de widgets en la PC, con el puente simulado
@@ -63,7 +66,7 @@ boveda/
 │   │   ├── src/rust/       # código generado por flutter_rust_bridge; no se edita
 │   │   ├── screens/        # futuro: desbloqueo, búsqueda, detalle, edición, ajustes
 │   │   ├── widgets/        # futuro
-│   │   └── services/       # futuro: huella, Keystore, selector de archivos
+│   │   └── services/       # vault_location.dart (ruta en noBackupFilesDir); futuro: huella, Keystore, selector
 │   ├── android/
 │   └── build/              # ignorado; cargokit compila Rust en build/rust_lib_boveda/build
 │
@@ -105,10 +108,10 @@ Sin dependencias de interfaz ni de plataforma.
 
 ### mobile/ (Android, Flutter)
 
-- `rust/`: crate puente expuesto con flutter_rust_bridge.
+- `rust/`: crate puente expuesto con flutter_rust_bridge. Dart guarda un objeto opaco `VaultSession` (la ruta y un `Mutex<Option<Vault>>`) y le pide todas las operaciones; los errores cruzan como un enum plano `VaultError`, sin datos.
 - `lib/src/rust/`: código generado; no se edita a mano.
 - `lib/screens/`, `lib/widgets/`: interfaz.
-- `lib/services/`: huella, Keystore, selector de archivos.
+- `lib/services/`: ruta de la bóveda (`noBackupFilesDir`, por un canal de Kotlin), huella, Keystore, selector de archivos.
 
 ### desktop/ (Windows, Tauri 2)
 
@@ -135,7 +138,7 @@ Sin dependencias de interfaz ni de plataforma.
 | Núcleo en Rust compartido | La parte delicada se escribe y prueba una sola vez |
 | Crate puente separado | Los detalles de flutter_rust_bridge no contaminan el núcleo |
 | Dos llaves (maestra y de bóveda) | Cambiar la contraseña maestra y usar huella sin recifrar entradas |
-| Borrado de memoria garantizado solo dentro de `vault-core` | El núcleo guarda secretos y texto plano en `SecretString`/`Zeroizing` y evita reasignaciones que dejen copias; fuera del núcleo es de mejor esfuerzo, porque Dart no permite borrar sus cadenas. Excepción documentada: las copias internas de `nucleo-matcher` y `strsim` durante la búsqueda (datos de búsqueda, no secretos) |
+| Borrado de memoria garantizado solo dentro de `vault-core` | El núcleo guarda secretos y texto plano en `SecretString`/`Zeroizing` y evita reasignaciones que dejen copias; fuera del núcleo es de mejor esfuerzo, porque Dart no permite borrar sus cadenas. Lo mismo vale para los búferes de cruce de flutter_rust_bridge y para la copia que la fachada entrega al revelar una contraseña o unas notas. Excepción documentada: las copias internas de `nucleo-matcher` y `strsim` durante la búsqueda (datos de búsqueda, no secretos) |
 | Entrada cifrada en dos partes | Búsqueda rápida sin exponer contraseñas en memoria |
 | Fecha de modificación y marca de eliminada | Preparan la sincronización futura sin migrar datos |
 | Noise (`snow`) | Protocolo estudiado para el intercambio de llaves y el canal cifrado |

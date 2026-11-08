@@ -86,7 +86,7 @@ Consecuencia anotada para la #39: si la app pasa a segundo plano durante un desb
 | `delete(id) -> ()` | `Vault::delete` | |
 | `reveal_password(id) -> String` | `Vault::reveal` | descarta las notas |
 | `reveal_notes(id) -> Option<String>` | `Vault::reveal` | descarta la contraseña |
-| `export(dest) -> ()` | `Vault::export` | |
+| `export_backup(dest) -> ()` | `Vault::export` | `export` es palabra reservada en Dart (frb generaba `export_`) |
 | `import_backup(backup, password) -> UnlockReport` | `Vault::import` | ver "Ciclo de importación" |
 
 Todos los métodos, salvo `new`, devuelven `Result<_, VaultError>`: también `lock` e `is_locked`, que pueden encontrar el `Mutex` envenenado (`SessionPoisoned`). La tabla muestra solo el tipo del `Ok`.
@@ -128,7 +128,7 @@ pub struct NewSecret {
 
 pub struct UnlockReport {
     pub corrupt: Vec<String>,       // ids en hexadecimal
-    pub unidentified_corrupt: usize,
+    pub unidentified_corrupt: u32,   // usize llegaría a Dart como BigInt; satura en u32::MAX
 }
 ```
 
@@ -188,7 +188,7 @@ Con esto, la #44 queda solo en Dart.
 | `mod.rs` | módulos e `init_app` (`#[frb(init)]`, se mueve desde `simple.rs`) |
 | `session.rs` | `VaultSession`: `new`, `create`, `open`, `unlock`, `lock`, `is_locked` |
 | `entries.rs` | `EntrySummary`, `EntryInput`, `NewSecret`, conversión del id; `search`, `add`, `edit`, `delete`, `reveal_password`, `reveal_notes` |
-| `backup.rs` | `export`, `import_backup` |
+| `backup.rs` | `export_backup`, `import_backup` |
 | `error.rs` | `VaultError` y `From<vault_core::vault::Error>` |
 
 `UnlockReport` de la fachada va en `session.rs`. Se borra `simple.rs`. Si el codegen no acepta bloques `impl` repartidos, todos los métodos van en `session.rs` y los tipos se quedan en sus archivos.
@@ -209,7 +209,7 @@ Las pruebas usan una copia de `core/tests/fixtures/vault-v2.db` (contraseña `pr
 
 Casos:
 
-- Sin bóveda: `is_locked` es `true`; `unlock`, `search`, `add`, `edit`, `delete`, `reveal_*` y `export` dan `NoVault`; `lock` no falla.
+- Sin bóveda: `is_locked` es `true`; `unlock`, `search`, `add`, `edit`, `delete`, `reveal_*` y `export_backup` dan `NoVault`; `lock` no falla.
 - `open` sobre la copia: queda bloqueada; `search` da `Locked`.
 - `unlock` con la contraseña incorrecta da `WrongPassword` y sigue bloqueada; con la correcta, `UnlockReport` vacío.
 - `open` o `create` con la bóveda cargada dan `VaultAlreadyOpen`.
@@ -220,7 +220,7 @@ Casos:
 - `reveal_password` y `reveal_notes` devuelven los valores del fixture; `reveal_notes` de `Banco` devuelve `None`.
 - Un id inválido (largo distinto, mayúsculas, caracteres fuera de `0-9a-f`) da `InvalidEntryId`.
 - Un `EntryInput` con el servicio vacío da `InvalidEntryServiceEmpty`.
-- `export` y después `import_backup` sobre otra sesión recuperan todas las entradas.
+- `export_backup` y después `import_backup` sobre otra sesión recuperan todas las entradas.
 - `import_backup` con la contraseña incorrecta: devuelve `WrongPassword` y la bóveda anterior queda abierta y bloqueada (desbloquearla con su contraseña funciona).
 - `import_backup` sin bóveda previa: con éxito queda desbloqueada; con fallo, la sesión sigue sin bóveda.
 - `create` en una ruta nueva: queda desbloqueada y vacía (calibra).
