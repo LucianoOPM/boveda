@@ -30,7 +30,7 @@ Resultado: el crate `vault-core` crea, abre y respalda una bóveda cifrada, prob
 - [x] Almacenamiento SQLite: tabla de cabecera y tabla de entradas con fecha de modificación y marca de eliminada.
 - [x] API de la bóveda: crear, desbloquear, bloquear, agregar, editar, eliminar, revelar secreto y cambiar contraseña maestra.
 - [x] Búsqueda tolerante a errores sobre los datos de búsqueda, con las usadas recientemente primero cuando no hay texto.
-- [ ] Exportar e importar el respaldo cifrado.
+- [x] Exportar e importar el respaldo cifrado.
 - [ ] Pruebas: ida y vuelta del cifrado, contraseña incorrecta, byte alterado, secreto intercambiado entre entradas, bóvedas de ejemplo fijas y restauración de respaldo.
 
 **Se cierra cuando** todas esas pruebas pasan en la integración continua.
