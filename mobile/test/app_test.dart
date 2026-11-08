@@ -97,7 +97,10 @@ void main() {
       find.byKey(const Key('first-run-password')),
       password,
     );
-    await tester.enterText(find.byKey(const Key('first-run-confirm')), password);
+    await tester.enterText(
+      find.byKey(const Key('first-run-confirm')),
+      password,
+    );
     await tester.pump();
     await tester.ensureVisible(find.byKey(const Key('first-run-accept')));
     await tester.tap(find.byKey(const Key('first-run-accept')));
@@ -109,5 +112,59 @@ void main() {
     expect(find.text('Pantalla principal: #40'), findsOneWidget);
     expect(find.byType(FirstRunScreen), findsNothing);
     expect(session.createCalls, [password]);
+  });
+
+  /// Llena el primer uso y toca "Crear bóveda".
+  Future<void> createFromFirstRun(WidgetTester tester) async {
+    const password = "frase larga de prueba";
+    await tester.enterText(
+      find.byKey(const Key("first-run-password")),
+      password,
+    );
+    await tester.enterText(
+      find.byKey(const Key("first-run-confirm")),
+      password,
+    );
+    await tester.pump();
+    await tester.ensureVisible(find.byKey(const Key("first-run-accept")));
+    await tester.tap(find.byKey(const Key("first-run-accept")));
+    await tester.pump();
+    await tester.ensureVisible(find.byKey(const Key("first-run-create")));
+    await tester.tap(find.byKey(const Key("first-run-create")));
+    await tester.pumpAndSettle();
+  }
+
+  testWidgets("si create da AlreadyExists vuelve a evaluar y abre el "
+      "desbloqueo", (tester) async {
+    var exists = false;
+    session.onCreate = (_) async {
+      exists = true; // el archivo apareció después de comprobarlo
+      throw VaultError.alreadyExists;
+    };
+    await pumpApp(tester, session, () async => exists);
+    await tester.pumpAndSettle();
+
+    await createFromFirstRun(tester);
+
+    expect(find.text("Desbloqueo: #37"), findsOneWidget);
+    expect(find.byType(FirstRunScreen), findsNothing);
+    expect(session.openCalls, 1);
+  });
+
+  testWidgets("si create da AlreadyExists y open falla muestra el error "
+      "genérico", (tester) async {
+    var exists = false;
+    session.onCreate = (_) async {
+      exists = true;
+      throw VaultError.alreadyExists;
+    };
+    session.openError = VaultError.notAVault;
+    await pumpApp(tester, session, () async => exists);
+    await tester.pumpAndSettle();
+
+    await createFromFirstRun(tester);
+
+    expect(find.text("No se pudo abrir la bóveda."), findsOneWidget);
+    expect(find.byType(FirstRunScreen), findsNothing);
   });
 }

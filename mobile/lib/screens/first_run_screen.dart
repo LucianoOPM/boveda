@@ -18,6 +18,7 @@ class FirstRunScreen extends StatefulWidget {
     required this.session,
     required this.strengthOf,
     required this.onCreated,
+    required this.onAlreadyExists,
   });
 
   final VaultSession session;
@@ -25,6 +26,10 @@ class FirstRunScreen extends StatefulWidget {
 
   /// Se llama cuando la bóveda quedó creada y desbloqueada.
   final VoidCallback onCreated;
+
+  /// Se llama si `create` encuentra que el archivo ya existe: quien muestra
+  /// la pantalla vuelve a evaluar la bóveda en lugar de pedir reintentar.
+  final VoidCallback onAlreadyExists;
 
   @override
   State<FirstRunScreen> createState() => _FirstRunScreenState();
@@ -37,6 +42,11 @@ class _FirstRunScreenState extends State<FirstRunScreen> {
   bool _creating = false;
   String? _error;
 
+  /// Fortaleza de la contraseña escrita; `null` con el campo vacío. Se
+  /// calcula solo al editar la contraseña: cada cálculo cruza a Rust con
+  /// una copia de la contraseña, así que `build` nunca llama a la fachada.
+  PasswordStrength? _strength;
+
   @override
   void dispose() {
     _password
@@ -48,13 +58,12 @@ class _FirstRunScreenState extends State<FirstRunScreen> {
     super.dispose();
   }
 
-  PasswordStrength get _strength => widget.strengthOf(_password.text);
-
   bool get _matches => _password.text == _confirm.text;
 
   bool get _canCreate =>
       !_creating &&
       _accepted &&
+      _strength != null &&
       _strength != PasswordStrength.tooShort &&
       _matches;
 
@@ -69,6 +78,12 @@ class _FirstRunScreenState extends State<FirstRunScreen> {
     try {
       await widget.session.create(password: password);
     } on VaultError catch (error) {
+      if (error == VaultError.alreadyExists) {
+        // El archivo apareció después de comprobarlo: reintentar fallaría
+        // siempre. Quien muestra la pantalla vuelve a evaluar la bóveda.
+        if (mounted) widget.onAlreadyExists();
+        return;
+      }
       _fail(
         error == VaultError.passwordTooShort
             ? 'La contraseña debe tener al menos 12 caracteres.'
@@ -90,6 +105,15 @@ class _FirstRunScreenState extends State<FirstRunScreen> {
       _error = message;
     });
   }
+
+  void _onPasswordChanged(String text) {
+    setState(() {
+      _strength = text.isEmpty ? null : widget.strengthOf(text);
+      _error = null;
+    });
+  }
+
+  void _onConfirmChanged(String _) => setState(() => _error = null);
 
   @override
   Widget build(BuildContext context) {
@@ -118,11 +142,11 @@ class _FirstRunScreenState extends State<FirstRunScreen> {
                   controller: _password,
                   label: 'Contraseña maestra',
                   enabled: !_creating,
-                  onChanged: (_) => setState(() {}),
+                  onChanged: _onPasswordChanged,
                 ),
-                if (_password.text.isNotEmpty) ...[
+                if (_strength case final strength?) ...[
                   const SizedBox(height: 8),
-                  StrengthIndicator(strength: _strength),
+                  StrengthIndicator(strength: strength),
                 ],
                 const SizedBox(height: 16),
                 PasswordField(
@@ -133,7 +157,7 @@ class _FirstRunScreenState extends State<FirstRunScreen> {
                   errorText: showMismatch
                       ? 'Las contraseñas no coinciden'
                       : null,
-                  onChanged: (_) => setState(() {}),
+                  onChanged: _onConfirmChanged,
                 ),
                 const SizedBox(height: 16),
                 CheckboxListTile(

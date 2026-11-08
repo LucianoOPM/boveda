@@ -4,6 +4,7 @@ import 'dart:async';
 
 import 'package:boveda/screens/first_run_screen.dart';
 import 'package:boveda/src/rust/api/error.dart';
+import 'package:boveda/src/rust/api/password.dart';
 import 'package:boveda/widgets/strength_indicator.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -21,13 +22,16 @@ Future<void> pumpScreen(
   WidgetTester tester,
   FakeVaultSession session, {
   VoidCallback? onCreated,
+  VoidCallback? onAlreadyExists,
+  StrengthOf strengthOf = fakeStrength,
 }) {
   return tester.pumpWidget(
     MaterialApp(
       home: FirstRunScreen(
         session: session,
-        strengthOf: fakeStrength,
+        strengthOf: strengthOf,
         onCreated: onCreated ?? () {},
+        onAlreadyExists: onAlreadyExists ?? () {},
       ),
     ),
   );
@@ -52,6 +56,7 @@ Future<void> pumpAsSecondRoute(
         session: session,
         strengthOf: fakeStrength,
         onCreated: () {},
+        onAlreadyExists: () {},
       ),
     ),
   );
@@ -222,9 +227,7 @@ void main() {
 
   // Como segunda ruta, un "volver" que no se bloquee saca la pantalla; como
   // única ruta, `maybePop` delega en el sistema y la prueba no lo notaría.
-  testWidgets('control: sin crear, volver sí saca la pantalla', (
-    tester,
-  ) async {
+  testWidgets('control: sin crear, volver sí saca la pantalla', (tester) async {
     await pumpAsSecondRoute(tester, session);
 
     await tester.binding.handlePopRoute();
@@ -232,9 +235,7 @@ void main() {
     expect(find.byType(FirstRunScreen), findsNothing);
   });
 
-  testWidgets('durante la creación volver no saca la pantalla', (
-    tester,
-  ) async {
+  testWidgets('durante la creación volver no saca la pantalla', (tester) async {
     final pending = Completer<void>();
     session.onCreate = (_) => pending.future;
     await pumpAsSecondRoute(tester, session);
@@ -337,4 +338,69 @@ void main() {
       findsNothing,
     );
   });
+
+  testWidgets("calcula la fortaleza solo al editar la contraseña", (
+    tester,
+  ) async {
+    final calls = <String>[];
+    PasswordStrength counting(String password) {
+      calls.add(password);
+      return fakeStrength(password);
+    }
+
+    await pumpScreen(tester, session, strengthOf: counting);
+    expect(calls, isEmpty);
+
+    await typePassword(tester, valid);
+    expect(calls, [valid]);
+
+    // Ni la confirmación ni la casilla ni los redibujados la recalculan.
+    await typeConfirm(tester, valid);
+    await toggleAccept(tester);
+    await tester.pump();
+    expect(calls, [valid]);
+    expect(find.text("Fuerte"), findsOneWidget);
+    expect(button(tester).onPressed, isNotNull);
+  });
+
+  testWidgets("AlreadyExists avisa al gate en vez de pedir reintentar", (
+    tester,
+  ) async {
+    var alreadyExists = 0;
+    session.onCreate = (_) async => throw VaultError.alreadyExists;
+    await pumpScreen(tester, session, onAlreadyExists: () => alreadyExists++);
+    await fillValid(tester);
+
+    await tapCreate(tester);
+    await settleFuture(tester);
+
+    expect(alreadyExists, 1);
+    expect(
+      find.text("No se pudo crear la bóveda. Intenta de nuevo."),
+      findsNothing,
+    );
+  });
+
+  for (final (name, edit) in [
+    ("la contraseña", (WidgetTester t) => typePassword(t, "$valid y más")),
+    ("la confirmación", (WidgetTester t) => typeConfirm(t, "$valid y más")),
+  ]) {
+    testWidgets("editar $name borra el error de create", (tester) async {
+      session.onCreate = (_) async => throw VaultError.storageIo;
+      await pumpScreen(tester, session);
+      await fillValid(tester);
+      await tapCreate(tester);
+      await tester.pumpAndSettle();
+      expect(
+        find.text("No se pudo crear la bóveda. Intenta de nuevo."),
+        findsOneWidget,
+      );
+
+      await edit(tester);
+      expect(
+        find.text("No se pudo crear la bóveda. Intenta de nuevo."),
+        findsNothing,
+      );
+    });
+  }
 }

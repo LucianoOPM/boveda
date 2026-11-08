@@ -87,6 +87,13 @@ class _VaultGateState extends State<VaultGate> {
     setState(() => _state = next);
   }
 
+  /// `create` encontró el archivo ya creado: se vuelve a comprobar desde
+  /// el principio, que lo abre (desbloqueo) o muestra el error genérico.
+  void _reevaluate() {
+    setState(() => _state = VaultGateState.checking);
+    _start();
+  }
+
   @override
   Widget build(BuildContext context) {
     return switch (_state) {
@@ -97,6 +104,7 @@ class _VaultGateState extends State<VaultGate> {
         session: widget.session,
         strengthOf: widget.strengthOf,
         onCreated: () => setState(() => _state = VaultGateState.unlocked),
+        onAlreadyExists: _reevaluate,
       ),
       VaultGateState.locked => const PlaceholderScreen(text: 'Desbloqueo: #37'),
       VaultGateState.unlocked => const PlaceholderScreen(
