@@ -5,7 +5,9 @@ import 'dart:io';
 
 import 'package:boveda/app.dart';
 import 'package:boveda/screens/first_run_screen.dart';
+import 'package:boveda/screens/unlock_screen.dart';
 import 'package:boveda/src/rust/api/error.dart';
+import 'package:boveda/src/rust/api/session.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -38,11 +40,11 @@ void main() {
     expect(session.openCalls, 0);
   });
 
-  testWidgets('con bóveda abre el marcador de desbloqueo', (tester) async {
+  testWidgets('con bóveda abre la pantalla de desbloqueo', (tester) async {
     await pumpApp(tester, session, () async => true);
     await tester.pumpAndSettle();
 
-    expect(find.text('Desbloqueo: #37'), findsOneWidget);
+    expect(find.byType(UnlockScreen), findsOneWidget);
     expect(find.byType(FirstRunScreen), findsNothing);
     expect(session.openCalls, 1);
   });
@@ -111,6 +113,7 @@ void main() {
 
     expect(find.text('Pantalla principal: #40'), findsOneWidget);
     expect(find.byType(FirstRunScreen), findsNothing);
+    expect(find.byType(MaterialBanner), findsNothing);
     expect(session.createCalls, [password]);
   });
 
@@ -146,7 +149,7 @@ void main() {
 
     await createFromFirstRun(tester);
 
-    expect(find.text("Desbloqueo: #37"), findsOneWidget);
+    expect(find.byType(UnlockScreen), findsOneWidget);
     expect(find.byType(FirstRunScreen), findsNothing);
     expect(session.openCalls, 1);
   });
@@ -166,5 +169,58 @@ void main() {
 
     expect(find.text("No se pudo abrir la bóveda."), findsOneWidget);
     expect(find.byType(FirstRunScreen), findsNothing);
+  });
+
+  /// Abre la app con bóveda y desbloquea desde la pantalla de desbloqueo.
+  Future<void> unlockFromScreen(WidgetTester tester) async {
+    await pumpApp(tester, session, () async => true);
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.byKey(const Key('unlock-password')),
+      'prueba-bóveda-v2',
+    );
+    await tester.pump();
+    await tester.tap(find.byKey(const Key('unlock-submit')));
+    await tester.pumpAndSettle();
+  }
+
+  testWidgets('desbloquear lleva a la pantalla principal sin aviso', (
+    tester,
+  ) async {
+    await unlockFromScreen(tester);
+
+    expect(find.text('Pantalla principal: #40'), findsOneWidget);
+    expect(find.byType(UnlockScreen), findsNothing);
+    expect(find.byType(MaterialBanner), findsNothing);
+    expect(session.unlockCalls, ['prueba-bóveda-v2']);
+  });
+
+  testWidgets('con 3 dañadas muestra el aviso en plural', (tester) async {
+    session.onUnlock = (_) async =>
+        UnlockReport(corrupt: ['a' * 32, 'b' * 32], unidentifiedCorrupt: 1);
+    await unlockFromScreen(tester);
+
+    expect(find.text('Pantalla principal: #40'), findsOneWidget);
+    expect(find.text('3 entradas no se pudieron leer'), findsOneWidget);
+  });
+
+  testWidgets('con 1 dañada sin id muestra el aviso en singular', (
+    tester,
+  ) async {
+    session.onUnlock = (_) async =>
+        const UnlockReport(corrupt: [], unidentifiedCorrupt: 1);
+    await unlockFromScreen(tester);
+
+    expect(find.text('1 entrada no se pudo leer'), findsOneWidget);
+  });
+
+  testWidgets('alreadyUnlocked lleva a la pantalla principal sin aviso', (
+    tester,
+  ) async {
+    session.onUnlock = (_) async => throw VaultError.alreadyUnlocked;
+    await unlockFromScreen(tester);
+
+    expect(find.text('Pantalla principal: #40'), findsOneWidget);
+    expect(find.byType(MaterialBanner), findsNothing);
   });
 }
