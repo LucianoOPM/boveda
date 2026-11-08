@@ -6,6 +6,8 @@
 
 # Bóvedas de ejemplo: binarias, sin conversión de ningún tipo.
 core/tests/fixtures/** binary
+# Excepto su documentación, que es texto.
+core/tests/fixtures/*.md -binary text diff merge eol=lf
 
 *.png binary
 *.ico binary

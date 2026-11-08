@@ -1,7 +1,7 @@
 //! Pruebas unitarias de la API `Vault` (`vault/mod.rs`).
 
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::{Duration, UNIX_EPOCH};
 
 use secrecy::ExposeSecret;
@@ -706,4 +706,69 @@ fn search_never_matches_password() {
     let secret = Secret::new(password("zqxw-secreto-98"), None).unwrap();
     vault.add(search, secret).unwrap();
     assert!(vault.search("zqxw-secreto-98").unwrap().is_empty());
+}
+
+// --- Bóveda de ejemplo del formato 1 -------------------------------------
+
+/// Contraseña de prueba de `core/tests/fixtures/vault-v1.db`. Se repite en
+/// `core/tests/vault.rs`, que no ve el código `cfg(test)` del crate.
+const FIXTURE_V1_PASSWORD: &str = "prueba-bóveda-v1";
+
+/// Genera `core/tests/fixtures/vault-v1.db`, la bóveda de ejemplo del
+/// formato 1, que las pruebas de `core/tests/vault.rs` deben abrir siempre.
+///
+/// El número del nombre es la `format_version` de la cabecera. Cada versión
+/// de formato nueva lleva un archivo nuevo (`vault-v2.db`, ...) y su propio
+/// generador; los archivos existentes no se modifican ni se borran. Si el
+/// archivo ya existe, falla a propósito con `AlreadyExists`.
+///
+/// Se ejecuta una sola vez, al introducir una versión de formato nueva:
+/// `cargo test -p vault-core --lib -- --ignored --exact vault::tests::generate_fixture_v1`
+///
+/// Nunca con `--ignored` sin filtro: también correría este generador, que
+/// fallaría con `AlreadyExists` (o crearía una bóveda distinta si falta el
+/// archivo).
+///
+/// Contenido y contraseña: `core/tests/fixtures/README.md`.
+#[test]
+#[ignore = "solo al introducir una versión de formato nueva"]
+fn generate_fixture_v1() {
+    // Ruta absoluta, como exigen las reglas de rutas (`SQLITE_USE_URI`).
+    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/vault-v1.db");
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    // Sin borrar nada antes: si el archivo existe, `AlreadyExists`.
+    let mut vault =
+        Vault::create_with_params(&path, &password(FIXTURE_V1_PASSWORD), KdfParams::MIN).unwrap();
+
+    // Todos los campos opcionales, con acentos y un salto de línea.
+    let full = SearchData::new(
+        "Correo Electrónico",
+        Some("https://correo.example.com/entrar"),
+        Some("ana@example.com"),
+        &["Trabajo", "Médico", "Año"],
+    )
+    .unwrap();
+    let full_secret = Secret::new(
+        password("clave-completa-ñ"),
+        Some(password("Línea uno\nLínea dos")),
+    )
+    .unwrap();
+    vault.add(full, full_secret).unwrap();
+
+    let minimal = |service: &str, key: &str| {
+        (
+            SearchData::new(service, None, None, &[]).unwrap(),
+            Secret::new(password(key), None).unwrap(),
+        )
+    };
+    let (search, secret) = minimal("Banco", "clave-minima");
+    vault.add(search, secret).unwrap();
+    let (search, secret) = minimal("Nube", "clave-nube");
+    let used = vault.add(search, secret).unwrap();
+    let (search, secret) = minimal("Eliminada", "clave-eliminada");
+    let deleted = vault.add(search, secret).unwrap();
+
+    // `reveal` escribe `last_used_at`; `delete` deja la lápida.
+    vault.reveal(used).unwrap();
+    vault.delete(deleted).unwrap();
 }
