@@ -32,7 +32,7 @@ abstract class VaultSession implements RustOpaqueInterface {
 
   /// Exporta un respaldo a `dest`, que debe ser absoluta y no existir.
   /// Exige la bóveda desbloqueada.
-  Future<void> export_({required String dest});
+  Future<void> exportBackup({required String dest});
 
   /// Importa el respaldo `backup` sobre la bóveda de la sesión, exista o
   /// no. `password` es la del respaldo.

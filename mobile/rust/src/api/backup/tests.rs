@@ -16,7 +16,7 @@ fn exported_backup() -> (tempfile::TempDir, String) {
     let (_fixture_dir, session) = unlocked_fixture();
     let dir = tempfile::tempdir().unwrap();
     let backup = path_string(&dir.path().join("respaldo.db"));
-    session.export(backup.clone()).unwrap();
+    session.export_backup(backup.clone()).unwrap();
     (dir, backup)
 }
 
@@ -123,18 +123,18 @@ fn export_requires_unlocked_and_new_absolute_dest() {
     std::fs::write(&existing, "ocupado").unwrap();
 
     assert_eq!(
-        session.export(path_string(&existing)),
+        session.export_backup(path_string(&existing)),
         Err(VaultError::AlreadyExists)
     );
     assert_eq!(
-        session.export("respaldo.db".into()),
+        session.export_backup("respaldo.db".into()),
         Err(VaultError::StorageIo)
     );
     assert_eq!(services(&session), fixture_services());
 
     session.lock().unwrap();
     let dest = path_string(&other.path().join("nuevo.db"));
-    assert_eq!(session.export(dest), Err(VaultError::Locked));
+    assert_eq!(session.export_backup(dest), Err(VaultError::Locked));
     session.unlock(FIXTURE_PASSWORD.into()).unwrap();
     assert_eq!(services(&session), fixture_services());
 }

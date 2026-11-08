@@ -10,7 +10,7 @@ use super::session::{secret_from, UnlockReport, VaultSession};
 impl VaultSession {
     /// Exporta un respaldo a `dest`, que debe ser absoluta y no existir.
     /// Exige la bóveda desbloqueada.
-    pub fn export(&self, dest: String) -> FacadeResult<()> {
+    pub fn export_backup(&self, dest: String) -> FacadeResult<()> {
         self.with_vault(|vault| vault.export(Path::new(&dest)))
     }
 

@@ -71,7 +71,7 @@ class RustLib extends BaseEntrypoint<RustLibApi, RustLibApiImpl, RustLibWire> {
   String get codegenVersion => '2.13.0';
 
   @override
-  int get rustContentHash => 1583652807;
+  int get rustContentHash => -778584515;
 
   static const kDefaultExternalLibraryLoaderConfig =
       ExternalLibraryLoaderConfig(
@@ -106,7 +106,7 @@ abstract class RustLibApi extends BaseApi {
     NewSecret? newSecret,
   });
 
-  Future<void> crateApiSessionVaultSessionExport({
+  Future<void> crateApiSessionVaultSessionExportBackup({
     required VaultSession that,
     required String dest,
   });
@@ -325,7 +325,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       );
 
   @override
-  Future<void> crateApiSessionVaultSessionExport({
+  Future<void> crateApiSessionVaultSessionExportBackup({
     required VaultSession that,
     required String dest,
   }) {
@@ -349,16 +349,16 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           decodeSuccessData: sse_decode_unit,
           decodeErrorData: sse_decode_vault_error,
         ),
-        constMeta: kCrateApiSessionVaultSessionExportConstMeta,
+        constMeta: kCrateApiSessionVaultSessionExportBackupConstMeta,
         argValues: [that, dest],
         apiImpl: this,
       ),
     );
   }
 
-  TaskConstMeta get kCrateApiSessionVaultSessionExportConstMeta =>
+  TaskConstMeta get kCrateApiSessionVaultSessionExportBackupConstMeta =>
       const TaskConstMeta(
-        debugName: "VaultSession_export",
+        debugName: "VaultSession_export_backup",
         argNames: ["that", "dest"],
       );
 
@@ -1404,8 +1404,8 @@ class VaultSessionImpl extends RustOpaque implements VaultSession {
 
   /// Exporta un respaldo a `dest`, que debe ser absoluta y no existir.
   /// Exige la bóveda desbloqueada.
-  Future<void> export_({required String dest}) => RustLib.instance.api
-      .crateApiSessionVaultSessionExport(that: this, dest: dest);
+  Future<void> exportBackup({required String dest}) => RustLib.instance.api
+      .crateApiSessionVaultSessionExportBackup(that: this, dest: dest);
 
   /// Importa el respaldo `backup` sobre la bóveda de la sesión, exista o
   /// no. `password` es la del respaldo.
