@@ -126,8 +126,88 @@ pub(crate) fn open_vault_key(
     params: &KdfParams,
     associated_data: &[u8],
 ) -> Result<VaultKey> {
+    let (vault_key, _derived) =
+        open_vault_key_keeping_derived(encrypted, password, salt, params, associated_data)?;
+    Ok(vault_key)
+}
+
+/// Como [`open_vault_key`], pero devuelve también la llave derivada, para
+/// volver a cifrar la llave de bóveda sin un segundo Argon2id (la
+/// migración de la versión 1 a la 2). La derivada se borra al soltarse.
+pub(crate) fn open_vault_key_keeping_derived(
+    encrypted: &EncryptedKey,
+    password: &SecretString,
+    salt: &[u8; SALT_LEN],
+    params: &KdfParams,
+    associated_data: &[u8],
+) -> Result<(VaultKey, DerivedKey)> {
     let derived = kdf::derive_key(password, salt, params)?;
-    decrypt_vault_key(encrypted, &derived, associated_data)
+    let vault_key = decrypt_vault_key(encrypted, &derived, associated_data)?;
+    Ok((vault_key, derived))
+}
+
+/// Longitud del verificador de la llave: nonce más etiqueta (texto vacío).
+pub(crate) const KEY_CHECK_LEN: usize = NONCE_LEN + TAG_LEN;
+
+/// Longitud del dato autenticado del verificador.
+pub(crate) const KEY_CHECK_AAD_LEN: usize = 18;
+
+/// Etiqueta fija al inicio del dato autenticado del verificador. No se
+/// confunde con `boveda-v1`, la de las entradas.
+const KEY_CHECK_LABEL: &[u8; 16] = b"boveda-key-check";
+
+/// Dato autenticado del verificador: `boveda-key-check` (16 bytes) |
+/// versión de formato (`u16` little-endian), sin separadores.
+pub(crate) fn key_check_associated_data(format_version: u16) -> [u8; KEY_CHECK_AAD_LEN] {
+    let mut ad = [0u8; KEY_CHECK_AAD_LEN];
+    let (label, version) = ad.split_at_mut(KEY_CHECK_LABEL.len());
+    label.copy_from_slice(KEY_CHECK_LABEL);
+    version.copy_from_slice(&format_version.to_le_bytes());
+    ad
+}
+
+/// Cifrador a partir de la llave de bóveda (se borra al soltarlo).
+fn vault_key_cipher(key: &VaultKey) -> Result<XChaCha20Poly1305> {
+    // La longitud es fija (32 bytes), así que este error no ocurre en la práctica.
+    XChaCha20Poly1305::new_from_slice(key.expose_secret()).map_err(|_| Error::WrongVaultKey)
+}
+
+/// Crea el verificador de la llave de bóveda: cifra un texto vacío con un
+/// nonce aleatorio nuevo y devuelve `nonce (24) | etiqueta (16)`.
+///
+/// XChaCha20-Poly1305 no compromete la llave: se puede construir un texto
+/// que se autentique con dos llaves, pero eso exige conocer ambas. Quien
+/// altera el archivo no conoce la llave real, así que no aplica.
+pub(crate) fn seal_key_check(key: &VaultKey, format_version: u16) -> Result<[u8; KEY_CHECK_LEN]> {
+    let nonce = XNonce::try_generate().map_err(|_| Error::Random)?;
+    let ad = key_check_associated_data(format_version);
+    let mut body: [u8; 0] = [];
+    let tag = vault_key_cipher(key)?
+        .encrypt_inout_detached(&nonce, &ad, body.as_mut_slice().into())
+        .map_err(|_| Error::Random)?;
+
+    let mut check = [0u8; KEY_CHECK_LEN];
+    let (nonce_out, tag_out) = check.split_at_mut(NONCE_LEN);
+    nonce_out.copy_from_slice(&nonce);
+    tag_out.copy_from_slice(&tag);
+    Ok(check)
+}
+
+/// Comprueba que `key_check` se autentica con `key` y `format_version`.
+/// Cualquier fallo da [`Error::WrongVaultKey`].
+pub(crate) fn verify_key_check(
+    key: &VaultKey,
+    format_version: u16,
+    key_check: &[u8; KEY_CHECK_LEN],
+) -> Result<()> {
+    let (nonce, tag) = key_check.split_at(NONCE_LEN);
+    let nonce = XNonce::try_from(nonce).map_err(|_| Error::WrongVaultKey)?;
+    let tag = Tag::<XChaCha20Poly1305>::try_from(tag).map_err(|_| Error::WrongVaultKey)?;
+    let ad = key_check_associated_data(format_version);
+    let mut body: [u8; 0] = [];
+    vault_key_cipher(key)?
+        .decrypt_inout_detached(&nonce, &ad, body.as_mut_slice().into(), &tag)
+        .map_err(|_| Error::WrongVaultKey)
 }
 
 #[cfg(test)]

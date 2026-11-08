@@ -9,11 +9,11 @@
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use secrecy::SecretString;
+use secrecy::{ExposeSecret, ExposeSecretMut, SecretBox, SecretString};
 use zeroize::ZeroizeOnDrop;
 
 use crate::crypto::kdf::{self, KdfParams};
-use crate::crypto::keys::VaultKey;
+use crate::crypto::keys::{self, VAULT_KEY_LEN, VaultKey};
 
 mod backup;
 pub(crate) mod entry;
@@ -26,7 +26,7 @@ pub use crate::error::{Error, InvalidEntryField, Result, StorageErrorKind};
 use entry::sealed::SealedEntry;
 pub use entry::{EntryId, SearchData, Secret};
 use header::VaultHeader;
-use storage::Storage;
+use storage::{Migration, Storage};
 
 /// Bóveda abierta sobre un archivo. No deriva `Debug`.
 ///
@@ -166,11 +166,51 @@ impl Vault {
     /// no impiden abrir las demás: se reportan en [`UnlockReport`]. Los
     /// secretos no se descifran aquí; uno dañado aparece al usar
     /// [`Vault::reveal`]. Si falla, la bóveda sigue bloqueada.
+    ///
+    /// Sobre una bóveda de la versión de formato 1, la migra a la 2 antes de
+    /// cargar las entradas, con una sola derivación de Argon2id y en una
+    /// transacción: abrir no modifica el archivo, pero desbloquear una
+    /// versión 1 sí. Si la migración falla, devuelve el error de
+    /// almacenamiento, la bóveda sigue bloqueada y el archivo sigue siendo
+    /// de la versión 1. Sobre una versión 2 no escribe nada.
+    ///
+    /// Si otra conexión migró la cabecera mientras esta derivaba, no se
+    /// sobrescribe: se vuelve a derivar contra la cabecera actual (una
+    /// segunda derivación), y si esa conexión cambió la contraseña el
+    /// resultado es [`Error::WrongPassword`], con el archivo ya en la
+    /// versión 2.
     pub fn unlock(&mut self, password: &SecretString) -> Result<UnlockReport> {
         if self.unlocked.is_some() {
             return Err(Error::AlreadyUnlocked);
         }
-        let key = self.storage.read_header()?.unlock(password)?;
+        let (key, upgraded) = self.storage.read_header()?.unlock_upgrading(password)?;
+        self.finish_unlock(password, key, upgraded)
+    }
+
+    /// Segunda mitad de [`Vault::unlock`], después de derivar: migra si
+    /// hace falta y carga las entradas. Separada para que las pruebas
+    /// puedan intercalar otra `Vault` entre la derivación y la migración.
+    ///
+    /// Si otra conexión migró la cabecera mientras esta derivaba
+    /// ([`Migration::NotNeeded`]), no se sobrescribe nada: se vuelve a leer
+    /// la cabecera y se verifica `password` contra ella. Si esa otra
+    /// conexión cambió la contraseña, el resultado es
+    /// [`Error::WrongPassword`] y la contraseña nueva sigue valiendo.
+    fn finish_unlock(
+        &mut self,
+        password: &SecretString,
+        key: VaultKey,
+        upgraded: Option<VaultHeader>,
+    ) -> Result<UnlockReport> {
+        let key = match upgraded {
+            Some(header) => match self.storage.migrate_header(&header)? {
+                Migration::Done => key,
+                // La llave derivada de la cabecera vieja se suelta (y se
+                // borra); vale la que abre la cabecera actual.
+                Migration::NotNeeded => self.storage.read_header()?.unlock(password)?,
+            },
+            None => key,
+        };
         let (unlocked, report) = Self::load_entries(&self.storage, key)?;
         self.unlocked = Some(unlocked);
         Ok(report)
@@ -414,6 +454,63 @@ impl Vault {
     fn rekey_with_params(&mut self, new: &SecretString, params: KdfParams) -> Result<()> {
         let header = VaultHeader::rekey(&self.unlocked()?.key, new, params)?;
         self.storage.replace_header(&header)
+    }
+
+    /// Entrega una copia de la llave de bóveda, para que la app la guarde
+    /// protegida con huella (en Android, en el Keystore). Exige la bóveda
+    /// desbloqueada ([`Error::Locked`]).
+    ///
+    /// Antes comprueba el verificador `key_check` con la llave en memoria.
+    /// Si no se autentica, lo regenera con un nonce nuevo y lo escribe; si
+    /// esa escritura falla, devuelve el error sin entregar la llave, para no
+    /// activar una huella que no va a funcionar. Regenerarlo es seguro: la
+    /// llave en memoria ya se autenticó al desbloquear (con `encrypted_key`
+    /// o con `key_check`), así que un `key_check` que no se autentica solo
+    /// puede estar dañado; nunca significa que la llave en memoria sea la
+    /// equivocada. Con el verificador válido no escribe nada.
+    ///
+    /// La llave sigue valiendo después de
+    /// [`Vault::change_master_password`], que no cambia la llave de bóveda.
+    pub fn export_vault_key(&mut self) -> Result<SecretBox<[u8; VAULT_KEY_LEN]>> {
+        let unlocked = self.unlocked.as_ref().ok_or(Error::Locked)?;
+        let header = self.storage.read_header()?;
+        match header.verify_key(&unlocked.key) {
+            Ok(()) => {}
+            Err(Error::WrongVaultKey) => {
+                let key_check = keys::seal_key_check(&unlocked.key, header.format_version())?;
+                self.storage.replace_key_check(&key_check)?;
+            }
+            Err(e) => return Err(e),
+        }
+
+        // La copia se escribe directamente dentro del `SecretBox` nuevo,
+        // sin pasar por la pila.
+        let mut copy = VaultKey::default();
+        copy.expose_secret_mut()
+            .copy_from_slice(unlocked.key.expose_secret());
+        Ok(copy)
+    }
+
+    /// Desbloquea con la llave de bóveda que entregó
+    /// [`Vault::export_vault_key`] y descifra los datos de búsqueda, como
+    /// [`Vault::unlock`]: el mismo [`UnlockReport`] y la misma caché.
+    ///
+    /// Sobre una bóveda desbloqueada devuelve [`Error::AlreadyUnlocked`].
+    /// Una llave de otra bóveda, alterada, un verificador dañado o una
+    /// bóveda de la versión de formato 1 dan [`Error::WrongVaultKey`], y la
+    /// bóveda sigue bloqueada.
+    ///
+    /// Recibe la llave por valor: si falla, se descarta y se borra de
+    /// memoria al soltarse. Quien llama no la recupera: para reintentar,
+    /// debe pedirla de nuevo al Keystore.
+    pub fn unlock_with_key(&mut self, key: SecretBox<[u8; VAULT_KEY_LEN]>) -> Result<UnlockReport> {
+        if self.unlocked.is_some() {
+            return Err(Error::AlreadyUnlocked);
+        }
+        self.storage.read_header()?.verify_key(&key)?;
+        let (unlocked, report) = Self::load_entries(&self.storage, key)?;
+        self.unlocked = Some(unlocked);
+        Ok(report)
     }
 
     fn unlocked(&self) -> Result<&Unlocked> {

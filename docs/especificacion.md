@@ -1,6 +1,6 @@
 # Especificación: gestor de contraseñas móvil con envío a PC
 
-Actualizado: 2026-11-07
+Actualizado: 2026-11-08
 
 ## Resumen y alcance
 
@@ -160,6 +160,42 @@ CREATE TABLE entries (
 
 **Fuera del modelo de amenazas de la v1:** al confirmar una transacción se borra el `-journal`, pero sus bytes (cifrados) pueden quedar en la memoria flash hasta que el sistema reutilice esos bloques, y `secure_delete` no cubre eso. Tampoco se resuelven aquí los relojes que retroceden o están desfasados entre dispositivos: le corresponde a la sincronización (fase 3).
 
+**Verificador de la llave y formato v2.** Decisiones tomadas el 2026-11-08 (#34, detalle en `docs/superpowers/specs/2026-11-08-desbloqueo-con-llave-design.md`):
+
+- Para desbloquear con la copia de la llave que guarda el Keystore, el núcleo debe comprobar que la llave es de esta bóveda, también si está vacía. En la v1 no hay con qué: `encrypted_key` está cifrada con la llave derivada de la contraseña y `application_id` es igual en todas. La cabecera de la v2 agrega `key_check`: `nonce (24) | etiqueta (16)`, 40 bytes, resultado de cifrar un texto vacío con XChaCha20-Poly1305 y la llave de bóveda.
+- Dato autenticado de `key_check`, binario de ancho fijo sin separadores (18 bytes):
+
+  | Offset | Campo | Tamaño | Valor |
+  | --- | --- | --- | --- |
+  | 0–15 | Etiqueta | 16 bytes | ASCII `boveda-key-check` |
+  | 16–17 | Versión de formato | 2 bytes | `u16` little-endian |
+
+  La etiqueta no se confunde con `boveda-v1`, la de las entradas. Como incluye la versión, una migración futura lo regenera (toda migración tiene la llave en memoria). No forma parte del dato autenticado de `encrypted_key`: alterarlo solo inutiliza la huella, y eso ya puede lograrlo quien escriba el archivo.
+- XChaCha20-Poly1305 no compromete la llave: se puede construir un texto que se autentique con dos llaves, pero eso exige conocer ambas, y quien altera el archivo no conoce la llave real.
+- Lo crea `VaultHeader::rekey`, así que también `create` y `change_master_password` (que lo regenera con la misma llave: la copia del Keystore sigue valiendo). Lo comprueba `unlock_with_key`; `unlock` con contraseña no lo lee, para que la contraseña nunca dependa de él.
+- Verificador dañado: `export_vault_key` lo comprueba con la llave en memoria y, si no se autentica, lo regenera con un nonce nuevo antes de entregar la llave; si esa escritura falla, devuelve el error sin la llave. Es seguro porque la llave en memoria ya se autenticó al desbloquear (con `encrypted_key` o con `key_check`): un `key_check` que no se autentica solo puede estar dañado. Con el verificador dañado, la huella falla una vez, la app la desactiva y pide la contraseña, y al reactivarla se repara.
+- Migración desde la v1: `open` y la apertura en solo lectura aceptan las versiones 1 y 2, y abrir sigue sin modificar el archivo. `unlock` con contraseña sobre una v1 deriva una sola vez con Argon2id (salvo en la carrera que se describe abajo, que repite la derivación), descifra la llave con el dato autenticado de la v1 y, en una transacción, reconstruye `header` con el procedimiento que documenta SQLite para cambios de esquema (crear `header_v2`, insertar la cabecera v2 con la misma sal y parámetros, nonce nuevo y `key_check`, borrar `header`, renombrar y verificar). Si algo falla en la migración, la bóveda sigue bloqueada, el archivo sigue siendo v1 y el error es el de almacenamiento. Dentro de la transacción, antes de tocar nada, se vuelve a leer `format_version`: si otra conexión ya migró la cabecera mientras corría Argon2id, no se sobrescribe (revertiría un cambio de contraseña sin aviso); `unlock` relee la cabecera y verifica la contraseña contra ella, así que con una contraseña ya cambiada da `WrongPassword`; el archivo ya queda en v2, migrado por la otra conexión. Importar un respaldo v1 migra la copia temporal antes del renombrado, con la misma llave derivada de la validación; si al migrar la copia ya no es v1, cambió después de validarla, y la importación falla con `Storage(Corrupt)` sin instalar nada. `unlock_with_key` sobre una v1 da `WrongVaultKey`.
+
+Esquema de la versión de formato 2 (`entries` no cambia):
+
+```sql
+-- "header" va entre comillas para coincidir con lo que deja ALTER TABLE
+-- RENAME en la migración desde la v1. La prueba de igualdad de
+-- sqlite_schema entre una bóveda migrada y una creada lo comprueba.
+CREATE TABLE "header" (
+    id              INTEGER PRIMARY KEY CHECK (id = 1),
+    format_version  INTEGER NOT NULL,
+    kdf_algorithm   INTEGER NOT NULL,
+    kdf_memory_kib  INTEGER NOT NULL,
+    kdf_iterations  INTEGER NOT NULL,
+    kdf_parallelism INTEGER NOT NULL,
+    salt            BLOB NOT NULL CHECK (length(salt) = 16),
+    key_nonce       BLOB NOT NULL CHECK (length(key_nonce) = 24),
+    encrypted_key   BLOB NOT NULL CHECK (length(encrypted_key) = 48),
+    key_check       BLOB NOT NULL CHECK (length(key_check) = 40)
+) STRICT;
+```
+
 **API.** Una sola estructura `Vault`. Decisiones tomadas el 2026-11-07 (detalle en `docs/superpowers/specs/2026-11-07-api-boveda-design.md`):
 
 - La llave de bóveda (`SecretBox<[u8; 32]>`) vive junto con la caché de datos de búsqueda descifrados en un solo `Option<Unlocked>`. `lock()` pone `None` y borra ambas de memoria; sobre una bóveda ya bloqueada no hace nada.
@@ -171,6 +207,8 @@ CREATE TABLE entries (
 - `create` sobre una ruta que ya existe devuelve `Error::AlreadyExists`. Un reloj anterior a 1970 devuelve `Error::Clock`.
 - Decidido el 2026-11-07 (#22): todas las rutas de la API pública deben ser absolutas (`create`, `open`, `export` e `import`); una relativa da `Storage(Io)` (motivo en "Almacenamiento"). `create` la rechaza antes de calibrar Argon2id.
 - Como `rusqlite::Connection` no es `Sync`, el `Mutex` vive en la fachada de `mobile/rust`, no en el núcleo.
+- Decidido el 2026-11-08 (#34): `export_vault_key(&mut self) -> Result<SecretBox<[u8; 32]>>` entrega la llave de bóveda para la copia del Keystore, solo con la bóveda desbloqueada (si no, `Locked`). `unlock_with_key(&mut self, key: SecretBox<[u8; 32]>)` se comporta como `unlock`: `AlreadyUnlocked`, el mismo `UnlockReport` y la misma caché; como `unlock`, se puede llamar con la bóveda bloqueada. Recibe la llave por valor: si falla, la llave se descarta y se borra al soltarse, y para reintentar hay que pedirla de nuevo al Keystore. Una llave de otra bóveda, alterada, un verificador dañado o una bóveda v1 dan `Error::WrongVaultKey` y la bóveda sigue bloqueada.
+- Abrir nunca modifica el archivo, pero `unlock` con contraseña sobre una v1 sí escribe (la migra), igual que `reveal` escribe `last_used_at`. En un medio de solo lectura, una v1 no se puede desbloquear; hoy no hay bóvedas v1 reales, así que es aceptable.
 
 **Entradas dañadas.** `unlock()` devuelve en su `UnlockReport` los identificadores de las entradas con la fila ilegible o con los datos de búsqueda dañados, y el número de filas dañadas sin un identificador válido, sin fallar por ellas. Los secretos no se descifran al desbloquear, así que un secreto dañado no aparece en el `UnlockReport`: `reveal()` sobre esa entrada devuelve `CorruptEntry`. Ambos casos tienen su prueba: alterar un byte de una sola entrada y comprobar que el resto abre, y que `reveal()` de la dañada devuelve ese error.
 
@@ -248,6 +286,8 @@ El flujo más común debe tomar segundos: abrir la app, poner la huella, escribi
 
 **Frontera entre Flutter y Rust.** Flutter no hace criptografía ni guarda la bóveda: llama al núcleo con funciones como desbloquear, buscar, revelar secreto o enviar a la PC. La búsqueda también vive en el núcleo. Una contraseña solo cruza a Flutter al mostrarla o copiarla localmente; al enviarla a la PC va directo del núcleo a la red.
 
+**Viaje de la llave de bóveda hacia el Keystore** (decidido el 2026-11-08, #34; lo implementa #38). La llave cruza como bytes (`Vec<u8>` en Rust, `Uint8List` en Dart, `ByteArray` en Kotlin), nunca como `String` ni en base64. La fachada pasa los bytes recibidos a `SecretBox` y borra el `Vec` de origen con `zeroize`. En Dart y en Kotlin, el arreglo se sobrescribe con ceros apenas se entrega; es de mejor esfuerzo, como todo borrado fuera del núcleo. El camino Keystore → Rust pasa por Dart lo menos posible: por omisión va por Dart (flutter_rust_bridge y un canal de plataforma); entregar los bytes de Kotlin a la fachada por JNI se evalúa en la #38, porque el crate `jni` sería una dependencia nueva.
+
 **App de Windows.** Vive en la bandeja del sistema con cuatro opciones: emparejar celular (ventana pequeña con el QR), dispositivos emparejados, iniciar con Windows y salir.
 
 ## Estructura del repositorio y orden de construcción
@@ -277,7 +317,7 @@ Las pruebas del núcleo son las más importantes, porque un error ahí puede dej
 - Una contraseña maestra incorrecta falla.
 - Modificar un solo byte de una entrada cifrada se detecta.
 - Intercambiar el secreto de una entrada con el de otra se rechaza.
-- Bóvedas de ejemplo fijas en el repositorio que siempre deben abrirse, para detectar cambios accidentales de formato. Decidido el 2026-11-07: una por versión de formato, `core/tests/fixtures/vault-vN.db` con N igual a la `format_version`; nunca se modifican ni se borran; se generan una sola vez con `KdfParams::MIN`, y las pruebas de integración (`core/tests/vault.rs`) las leen sobre una copia, solo con la API pública (detalle en `docs/superpowers/specs/2026-11-07-pruebas-integracion-design.md`).
+- Bóvedas de ejemplo fijas en el repositorio que siempre deben abrirse, para detectar cambios accidentales de formato. Decidido el 2026-11-07: una por versión de formato, `core/tests/fixtures/vault-vN.db` con N igual a la `format_version`; nunca se modifican ni se borran; se generan una sola vez con `KdfParams::MIN`, y las pruebas de integración (`core/tests/vault.rs`) las leen sobre una copia, solo con la API pública (detalle en `docs/superpowers/specs/2026-11-07-pruebas-integracion-design.md`). Desde el 2026-11-08 (#34) existen `vault-v1.db` y `vault-v2.db`; las pruebas también comprueban que una copia de `vault-v1.db` se migra a la v2.
 - Exportar, borrar e importar un respaldo recupera todas las entradas.
 
 **Protocolo** (ambos extremos en el mismo proceso, por localhost):

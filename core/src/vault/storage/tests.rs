@@ -170,9 +170,9 @@ fn open_rejects_future_format_version() {
     let (_dir, path, storage) = new_vault();
     storage.close().unwrap();
     raw(&path)
-        .execute("UPDATE header SET format_version = 2", [])
+        .execute("UPDATE header SET format_version = 3", [])
         .unwrap();
-    assert_open_fails_unchanged(&path, Error::UnsupportedFormatVersion(2));
+    assert_open_fails_unchanged(&path, Error::UnsupportedFormatVersion(3));
 }
 
 /// Pasa a WAL la base de `conn` y comprueba el modo resultante.
@@ -189,13 +189,13 @@ fn open_rejects_future_format_version_in_wal() {
     storage.close().unwrap();
     {
         let conn = raw(&path);
-        conn.execute("UPDATE header SET format_version = 2", [])
+        conn.execute("UPDATE header SET format_version = 3", [])
             .unwrap();
         set_wal(&conn);
     }
     assert!(!sibling(&path, "-wal").exists());
 
-    assert_open_fails_unchanged(&path, Error::UnsupportedFormatVersion(2));
+    assert_open_fails_unchanged(&path, Error::UnsupportedFormatVersion(3));
     assert!(!sibling(&path, "-wal").exists());
     assert!(!sibling(&path, "-shm").exists());
 }
@@ -213,7 +213,7 @@ fn open_future_wal_with_pending_frames_checkpoints_and_keeps_content() {
         let conn = raw(&src);
         set_wal(&conn);
         conn.pragma_update(None, "wal_autocheckpoint", 0).unwrap();
-        conn.execute("UPDATE header SET format_version = 2", [])
+        conn.execute("UPDATE header SET format_version = 3", [])
             .unwrap();
         // Copia sin checkpoint, como tras un cierre forzado.
         fs::copy(&src, &path).unwrap();
@@ -224,7 +224,7 @@ fn open_future_wal_with_pending_frames_checkpoints_and_keeps_content() {
 
     assert_eq!(
         Storage::open(&path).err(),
-        Some(Error::UnsupportedFormatVersion(2))
+        Some(Error::UnsupportedFormatVersion(3))
     );
     // El checkpoint al cerrar integró el `-wal` y lo borró.
     assert!(!sibling(&path, "-wal").exists());
@@ -239,7 +239,7 @@ fn open_future_wal_with_pending_frames_checkpoints_and_keeps_content() {
             |row| row.get(0),
         )
         .unwrap();
-    assert_eq!(version, 2);
+    assert_eq!(version, 3);
 }
 
 // --- Cabecera y solo lectura ---
@@ -787,25 +787,25 @@ fn assert_future_header_is_unsupported(sql: &str) {
 
     assert_eq!(
         Storage::open_read_only(&path).err(),
-        Some(Error::UnsupportedFormatVersion(2))
+        Some(Error::UnsupportedFormatVersion(3))
     );
     assert_eq!(
         Storage::open(&path).err(),
-        Some(Error::UnsupportedFormatVersion(2))
+        Some(Error::UnsupportedFormatVersion(3))
     );
 }
 
 #[test]
 fn future_header_without_v1_column_is_unsupported() {
     assert_future_header_is_unsupported(
-        "UPDATE header SET format_version = 2; ALTER TABLE header DROP COLUMN kdf_memory_kib;",
+        "UPDATE header SET format_version = 3; ALTER TABLE header DROP COLUMN kdf_memory_kib;",
     );
 }
 
 #[test]
 fn future_header_with_wider_value_is_unsupported() {
     assert_future_header_is_unsupported(
-        "UPDATE header SET format_version = 2, kdf_memory_kib = 99999999999;",
+        "UPDATE header SET format_version = 3, kdf_memory_kib = 99999999999;",
     );
 }
 
@@ -886,5 +886,67 @@ fn check_integrity_detects_damaged_page() {
     assert_eq!(
         storage.check_integrity(),
         Err(Error::Storage(StorageErrorKind::Corrupt))
+    );
+}
+
+// --- Verificador de la llave y formato v2 (#34) -------------------------
+
+#[test]
+fn created_vault_stores_key_check() {
+    let (_dir, path) = temp_path();
+    let (header, key) = new_header();
+    let storage = Storage::create(&path, &header).unwrap();
+    let (version, len): (i64, i64) = raw(&path)
+        .query_row(
+            "SELECT format_version, length(key_check) FROM header WHERE id = 1",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .unwrap();
+    assert_eq!((version, len), (2, 40));
+    assert_eq!(storage.read_header().unwrap().verify_key(&key), Ok(()));
+}
+
+#[test]
+fn replace_header_writes_key_check() {
+    let (_dir, path) = temp_path();
+    let (header, key) = new_header();
+    let mut storage = Storage::create(&path, &header).unwrap();
+    let before = *storage.read_header().unwrap().key_check().unwrap();
+
+    let rekeyed = VaultHeader::rekey(&key, &password("nueva"), KdfParams::MIN).unwrap();
+    storage.replace_header(&rekeyed).unwrap();
+
+    let stored = storage.read_header().unwrap();
+    assert_ne!(*stored.key_check().unwrap(), before);
+    assert_eq!(stored.key_check(), rekeyed.key_check());
+    assert_eq!(stored.verify_key(&key), Ok(()));
+}
+
+#[test]
+fn migrate_header_on_v2_does_nothing() {
+    let (_dir, path) = temp_path();
+    let (header, _) = new_header();
+    let mut storage = Storage::create(&path, &header).unwrap();
+    let before = fs::read(&path).unwrap();
+
+    let (other, _) = new_header();
+    assert_eq!(
+        storage.migrate_header(&other).unwrap(),
+        Migration::NotNeeded
+    );
+    drop(storage);
+    assert_eq!(fs::read(&path).unwrap(), before);
+}
+
+#[test]
+fn migrate_header_without_header_row_is_corrupt() {
+    let (_dir, path) = fixture_v1_copy();
+    let mut storage = Storage::open(&path).unwrap();
+    let (header, _) = new_header();
+    raw(&path).execute("DELETE FROM header", []).unwrap();
+    assert_eq!(
+        storage.migrate_header(&header).err(),
+        Some(Error::Storage(StorageErrorKind::Corrupt))
     );
 }

@@ -1,13 +1,13 @@
 //! Pruebas de punta a punta de la API pública `vault_core::vault`, con la
 //! calibración real de Argon2id. Tardan algunos segundos.
 //!
-//! También abren la bóveda de ejemplo `tests/fixtures/vault-v1.db`, siempre
-//! sobre una copia.
+//! También abren las bóvedas de ejemplo `tests/fixtures/vault-v1.db` y
+//! `vault-v2.db`, siempre sobre una copia.
 
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use secrecy::{ExposeSecret, SecretString};
+use secrecy::{ExposeSecret, SecretBox, SecretString};
 use vault_core::vault::{EntryId, Error, SearchData, Secret, UnlockReport, Vault};
 
 fn password(text: &str) -> SecretString {
@@ -126,14 +126,24 @@ fn export_delete_import_with_calibration() {
 /// Contraseña de `tests/fixtures/vault-v1.db` (ver `tests/fixtures/README.md`).
 const FIXTURE_V1_PASSWORD: &str = "prueba-bóveda-v1";
 
-/// Copia `vault-v1.db` a un directorio temporal (que debe vivir toda la
-/// prueba) y devuelve la ruta absoluta de la copia.
-fn fixture_copy() -> (tempfile::TempDir, PathBuf) {
-    let source = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/vault-v1.db");
+/// Contraseña de `tests/fixtures/vault-v2.db` (ver `tests/fixtures/README.md`).
+const FIXTURE_V2_PASSWORD: &str = "prueba-bóveda-v2";
+
+/// Copia la bóveda de ejemplo `name` a un directorio temporal (que debe
+/// vivir toda la prueba) y devuelve la ruta absoluta de la copia.
+fn fixture_copy_of(name: &str) -> (tempfile::TempDir, PathBuf) {
+    let source = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures")
+        .join(name);
     let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("vault-v1.db");
+    let path = dir.path().join(name);
     fs::copy(source, &path).unwrap();
     (dir, path)
+}
+
+/// Copia de `vault-v1.db`.
+fn fixture_copy() -> (tempfile::TempDir, PathBuf) {
+    fixture_copy_of("vault-v1.db")
 }
 
 /// Abre y desbloquea `path` con la contraseña de prueba.
@@ -237,6 +247,12 @@ fn swap_secrets(path: &Path, a: EntryId, b: EntryId) {
 #[test]
 fn fixture_v1_opens_with_known_contents() {
     let (_dir, _path, mut vault) = unlocked_fixture();
+    assert_fixture_contents(&mut vault);
+}
+
+/// Comprueba el contenido descrito en `tests/fixtures/README.md`, igual en
+/// todas las bóvedas de ejemplo.
+fn assert_fixture_contents(vault: &mut Vault) {
     assert_eq!(vault.entries().unwrap().len(), 3);
 
     {
@@ -261,20 +277,14 @@ fn fixture_v1_opens_with_known_contents() {
     }
 
     assert_eq!(
-        revealed(&mut vault, "Correo Electrónico"),
+        revealed(vault, "Correo Electrónico"),
         (
             "clave-completa-ñ".to_owned(),
             Some("Línea uno\nLínea dos".to_owned())
         )
     );
-    assert_eq!(
-        revealed(&mut vault, "Banco"),
-        ("clave-minima".to_owned(), None)
-    );
-    assert_eq!(
-        revealed(&mut vault, "Nube"),
-        ("clave-nube".to_owned(), None)
-    );
+    assert_eq!(revealed(vault, "Banco"), ("clave-minima".to_owned(), None));
+    assert_eq!(revealed(vault, "Nube"), ("clave-nube".to_owned(), None));
 
     // La lápida no aparece.
     assert!(vault.search("Eliminada").unwrap().is_empty());
@@ -432,4 +442,74 @@ fn full_flow_through_public_api() {
             expected
         );
     }
+}
+
+// --- Formato 2 y desbloqueo con la llave de bóveda (#34) ------------------
+
+#[test]
+fn fixture_v2_opens_with_known_contents() {
+    let (_dir, path) = fixture_copy_of("vault-v2.db");
+    let mut vault = Vault::open(&path).unwrap();
+    let report = vault.unlock(&password(FIXTURE_V2_PASSWORD)).unwrap();
+    assert_eq!(report, clean_report());
+    assert_fixture_contents(&mut vault);
+}
+
+#[test]
+fn fixture_v1_migrates_and_keeps_working() {
+    let (_dir, path) = fixture_copy();
+    let (mut vault, report) = unlock_at(&path);
+    assert_eq!(report, clean_report());
+    assert_fixture_contents(&mut vault);
+    let key = vault.export_vault_key().unwrap();
+    drop(vault);
+
+    // Solo una v2 desbloquea con la llave: prueba que quedó migrada.
+    let mut vault = Vault::open(&path).unwrap();
+    assert_eq!(vault.unlock_with_key(key).unwrap(), clean_report());
+    assert_eq!(services(&vault), ["Banco", "Correo Electrónico", "Nube"]);
+    assert_eq!(
+        revealed(&mut vault, "Banco"),
+        ("clave-minima".to_owned(), None)
+    );
+
+    // La misma contraseña sigue abriendo.
+    vault.lock();
+    assert!(vault.unlock(&password(FIXTURE_V1_PASSWORD)).is_ok());
+}
+
+#[test]
+fn unlock_with_key_on_unmigrated_v1_is_wrong_vault_key() {
+    // La llave real, sacada de otra copia ya migrada.
+    let (_dir, migrated) = fixture_copy();
+    let (mut vault, _) = unlock_at(&migrated);
+    let real_key = vault.export_vault_key().unwrap();
+    drop(vault);
+
+    let (_dir2, path) = fixture_copy();
+    let mut vault = Vault::open(&path).unwrap();
+    assert_eq!(
+        vault
+            .unlock_with_key(SecretBox::new(Box::new([7u8; 32])))
+            .err(),
+        Some(Error::WrongVaultKey)
+    );
+    assert_eq!(
+        vault.unlock_with_key(real_key).err(),
+        Some(Error::WrongVaultKey)
+    );
+    assert!(vault.is_locked());
+}
+
+#[test]
+fn migrated_vault_key_survives_password_change_with_calibration() {
+    let (_dir, path) = fixture_copy();
+    let (mut vault, _) = unlock_at(&path);
+    let key = vault.export_vault_key().unwrap();
+    vault
+        .change_master_password(&password(FIXTURE_V1_PASSWORD), &password("nueva"))
+        .unwrap();
+    vault.lock();
+    assert_eq!(vault.unlock_with_key(key).unwrap(), clean_report());
+    assert_eq!(vault.entries().unwrap().len(), 3);
 }

@@ -23,10 +23,10 @@ use rusqlite::{Connection, ErrorCode, OpenFlags, TransactionBehavior, params};
 
 use super::entry::sealed::SealedEntry;
 use super::entry::{ENTRY_ID_LEN, EntryId};
-use super::header::{FORMAT_VERSION, VaultHeader};
+use super::header::{FORMAT_VERSION, FORMAT_VERSION_V1, VaultHeader};
 use crate::crypto::aead::EncryptedPart;
 use crate::crypto::kdf::{KdfParams, SALT_LEN};
-use crate::crypto::keys::{ENCRYPTED_KEY_LEN, EncryptedKey, NONCE_LEN};
+use crate::crypto::keys::{ENCRYPTED_KEY_LEN, EncryptedKey, KEY_CHECK_LEN, NONCE_LEN};
 use crate::error::{Error, Result, StorageErrorKind};
 
 /// Identifica el archivo como bóveda ("BVLT"). Fijo para siempre, aunque
@@ -35,9 +35,12 @@ use crate::error::{Error, Result, StorageErrorKind};
 /// No es un control de seguridad, porque no está autenticado.
 pub(crate) const APPLICATION_ID: i32 = 0x4256_4C54;
 
-/// Esquema de la versión de formato 1.
-const SCHEMA: &str = "
-CREATE TABLE header (
+/// Columnas de la tabla `header` de la versión de formato 2. Se escriben una
+/// sola vez porque las usan `SCHEMA` y la migración desde la versión 1
+/// (que crea `header_v2` y la renombra): así el texto de ambas es el mismo.
+macro_rules! header_v2_columns {
+    () => {
+        "(
     id              INTEGER PRIMARY KEY CHECK (id = 1),
     format_version  INTEGER NOT NULL,
     kdf_algorithm   INTEGER NOT NULL,
@@ -46,9 +49,25 @@ CREATE TABLE header (
     kdf_parallelism INTEGER NOT NULL,
     salt            BLOB NOT NULL CHECK (length(salt) = 16),
     key_nonce       BLOB NOT NULL CHECK (length(key_nonce) = 24),
-    encrypted_key   BLOB NOT NULL CHECK (length(encrypted_key) = 48)
-) STRICT;
+    encrypted_key   BLOB NOT NULL CHECK (length(encrypted_key) = 48),
+    key_check       BLOB NOT NULL CHECK (length(key_check) = 40)
+) STRICT"
+    };
+}
 
+/// Esquema de la versión de formato 2. El de la versión 1 (sin `key_check`)
+/// está en la especificación y en `tests/fixtures/vault-v1.db`.
+///
+/// `"header"` va entre comillas para coincidir con lo que deja
+/// `ALTER TABLE ... RENAME` en la migración desde la versión 1: SQLite
+/// reescribe el nombre entre comillas en `sqlite_schema`. La prueba de
+/// igualdad de `sqlite_schema` entre una bóveda migrada y una creada lo
+/// comprueba.
+const SCHEMA: &str = concat!(
+    "CREATE TABLE \"header\" ",
+    header_v2_columns!(),
+    ";\n",
+    "
 CREATE TABLE entries (
     id                   BLOB PRIMARY KEY NOT NULL,
     entry_schema_version INTEGER NOT NULL,
@@ -60,7 +79,18 @@ CREATE TABLE entries (
     CHECK ((deleted = 0 AND search IS NOT NULL AND secret IS NOT NULL)
         OR (deleted = 1 AND search IS NULL AND secret IS NULL))
 ) STRICT, WITHOUT ROWID;
-";
+"
+);
+
+/// Resultado de [`Storage::migrate_header`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Migration {
+    /// La cabecera era de la versión 1 y quedó en la 2.
+    Done,
+    /// La cabecera ya no era de la versión 1 al abrir la transacción (otra
+    /// conexión la migró): no se tocó nada.
+    NotNeeded,
+}
 
 /// Conexión a la bóveda. No deriva `Debug`.
 pub(crate) struct Storage {
@@ -112,24 +142,7 @@ impl Storage {
         tx.pragma_update(None, "application_id", APPLICATION_ID)
             .map_err(map_sqlite_error)?;
         tx.execute_batch(SCHEMA).map_err(map_sqlite_error)?;
-        let params = header.params();
-        let key = header.encrypted_key();
-        tx.execute(
-            "INSERT INTO header (id, format_version, kdf_algorithm, kdf_memory_kib, \
-             kdf_iterations, kdf_parallelism, salt, key_nonce, encrypted_key) \
-             VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
-            params![
-                header.format_version(),
-                header.algorithm() as u8,
-                params.memory_kib,
-                params.iterations,
-                params.parallelism,
-                header.salt().as_slice(),
-                key.nonce.as_slice(),
-                key.ciphertext.as_slice(),
-            ],
-        )
-        .map_err(map_sqlite_error)?;
+        insert_header(&tx, HeaderTable::Header, header)?;
         tx.commit().map_err(map_sqlite_error)?;
 
         Ok(Self { conn })
@@ -217,31 +230,39 @@ impl Storage {
             })?;
         let version =
             u16::try_from(version).map_err(|_| Error::Storage(StorageErrorKind::Corrupt))?;
-        if version != FORMAT_VERSION {
-            return Err(Error::UnsupportedFormatVersion(version));
-        }
+        // La versión 1 no tiene la columna `key_check`: cada versión conocida
+        // tiene su consulta.
+        let sql = match version {
+            FORMAT_VERSION => {
+                "SELECT format_version, kdf_algorithm, kdf_memory_kib, kdf_iterations, \
+                 kdf_parallelism, salt, key_nonce, encrypted_key, key_check \
+                 FROM header WHERE id = 1"
+            }
+            FORMAT_VERSION_V1 => {
+                "SELECT format_version, kdf_algorithm, kdf_memory_kib, kdf_iterations, \
+                 kdf_parallelism, salt, key_nonce, encrypted_key, NULL \
+                 FROM header WHERE id = 1"
+            }
+            other => return Err(Error::UnsupportedFormatVersion(other)),
+        };
 
         let raw = self
             .conn
-            .query_row(
-                "SELECT format_version, kdf_algorithm, kdf_memory_kib, kdf_iterations, \
-                 kdf_parallelism, salt, key_nonce, encrypted_key FROM header WHERE id = 1",
-                [],
-                |row| {
-                    Ok(RawHeader {
-                        format_version: row.get(0)?,
-                        algorithm: row.get(1)?,
-                        params: KdfParams {
-                            memory_kib: row.get(2)?,
-                            iterations: row.get(3)?,
-                            parallelism: row.get(4)?,
-                        },
-                        salt: row.get(5)?,
-                        nonce: row.get(6)?,
-                        ciphertext: row.get(7)?,
-                    })
-                },
-            )
+            .query_row(sql, [], |row| {
+                Ok(RawHeader {
+                    format_version: row.get(0)?,
+                    algorithm: row.get(1)?,
+                    params: KdfParams {
+                        memory_kib: row.get(2)?,
+                        iterations: row.get(3)?,
+                        parallelism: row.get(4)?,
+                    },
+                    salt: row.get(5)?,
+                    nonce: row.get(6)?,
+                    ciphertext: row.get(7)?,
+                    key_check: row.get(8)?,
+                })
+            })
             .map_err(|e| match e {
                 rusqlite::Error::QueryReturnedNoRows => Error::Storage(StorageErrorKind::Corrupt),
                 other => map_sqlite_error(other),
@@ -251,18 +272,25 @@ impl Storage {
         let salt = <[u8; SALT_LEN]>::try_from(raw.salt).map_err(corrupt)?;
         let nonce = <[u8; NONCE_LEN]>::try_from(raw.nonce).map_err(corrupt)?;
         let ciphertext = <[u8; ENCRYPTED_KEY_LEN]>::try_from(raw.ciphertext).map_err(corrupt)?;
+        let key_check = raw
+            .key_check
+            .map(<[u8; KEY_CHECK_LEN]>::try_from)
+            .transpose()
+            .map_err(corrupt)?;
         VaultHeader::from_parts(
             raw.format_version,
             raw.algorithm,
             raw.params,
             salt,
             EncryptedKey { nonce, ciphertext },
+            key_check,
         )
     }
 
     /// Reemplaza la única fila de la cabecera (al cambiar la contraseña
-    /// maestra).
+    /// maestra). La cabecera debe ser de la versión actual, con `key_check`.
     pub(crate) fn replace_header(&mut self, header: &VaultHeader) -> Result<()> {
+        let key_check = current_key_check(header)?;
         let tx = self
             .conn
             .transaction_with_behavior(TransactionBehavior::Immediate)
@@ -273,7 +301,8 @@ impl Storage {
             .execute(
                 "UPDATE header SET format_version = ?1, kdf_algorithm = ?2, \
                  kdf_memory_kib = ?3, kdf_iterations = ?4, kdf_parallelism = ?5, \
-                 salt = ?6, key_nonce = ?7, encrypted_key = ?8 WHERE id = 1",
+                 salt = ?6, key_nonce = ?7, encrypted_key = ?8, key_check = ?9 \
+                 WHERE id = 1",
                 params![
                     header.format_version(),
                     header.algorithm() as u8,
@@ -283,6 +312,7 @@ impl Storage {
                     header.salt().as_slice(),
                     key.nonce.as_slice(),
                     key.ciphertext.as_slice(),
+                    key_check.as_slice(),
                 ],
             )
             .map_err(map_sqlite_error)?;
@@ -290,6 +320,84 @@ impl Storage {
             return Err(Error::Storage(StorageErrorKind::Corrupt));
         }
         tx.commit().map_err(map_sqlite_error)
+    }
+
+    /// Reemplaza solo `key_check` (al repararlo en
+    /// `Vault::export_vault_key`). Si no cambia exactamente una fila, da
+    /// `Storage(Corrupt)`.
+    pub(crate) fn replace_key_check(&mut self, key_check: &[u8; KEY_CHECK_LEN]) -> Result<()> {
+        let changed = self.write(
+            "UPDATE header SET key_check = ?1 WHERE id = 1",
+            params![key_check.as_slice()],
+        )?;
+        if changed != 1 {
+            return Err(Error::Storage(StorageErrorKind::Corrupt));
+        }
+        Ok(())
+    }
+
+    /// Migra la tabla `header` de la versión 1 a la 2 con `header`, ya
+    /// armada por [`VaultHeader::unlock_upgrading`].
+    ///
+    /// Sigue el procedimiento que documenta SQLite para cambios de esquema
+    /// ("Making Other Kinds Of Table Schema Changes", `lang_altertable.html`
+    /// §8), en una sola transacción: crear `header_v2`, insertar la
+    /// cabecera, borrar `header`, renombrar `header_v2` a `header` y
+    /// verificar. Se renombra la tabla nueva, no la vieja: la documentación
+    /// advierte que renombrar primero la vieja puede dañar referencias.
+    /// `header` no tiene índices, triggers, vistas ni llaves foráneas que
+    /// reconstruir. Si algo falla, la transacción se revierte y el archivo
+    /// sigue siendo de la versión 1.
+    ///
+    /// Antes de tocar nada, ya con el candado de escritura, vuelve a leer
+    /// `format_version`: entre la lectura de la cabecera v1 y esta
+    /// transacción (Argon2id tarda) otra conexión pudo migrarla y cambiar la
+    /// contraseña. Si ya no es la versión 1, no escribe nada y devuelve
+    /// [`Migration::NotNeeded`]; quien llama decide cómo seguir. Sobrescribir
+    /// revertiría ese cambio de contraseña sin aviso.
+    pub(crate) fn migrate_header(&mut self, header: &VaultHeader) -> Result<Migration> {
+        let tx = self
+            .conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(map_sqlite_error)?;
+        let current: i64 = tx
+            .query_row(
+                "SELECT format_version FROM header WHERE id = 1",
+                [],
+                |row| row.get(0),
+            )
+            // Sin fila de cabecera no hay bóveda: el mismo error que en
+            // `read_header`.
+            .map_err(|e| match e {
+                rusqlite::Error::QueryReturnedNoRows => Error::Storage(StorageErrorKind::Corrupt),
+                other => map_sqlite_error(other),
+            })?;
+        if current != i64::from(FORMAT_VERSION_V1) {
+            // Al soltar `tx` sin confirmar, SQLite revierte (no hubo cambios).
+            return Ok(Migration::NotNeeded);
+        }
+        tx.execute_batch(concat!(
+            "CREATE TABLE header_v2 ",
+            header_v2_columns!(),
+            ";"
+        ))
+        .map_err(map_sqlite_error)?;
+        insert_header(&tx, HeaderTable::HeaderV2, header)?;
+        tx.execute_batch("DROP TABLE header; ALTER TABLE header_v2 RENAME TO header;")
+            .map_err(map_sqlite_error)?;
+
+        let (version, key_check_len): (i64, i64) = tx
+            .query_row(
+                "SELECT format_version, length(key_check) FROM header WHERE id = 1",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .map_err(map_sqlite_error)?;
+        if (version, key_check_len) != (i64::from(FORMAT_VERSION), KEY_CHECK_LEN as i64) {
+            return Err(Error::Storage(StorageErrorKind::Corrupt));
+        }
+        tx.commit().map_err(map_sqlite_error)?;
+        Ok(Migration::Done)
     }
 
     /// Copia consistente y compacta de la bóveda en `dest` con `VACUUM INTO`.
@@ -550,6 +658,66 @@ struct RawHeader {
     salt: Vec<u8>,
     nonce: Vec<u8>,
     ciphertext: Vec<u8>,
+    /// `None` en la versión 1, que no tiene la columna.
+    key_check: Option<Vec<u8>>,
+}
+
+/// Tabla donde se inserta la cabecera: la definitiva o la temporal de la
+/// migración desde la versión 1. Los nombres son fijos, nunca datos.
+#[derive(Clone, Copy)]
+enum HeaderTable {
+    Header,
+    HeaderV2,
+}
+
+impl HeaderTable {
+    fn insert_sql(self) -> &'static str {
+        match self {
+            Self::Header => {
+                "INSERT INTO header (id, format_version, kdf_algorithm, kdf_memory_kib, \
+                 kdf_iterations, kdf_parallelism, salt, key_nonce, encrypted_key, key_check) \
+                 VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)"
+            }
+            Self::HeaderV2 => {
+                "INSERT INTO header_v2 (id, format_version, kdf_algorithm, kdf_memory_kib, \
+                 kdf_iterations, kdf_parallelism, salt, key_nonce, encrypted_key, key_check) \
+                 VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)"
+            }
+        }
+    }
+}
+
+/// `key_check` de una cabecera de la versión actual. Una cabecera sin él
+/// (de la versión 1) no se puede escribir: da `Storage(Corrupt)`.
+fn current_key_check(header: &VaultHeader) -> Result<&[u8; KEY_CHECK_LEN]> {
+    match header.key_check() {
+        Some(key_check) if header.format_version() == FORMAT_VERSION => Ok(key_check),
+        _ => Err(Error::Storage(StorageErrorKind::Corrupt)),
+    }
+}
+
+/// Inserta la única fila de la cabecera en `table`, dentro de la
+/// transacción de quien llama.
+fn insert_header(conn: &Connection, table: HeaderTable, header: &VaultHeader) -> Result<()> {
+    let key_check = current_key_check(header)?;
+    let params = header.params();
+    let key = header.encrypted_key();
+    conn.execute(
+        table.insert_sql(),
+        params![
+            header.format_version(),
+            header.algorithm() as u8,
+            params.memory_kib,
+            params.iterations,
+            params.parallelism,
+            header.salt().as_slice(),
+            key.nonce.as_slice(),
+            key.ciphertext.as_slice(),
+            key_check.as_slice(),
+        ],
+    )
+    .map_err(map_sqlite_error)?;
+    Ok(())
 }
 
 /// Fija los pragmas de cada apertura de lectura y escritura. Ninguno de los

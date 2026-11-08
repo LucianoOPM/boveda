@@ -49,3 +49,11 @@ fn new_vault_error_messages_are_fixed() {
     );
     assert_eq!(Error::Clock.to_string(), "la hora del sistema no es válida");
 }
+
+#[test]
+fn wrong_vault_key_message() {
+    assert_eq!(
+        Error::WrongVaultKey.to_string(),
+        "la llave no corresponde a esta bóveda"
+    );
+}

@@ -127,6 +127,15 @@ pub(crate) fn calibrate() -> Result<KdfParams> {
     })
 }
 
+#[cfg(test)]
+thread_local! {
+    /// Llamadas a [`derive_key`] en este hilo. Solo existe en pruebas, para
+    /// comprobar sin medir tiempos que un flujo deriva una sola vez. Cada
+    /// prueba lo pone en cero al empezar: `thread_local` aísla las pruebas
+    /// entre sí, pero no de lo que haya corrido antes en el mismo hilo.
+    pub(crate) static DERIVE_CALLS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 /// Deriva la llave que cifra la llave de bóveda.
 ///
 /// Rechaza parámetros fuera de los límites de [`KdfParams::validate`].
@@ -135,6 +144,8 @@ pub(crate) fn derive_key(
     salt: &[u8; SALT_LEN],
     params: &KdfParams,
 ) -> Result<DerivedKey> {
+    #[cfg(test)]
+    DERIVE_CALLS.with(|calls| calls.set(calls.get() + 1));
     params.validate()?;
     let argon2_params = Params::new(
         params.memory_kib,

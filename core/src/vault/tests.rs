@@ -8,7 +8,7 @@ use secrecy::ExposeSecret;
 use zeroize::ZeroizeOnDrop;
 
 use super::*;
-use crate::crypto::kdf::KdfParams;
+use crate::crypto::kdf::{DERIVE_CALLS, KdfParams};
 use crate::vault::test_support::*;
 
 #[test]
@@ -846,38 +846,11 @@ fn search_never_matches_password() {
     assert!(vault.search("zqxw-secreto-98").unwrap().is_empty());
 }
 
-// --- Bóveda de ejemplo del formato 1 -------------------------------------
+// --- Bóvedas de ejemplo ---------------------------------------------------
 
-/// Contraseña de prueba de `core/tests/fixtures/vault-v1.db`. Se repite en
-/// `core/tests/vault.rs`, que no ve el código `cfg(test)` del crate.
-const FIXTURE_V1_PASSWORD: &str = "prueba-bóveda-v1";
-
-/// Genera `core/tests/fixtures/vault-v1.db`, la bóveda de ejemplo del
-/// formato 1, que las pruebas de `core/tests/vault.rs` deben abrir siempre.
-///
-/// El número del nombre es la `format_version` de la cabecera. Cada versión
-/// de formato nueva lleva un archivo nuevo (`vault-v2.db`, ...) y su propio
-/// generador; los archivos existentes no se modifican ni se borran. Si el
-/// archivo ya existe, falla a propósito con `AlreadyExists`.
-///
-/// Se ejecuta una sola vez, al introducir una versión de formato nueva:
-/// `cargo test -p vault-core --lib -- --ignored --exact vault::tests::generate_fixture_v1`
-///
-/// Nunca con `--ignored` sin filtro: también correría este generador, que
-/// fallaría con `AlreadyExists` (o crearía una bóveda distinta si falta el
-/// archivo).
-///
-/// Contenido y contraseña: `core/tests/fixtures/README.md`.
-#[test]
-#[ignore = "solo al introducir una versión de formato nueva"]
-fn generate_fixture_v1() {
-    // Ruta absoluta, como exigen las reglas de rutas (`SQLITE_USE_URI`).
-    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/vault-v1.db");
-    fs::create_dir_all(path.parent().unwrap()).unwrap();
-    // Sin borrar nada antes: si el archivo existe, `AlreadyExists`.
-    let mut vault =
-        Vault::create_with_params(&path, &password(FIXTURE_V1_PASSWORD), KdfParams::MIN).unwrap();
-
+/// Llena una bóveda de ejemplo con el contenido descrito en
+/// `core/tests/fixtures/README.md`. La usan todos los generadores.
+fn fill_fixture(vault: &mut Vault) {
     // Todos los campos opcionales, con acentos y un salto de línea.
     let full = SearchData::new(
         "Correo Electrónico",
@@ -888,7 +861,10 @@ fn generate_fixture_v1() {
     .unwrap();
     let full_secret = Secret::new(
         password("clave-completa-ñ"),
-        Some(password("Línea uno\nLínea dos")),
+        Some(password(
+            "Línea uno
+Línea dos",
+        )),
     )
     .unwrap();
     vault.add(full, full_secret).unwrap();
@@ -909,4 +885,386 @@ fn generate_fixture_v1() {
     // `reveal` escribe `last_used_at`; `delete` deja la lápida.
     vault.reveal(used).unwrap();
     vault.delete(deleted).unwrap();
+}
+
+/// Crea la bóveda de ejemplo `name` en `core/tests/fixtures/` con
+/// `KdfParams::MIN`. Si el archivo ya existe, falla a propósito con
+/// `AlreadyExists` sin tocarlo.
+fn generate_fixture(name: &str, fixture_password: &str) {
+    // Ruta absoluta, como exigen las reglas de rutas (`SQLITE_USE_URI`).
+    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures")
+        .join(name);
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    // Sin borrar nada antes: si el archivo existe, `AlreadyExists`.
+    let mut vault =
+        Vault::create_with_params(&path, &password(fixture_password), KdfParams::MIN).unwrap();
+    fill_fixture(&mut vault);
+}
+
+/// Generó `core/tests/fixtures/vault-v1.db`, la bóveda de ejemplo del
+/// formato 1, que las pruebas de `core/tests/vault.rs` deben abrir siempre.
+///
+/// Desde el formato 2, `create_with_params` crea bóvedas de la versión 2,
+/// así que este generador ya no reproduce `vault-v1.db`: se conserva como
+/// registro de cómo se generó. Nunca lo ejecutes.
+///
+/// Cada versión de formato nueva lleva un archivo nuevo y su propio
+/// generador; los archivos existentes no se modifican ni se borran.
+/// Contenido y contraseña: `core/tests/fixtures/README.md`.
+#[test]
+#[ignore = "registro: generó vault-v1.db con el formato 1; ya no lo reproduce"]
+fn generate_fixture_v1() {
+    generate_fixture("vault-v1.db", FIXTURE_V1_PASSWORD);
+}
+
+/// Contraseña de prueba de `core/tests/fixtures/vault-v2.db`. Se repite en
+/// `core/tests/vault.rs`, que no ve el código `cfg(test)` del crate.
+const FIXTURE_V2_PASSWORD: &str = "prueba-bóveda-v2";
+
+/// Genera `core/tests/fixtures/vault-v2.db`, la bóveda de ejemplo del
+/// formato 2, con el mismo contenido que la del formato 1.
+///
+/// Se ejecutó una sola vez:
+/// `cargo test -p vault-core --lib -- --ignored --exact vault::tests::generate_fixture_v2`
+///
+/// Nunca con `--ignored` sin filtro: también correría los generadores, que
+/// fallarían con `AlreadyExists` (o crearían una bóveda distinta si falta
+/// el archivo).
+#[test]
+#[ignore = "solo al introducir una versión de formato nueva"]
+fn generate_fixture_v2() {
+    generate_fixture("vault-v2.db", FIXTURE_V2_PASSWORD);
+}
+
+// --- Migración del formato 1 al 2 (#34) ----------------------------------
+
+#[test]
+fn unlock_migrates_v1_with_one_derivation() {
+    let (_dir, path) = fixture_v1_copy();
+    let mut vault = Vault::open(&path).unwrap();
+    assert_eq!(vault.storage.read_header().unwrap().format_version(), 1);
+
+    DERIVE_CALLS.with(|c| c.set(0));
+    let report = vault.unlock(&password(FIXTURE_V1_PASSWORD)).unwrap();
+    assert_eq!(DERIVE_CALLS.with(|c| c.get()), 1);
+
+    assert!(report.corrupt.is_empty());
+    assert_eq!(report.unidentified_corrupt, 0);
+    assert_eq!(vault.entries().unwrap().len(), 3);
+    let header = vault.storage.read_header().unwrap();
+    assert_eq!(header.format_version(), 2);
+    assert_eq!(header.verify_key(&vault.unlocked().unwrap().key), Ok(()));
+}
+
+#[test]
+fn migrated_schema_equals_created_schema() {
+    let (_dir, migrated) = fixture_v1_copy();
+    let mut vault = Vault::open(&migrated).unwrap();
+    vault.unlock(&password(FIXTURE_V1_PASSWORD)).unwrap();
+    drop(vault);
+
+    let (_dir2, created) = temp_path();
+    drop(Vault::create_with_params(&created, &password("p"), KdfParams::MIN).unwrap());
+
+    assert_eq!(schema_of(&migrated), schema_of(&created));
+    let integrity: String = raw(&migrated)
+        .query_row("PRAGMA integrity_check", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(integrity, "ok");
+}
+
+#[test]
+fn failed_migration_keeps_v1_byte_for_byte() {
+    let (_dir, path) = fixture_v1_copy();
+    let mut vault = Vault::open(&path).unwrap();
+    let before = fs::read(&path).unwrap();
+    vault.storage.deny_writes_for_test();
+
+    let err = vault.unlock(&password(FIXTURE_V1_PASSWORD)).unwrap_err();
+    assert!(matches!(err, Error::Storage(_)), "{err:?}");
+    assert!(vault.is_locked());
+    drop(vault);
+    assert_eq!(fs::read(&path).unwrap(), before);
+}
+
+#[test]
+fn wrong_password_on_v1_writes_nothing() {
+    let (_dir, path) = fixture_v1_copy();
+    let mut vault = Vault::open(&path).unwrap();
+    let before = fs::read(&path).unwrap();
+
+    assert_eq!(
+        vault.unlock(&password("incorrecta")).err(),
+        Some(Error::WrongPassword)
+    );
+    assert!(vault.is_locked());
+    drop(vault);
+    assert_eq!(fs::read(&path).unwrap(), before);
+}
+
+#[test]
+fn v2_unlock_writes_nothing() {
+    let (_dir, path, mut vault) = new_vault();
+    vault.lock();
+    let before = fs::read(&path).unwrap();
+    relock(&mut vault);
+    drop(vault);
+    assert_eq!(fs::read(&path).unwrap(), before);
+}
+
+// --- Desbloqueo con la llave de bóveda (#34) -----------------------------
+
+/// Llave aleatoria que no es la de ninguna bóveda.
+fn random_key() -> SecretBox<[u8; 32]> {
+    crate::crypto::keys::generate_vault_key().unwrap()
+}
+
+/// `key_check` tal como está en el archivo.
+fn stored_key_check(path: &Path) -> Vec<u8> {
+    raw(path)
+        .query_row("SELECT key_check FROM header WHERE id = 1", [], |row| {
+            row.get(0)
+        })
+        .unwrap()
+}
+
+/// Invierte un bit de `key_check` en el archivo.
+fn damage_key_check(path: &Path) {
+    let mut check = stored_key_check(path);
+    check[30] ^= 0x01;
+    raw(path)
+        .execute("UPDATE header SET key_check = ?1 WHERE id = 1", [check])
+        .unwrap();
+}
+
+fn revealed_password(vault: &mut Vault, id: EntryId) -> String {
+    vault
+        .reveal(id)
+        .unwrap()
+        .password()
+        .expose_secret()
+        .to_owned()
+}
+
+#[test]
+fn export_lock_unlock_with_key_round_trip() {
+    let (_dir, _path, mut vault) = new_vault();
+    let a = add_sample(&mut vault, "a");
+    add_sample(&mut vault, "b");
+    let password_a = revealed_password(&mut vault, a);
+    let before = snapshot(&vault);
+    let used_before = find(&vault, a).last_used_at();
+
+    let key = vault.export_vault_key().unwrap();
+    vault.lock();
+    let report = vault.unlock_with_key(key).unwrap();
+
+    assert!(report.corrupt.is_empty());
+    assert_eq!(report.unidentified_corrupt, 0);
+    assert_eq!(snapshot(&vault), before);
+    assert_eq!(find(&vault, a).last_used_at(), used_before);
+    assert_eq!(revealed_password(&mut vault, a), password_a);
+}
+
+#[test]
+fn unlock_with_wrong_key_stays_locked() {
+    let (_dir, _path, mut vault) = new_vault();
+    add_sample(&mut vault, "a");
+    vault.lock();
+    assert_eq!(
+        vault.unlock_with_key(random_key()).err(),
+        Some(Error::WrongVaultKey)
+    );
+    assert!(vault.is_locked());
+}
+
+#[test]
+fn empty_vault_rejects_wrong_key() {
+    let (_dir, _path, mut vault) = new_vault();
+    vault.lock();
+    assert_eq!(
+        vault.unlock_with_key(random_key()).err(),
+        Some(Error::WrongVaultKey)
+    );
+    assert!(vault.is_locked());
+    assert_eq!(vault.entries().err(), Some(Error::Locked));
+}
+
+#[test]
+fn unlock_with_key_of_other_vault() {
+    let (_dir, _path, mut vault) = new_vault();
+    let (_dir2, _path2, mut other) = new_vault();
+    let other_key = other.export_vault_key().unwrap();
+    vault.lock();
+    assert_eq!(
+        vault.unlock_with_key(other_key).err(),
+        Some(Error::WrongVaultKey)
+    );
+    assert!(vault.is_locked());
+}
+
+#[test]
+fn export_vault_key_locked_is_locked() {
+    let (_dir, _path, mut vault) = new_vault();
+    vault.lock();
+    assert_eq!(vault.export_vault_key().err(), Some(Error::Locked));
+}
+
+#[test]
+fn unlock_with_key_when_unlocked_is_already_unlocked() {
+    let (_dir, _path, mut vault) = new_vault();
+    let key = vault.export_vault_key().unwrap();
+    assert_eq!(
+        vault.unlock_with_key(key).err(),
+        Some(Error::AlreadyUnlocked)
+    );
+}
+
+#[test]
+fn old_key_survives_change_master_password() {
+    let (_dir, path, mut vault) = new_vault();
+    let key = vault.export_vault_key().unwrap();
+    let check_before = stored_key_check(&path);
+
+    vault
+        .change_master_password_with_params(
+            &password("correcta"),
+            &password("nueva"),
+            KdfParams::MIN,
+        )
+        .unwrap();
+    assert_ne!(stored_key_check(&path), check_before);
+
+    vault.lock();
+    vault.unlock_with_key(key).unwrap();
+}
+
+#[test]
+fn damaged_key_check_is_repaired_by_export() {
+    let (_dir, path, mut vault) = new_vault();
+    add_sample(&mut vault, "a");
+    let key = vault.export_vault_key().unwrap();
+    let key_bytes = *key.expose_secret();
+    vault.lock();
+    damage_key_check(&path);
+
+    assert_eq!(vault.unlock_with_key(key).err(), Some(Error::WrongVaultKey));
+    // La contraseña nunca depende del verificador.
+    vault.unlock(&password("correcta")).unwrap();
+    let repaired = vault.export_vault_key().unwrap();
+    assert_eq!(*repaired.expose_secret(), key_bytes);
+
+    vault.lock();
+    vault.unlock_with_key(repaired).unwrap();
+    assert_eq!(vault.entries().unwrap().len(), 1);
+}
+
+#[test]
+fn export_fails_without_key_when_repair_cannot_write() {
+    let (_dir, path, mut vault) = new_vault();
+    vault.lock();
+    damage_key_check(&path);
+    vault.unlock(&password("correcta")).unwrap();
+    vault.storage.deny_writes_for_test();
+
+    let err = vault.export_vault_key().err();
+    assert!(matches!(err, Some(Error::Storage(_))), "{err:?}");
+}
+
+#[test]
+fn export_with_valid_check_writes_nothing() {
+    let (_dir, path, mut vault) = new_vault();
+    let before = fs::read(&path).unwrap();
+    let first = vault.export_vault_key().unwrap();
+    let second = vault.export_vault_key().unwrap();
+    assert_eq!(first.expose_secret(), second.expose_secret());
+    drop(vault);
+    assert_eq!(fs::read(&path).unwrap(), before);
+}
+
+#[test]
+fn failed_unlock_with_key_then_password_works() {
+    let (_dir, _path, mut vault) = new_vault();
+    add_sample(&mut vault, "a");
+    vault.lock();
+    assert_eq!(
+        vault.unlock_with_key(random_key()).err(),
+        Some(Error::WrongVaultKey)
+    );
+    vault.unlock(&password("correcta")).unwrap();
+    assert_eq!(vault.entries().unwrap().len(), 1);
+}
+
+// --- Migración concurrente (#34, hallazgo de la revisión) -----------------
+
+/// Ejecuta la primera mitad de `unlock` en `vault` (leer la cabecera v1 y
+/// derivar), como si estuviera a mitad de Argon2id.
+fn derive_for_unlock(vault: &Vault, pw: &str) -> (VaultKey, Option<VaultHeader>) {
+    vault
+        .storage
+        .read_header()
+        .unwrap()
+        .unlock_upgrading(&password(pw))
+        .unwrap()
+}
+
+#[test]
+fn concurrent_migration_does_not_revert_password_change() {
+    let (_dir, path) = fixture_v1_copy();
+    let mut a = Vault::open(&path).unwrap();
+    let mut b = Vault::open(&path).unwrap();
+
+    // La A derivó con la cabecera v1; antes de que migre, la B migra y
+    // cambia la contraseña.
+    let (key, upgraded) = derive_for_unlock(&a, FIXTURE_V1_PASSWORD);
+    assert!(upgraded.is_some());
+    b.unlock(&password(FIXTURE_V1_PASSWORD)).unwrap();
+    b.change_master_password_with_params(
+        &password(FIXTURE_V1_PASSWORD),
+        &password("nueva"),
+        KdfParams::MIN,
+    )
+    .unwrap();
+    drop(b);
+
+    // La A termina: no sobrescribe la cabecera de la B.
+    assert_eq!(
+        a.finish_unlock(&password(FIXTURE_V1_PASSWORD), key, upgraded)
+            .err(),
+        Some(Error::WrongPassword)
+    );
+    assert!(a.is_locked());
+
+    // La contraseña nueva sigue abriendo y la vieja no.
+    a.unlock(&password("nueva")).unwrap();
+    assert_eq!(a.entries().unwrap().len(), 3);
+    a.lock();
+    assert_eq!(
+        a.unlock(&password(FIXTURE_V1_PASSWORD)).err(),
+        Some(Error::WrongPassword)
+    );
+}
+
+#[test]
+fn concurrent_migration_without_password_change_unlocks() {
+    let (_dir, path) = fixture_v1_copy();
+    let mut a = Vault::open(&path).unwrap();
+    let mut b = Vault::open(&path).unwrap();
+
+    let (key, upgraded) = derive_for_unlock(&a, FIXTURE_V1_PASSWORD);
+    b.unlock(&password(FIXTURE_V1_PASSWORD)).unwrap();
+    let check_from_b = b.storage.read_header().unwrap().key_check().copied();
+    drop(b);
+
+    let report = a
+        .finish_unlock(&password(FIXTURE_V1_PASSWORD), key, upgraded)
+        .unwrap();
+    assert!(report.corrupt.is_empty());
+    assert_eq!(a.entries().unwrap().len(), 3);
+    // La cabecera es la que escribió la B: la A no migró otra vez.
+    assert_eq!(
+        a.storage.read_header().unwrap().key_check().copied(),
+        check_from_b
+    );
 }

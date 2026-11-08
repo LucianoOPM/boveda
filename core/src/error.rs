@@ -69,6 +69,13 @@ pub enum Error {
     #[error("la hora del sistema no es válida")]
     Clock,
 
+    /// La llave recibida en `unlock_with_key` no autentica el verificador
+    /// de la cabecera: es de otra bóveda, está alterada, el verificador
+    /// está dañado o la bóveda es de la versión 1. No distingue entre esos
+    /// casos.
+    #[error("la llave no corresponde a esta bóveda")]
+    WrongVaultKey,
+
     /// `create` sobre una ruta que ya existe. No incluye la ruta.
     #[error("el archivo ya existe")]
     AlreadyExists,

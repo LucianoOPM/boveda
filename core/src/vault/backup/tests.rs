@@ -6,7 +6,7 @@ use std::path::PathBuf;
 use secrecy::ExposeSecret;
 
 use super::*;
-use crate::crypto::kdf::KdfParams;
+use crate::crypto::kdf::{DERIVE_CALLS, KdfParams};
 use crate::vault::test_support::*;
 use crate::vault::{EntryId, Error, SearchData, Secret, StorageErrorKind, UnlockReport, Vault};
 
@@ -286,7 +286,7 @@ fn import_future_version_keeps_dest() {
     let dir = tempfile::tempdir().unwrap();
     let (backup, _) = make_backup(dir.path());
     raw(&backup)
-        .execute("UPDATE header SET format_version = 2", [])
+        .execute("UPDATE header SET format_version = 3", [])
         .unwrap();
     let dest = dir.path().join("boveda.db");
     make_current(&dest);
@@ -295,7 +295,7 @@ fn import_future_version_keeps_dest() {
         &backup,
         &dest,
         "respaldo",
-        Error::UnsupportedFormatVersion(2),
+        Error::UnsupportedFormatVersion(3),
     );
 }
 
@@ -719,4 +719,38 @@ fn import_fails_while_dest_is_open() {
     ));
     assert_eq!(fs::read(&dest).unwrap(), before);
     assert!(!sibling(&dest, IMPORT_SUFFIX).exists());
+}
+
+// --- Respaldos del formato 1 (#34) ---------------------------------------
+
+#[test]
+fn import_v1_backup_installs_v2_with_one_derivation() {
+    let (_dir, backup) = fixture_v1_copy();
+    let (_dir2, dest) = temp_path();
+    let backup_before = fs::read(&backup).unwrap();
+
+    DERIVE_CALLS.with(|c| c.set(0));
+    let (mut vault, report) =
+        Vault::import(&backup, &dest, &password(FIXTURE_V1_PASSWORD)).unwrap();
+    assert_eq!(DERIVE_CALLS.with(|c| c.get()), 1);
+
+    assert!(report.corrupt.is_empty());
+    assert_eq!(vault.entries().unwrap().len(), 3);
+    assert_eq!(vault.storage.read_header().unwrap().format_version(), 2);
+    // El verificador instalado corresponde a la llave en memoria.
+    let key = vault.export_vault_key().unwrap();
+    vault.lock();
+    vault.unlock_with_key(key).unwrap();
+    drop(vault);
+    // El respaldo original no cambió: sigue siendo v1.
+    assert_eq!(fs::read(&backup).unwrap(), backup_before);
+    assert!(!sibling(&dest, IMPORT_SUFFIX).exists());
+}
+
+#[test]
+fn import_v1_with_wrong_password_keeps_dest() {
+    let (dir, backup) = fixture_v1_copy();
+    let dest = dir.path().join("actual.db");
+    make_current(&dest);
+    assert_import_fails_intact(&backup, &dest, "incorrecta", Error::WrongPassword);
 }
