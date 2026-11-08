@@ -11,15 +11,10 @@ import 'package:boveda/src/rust/frb_generated.dart';
 class MockRustLibApi extends Mock implements RustLibApi {}
 
 void main() {
-  setUpAll(() {
-    final api = MockRustLibApi();
-    when(() => api.crateApiSimpleGreet(name: any(named: 'name')))
-        .thenReturn('Hello, Tom!');
-    RustLib.initMock(api: api);
-  });
+  setUpAll(() => RustLib.initMock(api: MockRustLibApi()));
 
-  testWidgets('muestra el resultado de la llamada a Rust', (tester) async {
-    await tester.pumpWidget(const MyApp());
-    expect(find.textContaining('Hello, Tom!'), findsOneWidget);
+  testWidgets('muestra el marcador', (tester) async {
+    await tester.pumpWidget(const BovedaApp());
+    expect(find.text('Bóveda'), findsOneWidget);
   });
 }

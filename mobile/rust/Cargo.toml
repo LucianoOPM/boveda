@@ -14,7 +14,14 @@ crate-type = ["cdylib", "staticlib"]
 [dependencies]
 # La versión debe coincidir con la de flutter_rust_bridge en pubspec.yaml.
 flutter_rust_bridge = "=2.13.0"
+# Mismas versiones que en vault-core: la fachada solo envuelve en SecretString
+# lo que recibe de Dart y borra el original.
+secrecy = "0.10"
 vault-core = { path = "../../core" }
+zeroize = "1.9"
+
+[dev-dependencies]
+tempfile = "3"
 
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(frb_expand)'] }

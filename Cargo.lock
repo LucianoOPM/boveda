@@ -3340,7 +3340,10 @@ name = "rust_lib_boveda"
 version = "0.1.0"
 dependencies = [
  "flutter_rust_bridge",
+ "secrecy",
+ "tempfile",
  "vault-core",
+ "zeroize",
 ]
 
 [[package]]
