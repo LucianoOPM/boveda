@@ -59,6 +59,14 @@ void main() {
 
   setUp(() => session = FakeVaultSession());
 
+  testWidgets('al entrar el campo no tiene el foco', (tester) async {
+    // Decisión del diseño ("Sin foco inicial"): Android no abre el teclado
+    // durante la animación de arranque en frío; no se vuelve a intentar.
+    await pumpScreen(tester, session);
+    await tester.pump();
+    expect(field(tester).focusNode!.hasFocus, isFalse);
+  });
+
   testWidgets('botón desactivado con el campo vacío y activo al escribir', (
     tester,
   ) async {
