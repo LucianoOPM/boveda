@@ -98,3 +98,67 @@ fn seal_and_open_with_the_master_password() {
     let result = open_vault_key(&sealed, &wrong, &salt, &KdfParams::MIN, AAD);
     assert_eq!(result.err(), Some(Error::WrongPassword));
 }
+
+#[test]
+fn key_check_associated_data_layout() {
+    let ad = key_check_associated_data(0x0102);
+    assert_eq!(ad.len(), KEY_CHECK_AAD_LEN);
+    assert_eq!(KEY_CHECK_AAD_LEN, 18);
+    assert_eq!(&ad[..16], b"boveda-key-check");
+    assert_eq!(&ad[16..], &[0x02, 0x01]);
+}
+
+#[test]
+fn key_check_round_trip() {
+    let key = generate_vault_key().unwrap();
+    let check = seal_key_check(&key, 2).unwrap();
+    assert_eq!(check.len(), KEY_CHECK_LEN);
+    assert_eq!(KEY_CHECK_LEN, 40);
+    assert_eq!(verify_key_check(&key, 2, &check), Ok(()));
+}
+
+#[test]
+fn key_check_rejects_other_key_version_or_tamper() {
+    let key = generate_vault_key().unwrap();
+    let other = generate_vault_key().unwrap();
+    let check = seal_key_check(&key, 2).unwrap();
+    assert_eq!(
+        verify_key_check(&other, 2, &check),
+        Err(Error::WrongVaultKey)
+    );
+    assert_eq!(verify_key_check(&key, 3, &check), Err(Error::WrongVaultKey));
+    for i in [0, 23, 24, 39] {
+        let mut bad = check;
+        bad[i] ^= 0x01;
+        assert_eq!(verify_key_check(&key, 2, &bad), Err(Error::WrongVaultKey));
+    }
+}
+
+#[test]
+fn key_check_uses_fresh_nonce() {
+    let key = generate_vault_key().unwrap();
+    let a = seal_key_check(&key, 2).unwrap();
+    let b = seal_key_check(&key, 2).unwrap();
+    assert_ne!(a[..NONCE_LEN], b[..NONCE_LEN]);
+}
+
+#[test]
+fn open_keeping_derived_matches_open() {
+    let password = SecretString::from("contraseña de prueba");
+    let salt = kdf::generate_salt().unwrap();
+    let params = KdfParams::MIN;
+    let vault_key = generate_vault_key().unwrap();
+    let encrypted = seal_vault_key(&vault_key, &password, &salt, &params, AAD).unwrap();
+
+    let (opened, derived) =
+        open_vault_key_keeping_derived(&encrypted, &password, &salt, &params, AAD).unwrap();
+    assert_eq!(opened.expose_secret(), vault_key.expose_secret());
+    let expected = kdf::derive_key(&password, &salt, &params).unwrap();
+    assert_eq!(*derived, *expected);
+
+    let wrong = SecretString::from("otra");
+    assert!(matches!(
+        open_vault_key_keeping_derived(&encrypted, &wrong, &salt, &params, AAD),
+        Err(Error::WrongPassword)
+    ));
+}
