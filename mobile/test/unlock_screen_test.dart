@@ -120,11 +120,18 @@ void main() {
 
   testWidgets('contraseña incorrecta: mensaje, campo vacío, sigue bloqueada y '
       'con foco', (tester) async {
-    session.onUnlock = (_) async => throw VaultError.wrongPassword;
+    // Pendiente hasta después de un cuadro, como Argon2id en el celular: el
+    // campo se dibuja desactivado y pierde el foco. Si fallara en el acto,
+    // nunca se desactivaría y la prueba del foco no probaría nada.
+    final pending = Completer<UnlockReport>();
+    session.onUnlock = (_) => pending.future;
     final unlocked = <int>[];
     await pumpScreen(tester, session, onUnlocked: unlocked.add);
     await type(tester, 'incorrecta');
     await submitWithButton(tester);
+    expect(field(tester).focusNode!.hasFocus, isFalse);
+
+    pending.completeError(VaultError.wrongPassword);
     await tester.pumpAndSettle();
 
     expect(find.text(wrong), findsOneWidget);
