@@ -97,6 +97,28 @@ pub(crate) fn make_hot_journal_copy(src: &Path, dst: &Path) {
     assert!(journal.len() > 512, "el diario copiado no está caliente");
 }
 
+/// Pasa la bóveda `src` a WAL, modifica su cabecera y sus entradas sin
+/// checkpoint y copia el `-wal` resultante a `<dst>-wal`, con la conexión
+/// aún abierta: un `-wal` válido, como el que deja un cierre forzado.
+pub(crate) fn copy_live_wal(src: &Path, dst: &Path) {
+    let conn = raw(src);
+    let mode: String = conn
+        .pragma_update_and_check(None, "journal_mode", "WAL", |row| row.get(0))
+        .unwrap();
+    assert_eq!(mode, "wal");
+    conn.pragma_update(None, "wal_autocheckpoint", 0).unwrap();
+    conn.execute_batch(
+        "UPDATE header SET kdf_iterations = kdf_iterations + 1; \
+         UPDATE entries SET modified_at = modified_at + 1;",
+    )
+    .unwrap();
+    fs::copy(sibling(src, "-wal"), sibling(dst, "-wal")).unwrap();
+    drop(conn);
+
+    let wal = fs::metadata(sibling(dst, "-wal")).unwrap();
+    assert!(wal.len() > 32, "el -wal copiado no tiene frames");
+}
+
 /// Daña la página raíz de `entries`: llena sus 8 primeros bytes con `0xFF`.
 /// La cabecera (otra página) sigue legible.
 pub(crate) fn damage_entries_root_page(path: &Path) {
