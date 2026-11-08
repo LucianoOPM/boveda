@@ -70,6 +70,12 @@ fn assert_zod<T: ZeroizeOnDrop>() {}
 
 /// `file:<relativa>?mode=ro`, con `/` como separador: una URI que SQLite
 /// interpretaría por `SQLITE_USE_URI`.
+///
+/// Los casos con esta URI son solo de regresión, no un rojo real: aun sin
+/// `require_absolute`, las comprobaciones previas de Rust fallan sobre el
+/// archivo literal `file:…`, que no existe. Reproducir el riesgo exigiría
+/// crear ese archivo literal bajo `core/` (en Windows ni siquiera es un
+/// nombre válido) o cambiar el directorio de trabajo, global al proceso.
 fn uri_of(relative: &Path) -> PathBuf {
     let path = relative.to_str().unwrap().replace('\\', "/");
     PathBuf::from(format!("file:{path}?mode=ro"))
@@ -87,7 +93,9 @@ fn create_with_relative_path_is_io_and_creates_nothing() {
         );
         assert!(!absolute.exists());
     }
-    // `Vault::create` falla antes de calibrar Argon2id.
+    // `Vault::create` también da `Storage(Io)`. La comprobación temprana
+    // busca evitar la calibración; esta prueba no lo verifica (sin ella,
+    // `Storage::create` daría el mismo error después de calibrar).
     assert_eq!(Vault::create(&relative, &password("correcta")).err(), io);
     assert!(!absolute.exists());
 }

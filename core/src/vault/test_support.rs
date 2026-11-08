@@ -24,7 +24,9 @@ pub(crate) fn temp_path() -> (tempfile::TempDir, PathBuf) {
 /// dos formas: absoluta y relativa al directorio de trabajo de las pruebas
 /// (`core/`), por ejemplo `../target/boveda-rel-XXXX/boveda.db`.
 ///
-/// No usa `set_current_dir`, que es global al proceso.
+/// No usa `set_current_dir`, que es global al proceso. Tampoco sigue
+/// `CARGO_TARGET_DIR`: si el `target` real está en otra parte, igual crea
+/// `<workspace>/target` (ignorado por git), donde queda vacío al terminar.
 pub(crate) fn relative_temp_path() -> (tempfile::TempDir, PathBuf, PathBuf) {
     let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
     let root = manifest.parent().unwrap();
