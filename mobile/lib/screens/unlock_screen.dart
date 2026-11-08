@@ -111,7 +111,6 @@ class _UnlockScreenState extends State<UnlockScreen> {
                 controller: _password,
                 label: 'Contraseña maestra',
                 enabled: !_unlocking,
-                autofocus: true,
                 focusNode: _focus,
                 textInputAction: TextInputAction.done,
                 onChanged: _onChanged,

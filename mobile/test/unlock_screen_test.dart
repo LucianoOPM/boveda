@@ -69,11 +69,6 @@ void main() {
     expect(button(tester).onPressed, isNotNull);
   });
 
-  testWidgets('al entrar el campo tiene el foco', (tester) async {
-    await pumpScreen(tester, session);
-    expect(field(tester).focusNode!.hasFocus, isTrue);
-  });
-
   testWidgets('durante el desbloqueo muestra el progreso y desactiva el '
       'formulario', (tester) async {
     final pending = Completer<UnlockReport>();
