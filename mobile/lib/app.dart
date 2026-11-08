@@ -2,7 +2,9 @@ import 'package:flutter/material.dart';
 
 import 'screens/first_run_screen.dart';
 import 'screens/placeholder_screen.dart';
+import 'screens/unlock_screen.dart';
 import 'src/rust/api/session.dart';
+import 'widgets/damaged_entries_banner.dart';
 import 'widgets/strength_indicator.dart';
 
 /// La app: un `MaterialApp` cuyo inicio es [VaultGate].
@@ -39,10 +41,11 @@ enum VaultGateState { checking, noVault, locked, unlocked, openFailed }
 
 /// Widget raíz: elige la pantalla según el estado de la sesión, sin pila de
 /// rutas. Al cambiar de estado, la pantalla anterior sale del árbol y su
-/// `dispose` limpia lo que tenga. Las issues siguientes agregan transiciones
-/// (desbloquear en la #37, bloquear en la #39).
+/// `dispose` limpia lo que tenga. Transiciones: crear (primer uso) y
+/// desbloquear (#37) llevan a `unlocked`; bloquear llega en la #39.
 ///
-/// Guarda la sesión, que vive mientras vive la app; nunca una contraseña.
+/// Guarda la sesión, que vive mientras vive la app, y el total de entradas
+/// dañadas del último desbloqueo; nunca una contraseña.
 class VaultGate extends StatefulWidget {
   const VaultGate({
     super.key,
@@ -61,6 +64,10 @@ class VaultGate extends StatefulWidget {
 
 class _VaultGateState extends State<VaultGate> {
   VaultGateState _state = VaultGateState.checking;
+
+  /// Entradas dañadas del último desbloqueo, para el aviso de la pantalla
+  /// principal. 0 al crear la bóveda.
+  int _damagedEntries = 0;
 
   @override
   void initState() {
@@ -94,6 +101,13 @@ class _VaultGateState extends State<VaultGate> {
     _start();
   }
 
+  void _unlocked(int damagedEntries) {
+    setState(() {
+      _damagedEntries = damagedEntries;
+      _state = VaultGateState.unlocked;
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     return switch (_state) {
@@ -103,12 +117,16 @@ class _VaultGateState extends State<VaultGate> {
       VaultGateState.noVault => FirstRunScreen(
         session: widget.session,
         strengthOf: widget.strengthOf,
-        onCreated: () => setState(() => _state = VaultGateState.unlocked),
+        onCreated: () => _unlocked(0),
         onAlreadyExists: _reevaluate,
       ),
-      VaultGateState.locked => const PlaceholderScreen(text: 'Desbloqueo: #37'),
-      VaultGateState.unlocked => const PlaceholderScreen(
+      VaultGateState.locked => UnlockScreen(
+        session: widget.session,
+        onUnlocked: _unlocked,
+      ),
+      VaultGateState.unlocked => PlaceholderScreen(
         text: 'Pantalla principal: #40',
+        banner: DamagedEntriesBanner(count: _damagedEntries),
       ),
       VaultGateState.openFailed => const PlaceholderScreen(
         text: 'No se pudo abrir la bóveda.',

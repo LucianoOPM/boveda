@@ -5,7 +5,10 @@ import 'package:boveda/src/rust/api/entries.dart';
 import 'package:boveda/src/rust/api/password.dart';
 import 'package:boveda/src/rust/api/session.dart';
 
-/// Sesión simulada. Solo `create` y `open` hacen algo; el resto lanza
+/// Reporte de desbloqueo sin entradas dañadas.
+const emptyReport = UnlockReport(corrupt: [], unidentifiedCorrupt: 0);
+
+/// Sesión simulada. Solo `create`, `open` y `unlock` hacen algo; el resto lanza
 /// `UnimplementedError` para que una llamada inesperada falle la prueba.
 class FakeVaultSession implements VaultSession {
   /// Contraseñas recibidas por `create`, en orden.
@@ -19,6 +22,14 @@ class FakeVaultSession implements VaultSession {
   Object? openError;
 
   int openCalls = 0;
+
+  /// Contraseñas recibidas por `unlock`, en orden.
+  final List<String> unlockCalls = [];
+
+  /// Lo que hace `unlock` después de registrar la llamada. Por omisión,
+  /// devuelve un reporte vacío enseguida.
+  Future<UnlockReport> Function(String password) onUnlock = (_) async =>
+      emptyReport;
 
   bool _disposed = false;
 
@@ -83,8 +94,10 @@ class FakeVaultSession implements VaultSession {
       throw UnimplementedError();
 
   @override
-  Future<UnlockReport> unlock({required String password}) =>
-      throw UnimplementedError();
+  Future<UnlockReport> unlock({required String password}) {
+    unlockCalls.add(password);
+    return onUnlock(password);
+  }
 }
 
 /// La regla del núcleo por longitud. Las pruebas usan solo ASCII, así que

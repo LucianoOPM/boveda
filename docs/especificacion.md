@@ -275,6 +275,8 @@ El flujo más común debe tomar segundos: abrir la app, poner la huella, escribi
 
 **Desbloqueo.** Huella normalmente; contraseña maestra obligatoria cada 7 días para no olvidarla.
 
+Decidido el 2026-11-08 (#37, detalle en `docs/superpowers/specs/2026-11-08-desbloqueo-contrasena-design.md`): no hay límite ni espera entre intentos con la contraseña maestra; cada intento ya cuesta unos 0.5 s de Argon2id y quien tiene el archivo ataca sin conexión, sin pasar por la interfaz. Si el `UnlockReport` trae entradas dañadas, la pantalla principal muestra un aviso una vez por desbloqueo con el total de dañadas, con y sin identificador ("N entradas no se pudieron leer"), sin impedir el uso. Como complemento de "La bóveda → Errores", cualquier error distinto de la contraseña incorrecta muestra un mensaje genérico ("No se pudo desbloquear la bóveda. Intenta de nuevo."), sin detalles del error.
+
 **Pantalla principal.** Cursor en la barra de búsqueda al desbloquear. La lista se filtra mientras se escribe, tolera errores y busca en servicio, dominio de la URL, usuario y etiquetas. Sin texto, muestra primero las entradas usadas recientemente.
 
 **Acciones:**

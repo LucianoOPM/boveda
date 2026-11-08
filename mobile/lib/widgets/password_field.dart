@@ -8,6 +8,11 @@ import 'package:flutter/material.dart';
 /// guardarla.
 ///
 /// El controlador es de quien usa el campo: lo crea, lo limpia y lo libera.
+/// Lo mismo vale para [focusNode], si se pasa.
+///
+/// [textInputAction], [onSubmitted] y [focusNode] son opcionales y se pasan
+/// tal cual al `TextField`; sin ellos, el campo se comporta como el
+/// `TextField` por omisión.
 class PasswordField extends StatefulWidget {
   const PasswordField({
     super.key,
@@ -16,6 +21,9 @@ class PasswordField extends StatefulWidget {
     this.enabled = true,
     this.errorText,
     this.onChanged,
+    this.textInputAction,
+    this.onSubmitted,
+    this.focusNode,
   });
 
   final TextEditingController controller;
@@ -23,6 +31,9 @@ class PasswordField extends StatefulWidget {
   final bool enabled;
   final String? errorText;
   final ValueChanged<String>? onChanged;
+  final TextInputAction? textInputAction;
+  final ValueChanged<String>? onSubmitted;
+  final FocusNode? focusNode;
 
   @override
   State<PasswordField> createState() => _PasswordFieldState();
@@ -37,6 +48,9 @@ class _PasswordFieldState extends State<PasswordField> {
       controller: widget.controller,
       enabled: widget.enabled,
       onChanged: widget.onChanged,
+      textInputAction: widget.textInputAction,
+      onSubmitted: widget.onSubmitted,
+      focusNode: widget.focusNode,
       obscureText: _obscured,
       enableSuggestions: false,
       autocorrect: false,

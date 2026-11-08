@@ -21,6 +21,9 @@ vault-core = { path = "../../core" }
 zeroize = "1.9"
 
 [dev-dependencies]
+# Misma versión y características que vault-core: solo para alterar, en las
+# pruebas, la copia de la bóveda de ejemplo.
+rusqlite = { version = "0.41", features = ["bundled"] }
 tempfile = "3"
 
 [lints.rust]
