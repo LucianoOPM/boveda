@@ -145,7 +145,7 @@ pub(crate) fn entry_id_from_hex(hex: &str) -> FacadeResult<EntryId> {
         return Err(VaultError::InvalidEntryId);
     }
     let mut bytes = [0u8; 16];
-    for (byte, pair) in bytes.iter_mut().zip(hex.as_bytes().chunks_exact(2)) {
+    for (byte, pair) in bytes.iter_mut().zip(hex.as_bytes().as_chunks::<2>().0) {
         *byte = (hex_value(pair[0]) << 4) | hex_value(pair[1]);
     }
     Ok(EntryId::from_bytes(bytes))
