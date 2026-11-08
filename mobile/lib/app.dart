@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
 
+import 'screens/biometric_offer_screen.dart';
 import 'screens/first_run_screen.dart';
 import 'screens/placeholder_screen.dart';
 import 'screens/unlock_screen.dart';
+import 'services/biometric_service.dart';
 import 'src/rust/api/session.dart';
 import 'widgets/damaged_entries_banner.dart';
 import 'widgets/strength_indicator.dart';
@@ -17,11 +19,13 @@ class BovedaApp extends StatelessWidget {
     required this.session,
     required this.vaultExists,
     required this.strengthOf,
+    required this.biometric,
   });
 
   final VaultSession session;
   final Future<bool> Function() vaultExists;
   final StrengthOf strengthOf;
+  final BiometricService biometric;
 
   @override
   Widget build(BuildContext context) {
@@ -31,18 +35,28 @@ class BovedaApp extends StatelessWidget {
         session: session,
         vaultExists: vaultExists,
         strengthOf: strengthOf,
+        biometric: biometric,
       ),
     );
   }
 }
 
 /// Estado de la bóveda que decide la pantalla.
-enum VaultGateState { checking, noVault, locked, unlocked, openFailed }
+enum VaultGateState {
+  checking,
+  noVault,
+  offerBiometric,
+  locked,
+  unlocked,
+  openFailed,
+}
 
 /// Widget raíz: elige la pantalla según el estado de la sesión, sin pila de
 /// rutas. Al cambiar de estado, la pantalla anterior sale del árbol y su
-/// `dispose` limpia lo que tenga. Transiciones: crear (primer uso) y
-/// desbloquear (#37) llevan a `unlocked`; bloquear llega en la #39.
+/// `dispose` limpia lo que tenga. Transiciones: crear (primer uso) lleva a
+/// la oferta de la huella si el dispositivo la admite y no está activa, y
+/// de ahí (o directo) a `unlocked`; desbloquear (#37, #38) lleva a
+/// `unlocked`; bloquear llega en la #39.
 ///
 /// Guarda la sesión, que vive mientras vive la app, y el total de entradas
 /// dañadas del último desbloqueo; nunca una contraseña.
@@ -52,11 +66,13 @@ class VaultGate extends StatefulWidget {
     required this.session,
     required this.vaultExists,
     required this.strengthOf,
+    required this.biometric,
   });
 
   final VaultSession session;
   final Future<bool> Function() vaultExists;
   final StrengthOf strengthOf;
+  final BiometricService biometric;
 
   @override
   State<VaultGate> createState() => _VaultGateState();
@@ -101,6 +117,25 @@ class _VaultGateState extends State<VaultGate> {
     _start();
   }
 
+  /// Después de crear la bóveda: ofrecer la huella si el dispositivo la
+  /// admite y no está activa. Si la comprobación falla, no se ofrece.
+  Future<void> _afterCreate() async {
+    bool offer;
+    try {
+      offer =
+          await widget.biometric.isAvailable() &&
+          !await widget.biometric.isEnabled();
+    } catch (_) {
+      offer = false;
+    }
+    if (!mounted) return;
+    if (offer) {
+      setState(() => _state = VaultGateState.offerBiometric);
+    } else {
+      _unlocked(0);
+    }
+  }
+
   void _unlocked(int damagedEntries) {
     setState(() {
       _damagedEntries = damagedEntries;
@@ -117,11 +152,18 @@ class _VaultGateState extends State<VaultGate> {
       VaultGateState.noVault => FirstRunScreen(
         session: widget.session,
         strengthOf: widget.strengthOf,
-        onCreated: () => _unlocked(0),
+        biometric: widget.biometric,
+        onCreated: _afterCreate,
         onAlreadyExists: _reevaluate,
+      ),
+      VaultGateState.offerBiometric => BiometricOfferScreen(
+        session: widget.session,
+        biometric: widget.biometric,
+        onDone: () => _unlocked(0),
       ),
       VaultGateState.locked => UnlockScreen(
         session: widget.session,
+        biometric: widget.biometric,
         onUnlocked: _unlocked,
       ),
       VaultGateState.unlocked => PlaceholderScreen(

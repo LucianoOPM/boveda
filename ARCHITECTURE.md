@@ -64,12 +64,12 @@ boveda/
 │   ├── test_driver/        # punto de entrada para correr integration_test con flutter drive
 │   ├── lib/
 │   │   ├── main.dart       # arma las dependencias reales y arranca la app
-│   │   ├── app.dart        # BovedaApp y VaultGate (la pantalla según el estado de la sesión; guarda el total de dañadas del desbloqueo para el aviso); bootstrap: si el arranque falla, "No se pudo iniciar la app"
+│   │   ├── app.dart        # BovedaApp y VaultGate (la pantalla según el estado de la sesión, con la oferta de la huella tras el primer uso; guarda el total de dañadas del desbloqueo para el aviso); bootstrap: si el arranque falla, "No se pudo iniciar la app"
 │   │   ├── src/rust/       # código generado por flutter_rust_bridge; no se edita
-│   │   ├── screens/        # first_run_screen.dart, unlock_screen.dart, placeholder_screen.dart; futuro: búsqueda, detalle, edición, ajustes
+│   │   ├── screens/        # first_run_screen.dart, unlock_screen.dart (contraseña y huella), biometric_offer_screen.dart, placeholder_screen.dart; futuro: búsqueda, detalle, edición, ajustes
 │   │   ├── widgets/        # password_field.dart, strength_indicator.dart, damaged_entries_banner.dart
-│   │   └── services/       # vault_location.dart (ruta en noBackupFilesDir); futuro: huella, Keystore, selector
-│   ├── android/
+│   │   └── services/       # vault_location.dart (ruta en noBackupFilesDir), biometric_service.dart (canal de la huella), biometric_unlock.dart (activar y desbloquear con huella); futuro: selector
+│   ├── android/            # app/src/main/kotlin/.../MainActivity.kt (canales) y BiometricVault.kt (Keystore y huella)
 │   └── build/              # ignorado; cargokit compila Rust en build/rust_lib_boveda/build
 │
 └── desktop/                # app Tauri 2 (esperado, etapa 3)
@@ -112,9 +112,10 @@ Sin dependencias de interfaz ni de plataforma.
 
 - `rust/`: crate puente expuesto con flutter_rust_bridge. Dart guarda un objeto opaco `VaultSession` (la ruta y un `Mutex<Option<Vault>>`) y le pide todas las operaciones; los errores cruzan como un enum plano `VaultError`, sin datos.
 - `lib/src/rust/`: código generado; no se edita a mano.
-- `lib/app.dart`: widget raíz que elige la pantalla según el estado de la sesión (sin bóveda, bloqueada, desbloqueada, error al abrir), sin go_router. Al desbloquear, pasa el total de entradas dañadas del `UnlockReport` al aviso de la pantalla principal. Recibe la sesión y la regla de fortaleza inyectadas, para que las pruebas de widgets usen dobles escritos a mano.
+- `lib/app.dart`: widget raíz que elige la pantalla según el estado de la sesión (sin bóveda, oferta de la huella, bloqueada, desbloqueada, error al abrir), sin go_router. Al desbloquear, pasa el total de entradas dañadas del `UnlockReport` al aviso de la pantalla principal. Recibe la sesión, la regla de fortaleza y el servicio de huella inyectados, para que las pruebas de widgets usen dobles escritos a mano.
 - `lib/screens/`, `lib/widgets/`: interfaz.
-- `lib/services/`: ruta de la bóveda (`noBackupFilesDir`, por un canal de Kotlin), huella, Keystore, selector de archivos.
+- `lib/services/`: ruta de la bóveda (`noBackupFilesDir`, por un canal de Kotlin), huella (canal `boveda/biometric` y los flujos de activar y desbloquear), selector de archivos.
+- `android/app/src/main/kotlin/com/jesus/boveda/`: `MainActivity.kt` registra los canales; `BiometricVault.kt` guarda la copia de la llave de bóveda cifrada con una llave del Keystore que solo se usa con huella (`noBackupFilesDir/biometric/vault_key.bin`) y muestra `BiometricPrompt`.
 
 ### desktop/ (Windows, Tauri 2)
 
@@ -123,7 +124,7 @@ Sin dependencias de interfaz ni de plataforma.
 
 ## Flujos principales
 
-**Desbloqueo.** La contraseña maestra pasa por Argon2id y descifra la llave de bóveda; con huella, el Keystore libera una copia cifrada de esa misma llave.
+**Desbloqueo.** La contraseña maestra pasa por Argon2id y descifra la llave de bóveda; con huella, el Keystore libera una copia cifrada de esa misma llave. La app ofrece activar la huella y la desactiva sola, con un aviso, si la copia deja de servir (por ejemplo, al registrar una huella nueva).
 
 **Búsqueda.** Al desbloquear se descifran solo los datos de búsqueda de cada entrada. El secreto (contraseña y notas) se descifra únicamente al copiar, mostrar o enviar.
 
@@ -141,7 +142,7 @@ Sin dependencias de interfaz ni de plataforma.
 | Núcleo en Rust compartido | La parte delicada se escribe y prueba una sola vez |
 | Crate puente separado | Los detalles de flutter_rust_bridge no contaminan el núcleo |
 | Dos llaves (maestra y de bóveda) | Cambiar la contraseña maestra y usar huella sin recifrar entradas |
-| Borrado de memoria garantizado solo dentro de `vault-core` | El núcleo guarda secretos y texto plano en `SecretString`/`Zeroizing` y evita reasignaciones que dejen copias; fuera del núcleo es de mejor esfuerzo, porque Dart no permite borrar sus cadenas. Lo mismo vale para los búferes de cruce de flutter_rust_bridge y para la copia que la fachada entrega al revelar una contraseña o unas notas. Excepción documentada: las copias internas de `nucleo-matcher` y `strsim` durante la búsqueda (datos de búsqueda, no secretos) |
+| Borrado de memoria garantizado solo dentro de `vault-core` | El núcleo guarda secretos y texto plano en `SecretString`/`Zeroizing` y evita reasignaciones que dejen copias; fuera del núcleo es de mejor esfuerzo, porque Dart no permite borrar sus cadenas. Lo mismo vale para los búferes de cruce de flutter_rust_bridge y de `StandardMessageCodec` (canales de Kotlin), para la copia que la fachada entrega al revelar una contraseña o unas notas, y para la copia de la llave de bóveda que entrega para el Keystore. Excepción documentada: las copias internas de `nucleo-matcher` y `strsim` durante la búsqueda (datos de búsqueda, no secretos) |
 | Entrada cifrada en dos partes | Búsqueda rápida sin exponer contraseñas en memoria |
 | Fecha de modificación y marca de eliminada | Preparan la sincronización futura sin migrar datos |
 | Noise (`snow`) | Protocolo estudiado para el intercambio de llaves y el canal cifrado |

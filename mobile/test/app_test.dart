@@ -4,14 +4,20 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:boveda/app.dart';
+import 'package:boveda/screens/biometric_offer_screen.dart';
 import 'package:boveda/screens/first_run_screen.dart';
 import 'package:boveda/screens/unlock_screen.dart';
+import 'package:boveda/services/biometric_service.dart';
 import 'package:boveda/src/rust/api/error.dart';
 import 'package:boveda/src/rust/api/session.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'fakes.dart';
+
+/// Servicio de huella de cada prueba. Sin huella disponible por omisión, para
+/// que crear la bóveda lleve directo a la pantalla principal.
+late FakeBiometricService biometric;
 
 Future<void> pumpApp(
   WidgetTester tester,
@@ -23,6 +29,7 @@ Future<void> pumpApp(
       session: session,
       vaultExists: vaultExists,
       strengthOf: fakeStrength,
+      biometric: biometric,
     ),
   );
 }
@@ -30,7 +37,10 @@ Future<void> pumpApp(
 void main() {
   late FakeVaultSession session;
 
-  setUp(() => session = FakeVaultSession());
+  setUp(() {
+    session = FakeVaultSession();
+    biometric = FakeBiometricService()..available = false;
+  });
 
   testWidgets('sin bóveda abre el primer uso', (tester) async {
     await pumpApp(tester, session, () async => false);
@@ -222,5 +232,75 @@ void main() {
 
     expect(find.text('Pantalla principal: #40'), findsOneWidget);
     expect(find.byType(MaterialBanner), findsNothing);
+  });
+
+  testWidgets("después de crear, con huella disponible, ofrece activarla", (
+    tester,
+  ) async {
+    biometric.available = true;
+    await pumpApp(tester, session, () async => false);
+    await tester.pumpAndSettle();
+    await createFromFirstRun(tester);
+
+    expect(find.byType(BiometricOfferScreen), findsOneWidget);
+    expect(find.text("Pantalla principal: #40"), findsNothing);
+  });
+
+  testWidgets("sin huella disponible pasa a la pantalla principal", (
+    tester,
+  ) async {
+    await pumpApp(tester, session, () async => false);
+    await tester.pumpAndSettle();
+    await createFromFirstRun(tester);
+
+    expect(find.byType(BiometricOfferScreen), findsNothing);
+    expect(find.text("Pantalla principal: #40"), findsOneWidget);
+  });
+
+  testWidgets("si isAvailable lanza pasa a la pantalla principal", (
+    tester,
+  ) async {
+    biometric.availableError = StateError("sin canal");
+    await pumpApp(tester, session, () async => false);
+    await tester.pumpAndSettle();
+    await createFromFirstRun(tester);
+
+    expect(find.text("Pantalla principal: #40"), findsOneWidget);
+  });
+
+  testWidgets("activación fallida desde el desbloqueo muestra el SnackBar en "
+      "la pantalla principal", (tester) async {
+    biometric
+      ..available = true
+      ..onBeginEnable = () async =>
+          throw const BiometricException(BiometricFailure.failed);
+    await pumpApp(tester, session, () async => true);
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(
+      find.byKey(const Key("unlock-enable-biometric")),
+    );
+    await tester.tap(find.byKey(const Key("unlock-enable-biometric")));
+    await tester.enterText(
+      find.byKey(const Key("unlock-password")),
+      "prueba-bóveda-v2",
+    );
+    await tester.pump();
+    await tester.tap(find.byKey(const Key("unlock-submit")));
+    await tester.pumpAndSettle();
+
+    expect(find.text("Pantalla principal: #40"), findsOneWidget);
+    expect(find.text("No se pudo activar la huella."), findsOneWidget);
+  });
+
+  testWidgets("Ahora no lleva a la pantalla principal", (tester) async {
+    biometric.available = true;
+    await pumpApp(tester, session, () async => false);
+    await tester.pumpAndSettle();
+    await createFromFirstRun(tester);
+    await tester.tap(find.byKey(const Key("offer-skip")));
+    await tester.pumpAndSettle();
+
+    expect(find.text("Pantalla principal: #40"), findsOneWidget);
+    expect(biometric.calls, isNot(contains("beginEnable")));
   });
 }

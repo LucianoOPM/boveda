@@ -1,8 +1,10 @@
 // Pruebas de la pantalla de desbloqueo con la sesión simulada.
 
 import 'dart:async';
+import 'dart:typed_data';
 
 import 'package:boveda/screens/unlock_screen.dart';
+import 'package:boveda/services/biometric_service.dart';
 import 'package:boveda/src/rust/api/error.dart';
 import 'package:boveda/src/rust/api/session.dart';
 import 'package:flutter/material.dart';
@@ -15,6 +17,14 @@ const passwordKey = Key('unlock-password');
 const submitKey = Key('unlock-submit');
 const wrong = 'Contraseña incorrecta';
 const generic = 'No se pudo desbloquear la bóveda. Intenta de nuevo.';
+const disabledNotice =
+    'La huella se desactivó. Desbloquea con tu contraseña maestra.';
+const biometricKey = Key('unlock-biometric');
+const enableKey = Key('unlock-enable-biometric');
+
+/// Servicio de huella de cada prueba. Sin huella disponible ni activa por
+/// omisión: las pruebas del desbloqueo con contraseña no la ven.
+late FakeBiometricService biometric;
 
 Future<void> pumpScreen(
   WidgetTester tester,
@@ -23,7 +33,11 @@ Future<void> pumpScreen(
 }) async {
   await tester.pumpWidget(
     MaterialApp(
-      home: UnlockScreen(session: session, onUnlocked: onUnlocked ?? (_) {}),
+      home: UnlockScreen(
+        session: session,
+        biometric: biometric,
+        onUnlocked: onUnlocked ?? (_) {},
+      ),
     ),
   );
   await tester.pump();
@@ -57,7 +71,10 @@ Future<void> submitWithDone(WidgetTester tester) async {
 void main() {
   late FakeVaultSession session;
 
-  setUp(() => session = FakeVaultSession());
+  setUp(() {
+    session = FakeVaultSession();
+    biometric = FakeBiometricService()..available = false;
+  });
 
   testWidgets('al entrar el campo no tiene el foco', (tester) async {
     // Decisión del diseño ("Sin foco inicial"): Android no abre el teclado
@@ -290,4 +307,287 @@ void main() {
       expect(unlocked, isEmpty);
     });
   }
+
+  group('huella', () {
+    int unlockPrompts() => biometric.calls.where((c) => c == 'unlock').length;
+
+    /// Deja terminar los `Future` del flujo. Tras un éxito el indicador sigue
+    /// girando (quien muestra la pantalla es quien la reemplaza), así que no
+    /// se usa `pumpAndSettle`.
+    Future<void> drain(WidgetTester tester) async {
+      for (var i = 0; i < 10; i++) {
+        await tester.pump();
+      }
+    }
+
+    BiometricException fail(BiometricFailure f) => BiometricException(f);
+
+    Future<void> checkEnable(WidgetTester tester) async {
+      await tester.ensureVisible(find.byKey(enableKey));
+      await tester.tap(find.byKey(enableKey));
+      await tester.pump();
+    }
+
+    testWidgets('con huella activa pide la huella una vez después del primer '
+        'cuadro', (tester) async {
+      biometric.enabled = true;
+      biometric.onUnlock = () async => throw fail(BiometricFailure.canceled);
+      await pumpScreen(tester, session);
+      await drain(tester);
+      expect(unlockPrompts(), 1);
+
+      // Reconstruir la pantalla no vuelve a abrir el diálogo.
+      await type(tester, 'a');
+      await drain(tester);
+      expect(unlockPrompts(), 1);
+    });
+
+    testWidgets('mientras corre la huella el campo y el botón están '
+        'desactivados', (tester) async {
+      biometric.enabled = true;
+      final pending = Completer<Uint8List>();
+      biometric.onUnlock = () => pending.future;
+      await pumpScreen(tester, session);
+      await tester.pump();
+
+      expect(find.text('Desbloqueando…'), findsOneWidget);
+      expect(field(tester).enabled, isFalse);
+      expect(button(tester).onPressed, isNull);
+      await submitWithDone(tester);
+      expect(session.unlockCalls, isEmpty);
+
+      pending.completeError(fail(BiometricFailure.canceled));
+      await drain(tester);
+    });
+
+    testWidgets('huella con éxito llama a onUnlocked con las dañadas', (
+      tester,
+    ) async {
+      biometric.enabled = true;
+      session.onUnlockWithKey = (_) async =>
+          const UnlockReport(corrupt: [], unidentifiedCorrupt: 2);
+      final unlocked = <int>[];
+      await pumpScreen(tester, session, onUnlocked: unlocked.add);
+      await drain(tester);
+      expect(unlocked, [2]);
+      expect(session.unlockCalls, isEmpty);
+    });
+
+    testWidgets('fallback deja el foco en el campo sin mensaje', (
+      tester,
+    ) async {
+      biometric.enabled = true;
+      biometric.onUnlock = () async => throw fail(BiometricFailure.lockout);
+      await pumpScreen(tester, session);
+      await drain(tester);
+
+      expect(field(tester).enabled, isTrue);
+      expect(field(tester).focusNode!.hasFocus, isTrue);
+      expect(find.text(wrong), findsNothing);
+      expect(find.text(generic), findsNothing);
+      expect(find.text(disabledNotice), findsNothing);
+      expect(biometric.calls, isNot(contains('disable')));
+    });
+
+    testWidgets('disabled muestra el aviso, oculta Usar huella y muestra la '
+        'casilla', (tester) async {
+      biometric
+        ..enabled = true
+        ..available = true
+        ..onUnlock = () async => throw fail(BiometricFailure.invalidated);
+      await pumpScreen(tester, session);
+      await drain(tester);
+
+      expect(find.text(disabledNotice), findsOneWidget);
+      expect(find.byKey(biometricKey), findsNothing);
+      expect(find.byKey(enableKey), findsOneWidget);
+      expect(field(tester).focusNode!.hasFocus, isTrue);
+    });
+
+    testWidgets('disabled sin huella disponible no muestra ni el botón ni la '
+        'casilla', (tester) async {
+      biometric
+        ..enabled = true
+        ..onUnlock = () async => throw fail(BiometricFailure.invalidated);
+      await pumpScreen(tester, session);
+      await drain(tester);
+
+      expect(find.text(disabledNotice), findsOneWidget);
+      expect(find.byKey(biometricKey), findsNothing);
+      expect(find.byKey(enableKey), findsNothing);
+    });
+
+    testWidgets('coreError muestra el mensaje genérico', (tester) async {
+      biometric.enabled = true;
+      session.onUnlockWithKey = (_) async => throw VaultError.storageIo;
+      await pumpScreen(tester, session);
+      await drain(tester);
+
+      expect(find.text(generic), findsOneWidget);
+      expect(field(tester).focusNode!.hasFocus, isTrue);
+      expect(biometric.calls, isNot(contains('disable')));
+    });
+
+    testWidgets('Usar huella vuelve a pedir la huella', (tester) async {
+      biometric.enabled = true;
+      biometric.onUnlock = () async => throw fail(BiometricFailure.canceled);
+      final unlocked = <int>[];
+      await pumpScreen(tester, session, onUnlocked: unlocked.add);
+      await drain(tester);
+      expect(unlockPrompts(), 1);
+
+      biometric.onUnlock = () async => Uint8List.fromList(List.filled(32, 7));
+      await tester.ensureVisible(find.byKey(biometricKey));
+      await tester.tap(find.byKey(biometricKey));
+      await drain(tester);
+      expect(unlockPrompts(), 2);
+      expect(unlocked, [0]);
+    });
+
+    testWidgets('sin huella activa no hay botón Usar huella ni intento '
+        'automático', (tester) async {
+      biometric.available = true;
+      await pumpScreen(tester, session);
+      await drain(tester);
+      expect(find.byKey(biometricKey), findsNothing);
+      expect(unlockPrompts(), 0);
+    });
+
+    testWidgets('si isEnabled lanza no hay intento automático', (tester) async {
+      biometric
+        ..enabled = true
+        ..enabledError = StateError('sin canal');
+      await pumpScreen(tester, session);
+      await drain(tester);
+
+      expect(unlockPrompts(), 0);
+      expect(field(tester).enabled, isTrue);
+      expect(find.byKey(biometricKey), findsNothing);
+    });
+
+    testWidgets('la casilla no aparece sin huella disponible ni con la huella '
+        'activa', (tester) async {
+      await pumpScreen(tester, session);
+      await drain(tester);
+      expect(find.byKey(enableKey), findsNothing);
+
+      biometric
+        ..available = true
+        ..enabled = true
+        ..onUnlock = () async => throw fail(BiometricFailure.canceled);
+      await tester.pumpWidget(const SizedBox());
+      await pumpScreen(tester, session);
+      await drain(tester);
+      expect(find.byKey(enableKey), findsNothing);
+    });
+
+    testWidgets('casilla marcada y contraseña correcta activan antes de '
+        'onUnlocked', (tester) async {
+      biometric.available = true;
+      final order = <String>[];
+      biometric.onCompleteEnable = () async => order.add('completeEnable');
+      await pumpScreen(
+        tester,
+        session,
+        onUnlocked: (_) => order.add('onUnlocked'),
+      );
+      await drain(tester);
+      await checkEnable(tester);
+      await type(tester, password);
+      await submitWithButton(tester);
+      await drain(tester);
+
+      expect(session.unlockCalls, [password]);
+      expect(order, ['completeEnable', 'onUnlocked']);
+    });
+
+    testWidgets('mientras activa el botón muestra Activando huella…', (
+      tester,
+    ) async {
+      biometric.available = true;
+      final pending = Completer<void>();
+      biometric.onBeginEnable = () => pending.future;
+      await pumpScreen(tester, session);
+      await drain(tester);
+      await checkEnable(tester);
+      await type(tester, password);
+      await submitWithButton(tester);
+      await tester.pump();
+
+      expect(find.text('Activando huella…'), findsOneWidget);
+      pending.complete();
+      await drain(tester);
+    });
+
+    testWidgets('casilla marcada y contraseña incorrecta no activan', (
+      tester,
+    ) async {
+      biometric.available = true;
+      session.onUnlock = (_) async => throw VaultError.wrongPassword;
+      await pumpScreen(tester, session);
+      await drain(tester);
+      await checkEnable(tester);
+      await type(tester, password);
+      await submitWithButton(tester);
+      await drain(tester);
+
+      expect(find.text(wrong), findsOneWidget);
+      expect(biometric.calls, isNot(contains('beginEnable')));
+      expect(session.exportedKeys, isEmpty);
+    });
+
+    testWidgets('casilla sin marcar no activa', (tester) async {
+      biometric.available = true;
+      final unlocked = <int>[];
+      await pumpScreen(tester, session, onUnlocked: unlocked.add);
+      await drain(tester);
+      await type(tester, password);
+      await submitWithButton(tester);
+      await drain(tester);
+
+      expect(unlocked, [0]);
+      expect(biometric.calls, isNot(contains('beginEnable')));
+    });
+
+    testWidgets('activación cancelada desde el desbloqueo sigue sin mensaje', (
+      tester,
+    ) async {
+      biometric
+        ..available = true
+        ..onBeginEnable = () async => throw fail(BiometricFailure.canceled);
+      final unlocked = <int>[];
+      await pumpScreen(tester, session, onUnlocked: unlocked.add);
+      await drain(tester);
+      await checkEnable(tester);
+      await type(tester, password);
+      await submitWithButton(tester);
+      await drain(tester);
+
+      expect(unlocked, [0]);
+      expect(find.byType(SnackBar), findsNothing);
+    });
+
+    for (final succeed in [true, false]) {
+      final label = succeed ? 'éxito' : 'error';
+      testWidgets('desmontada con la huella pendiente no hace nada al terminar '
+          '($label)', (tester) async {
+        biometric.enabled = true;
+        final pending = Completer<Uint8List>();
+        biometric.onUnlock = () => pending.future;
+        final unlocked = <int>[];
+        await pumpScreen(tester, session, onUnlocked: unlocked.add);
+        await tester.pump();
+        await tester.pumpWidget(const SizedBox());
+
+        if (succeed) {
+          pending.complete(Uint8List.fromList(List.filled(32, 7)));
+        } else {
+          pending.completeError(fail(BiometricFailure.invalidated));
+        }
+        await drain(tester);
+        expect(tester.takeException(), isNull);
+        expect(unlocked, isEmpty);
+      });
+    }
+  });
 }

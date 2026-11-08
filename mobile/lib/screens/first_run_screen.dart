@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../services/biometric_service.dart';
 import '../src/rust/api/error.dart';
 import '../src/rust/api/password.dart';
 import '../src/rust/api/session.dart';
@@ -17,12 +18,16 @@ class FirstRunScreen extends StatefulWidget {
     super.key,
     required this.session,
     required this.strengthOf,
+    required this.biometric,
     required this.onCreated,
     required this.onAlreadyExists,
   });
 
   final VaultSession session;
   final StrengthOf strengthOf;
+
+  /// Para borrar, antes de crear, la huella de una bóveda anterior.
+  final BiometricService biometric;
 
   /// Se llama cuando la bóveda quedó creada y desbloqueada.
   final VoidCallback onCreated;
@@ -75,6 +80,13 @@ class _FirstRunScreenState extends State<FirstRunScreen> {
       _error = null;
     });
     final password = _password.text;
+    // Mejor esfuerzo: que no sobreviva la huella de una bóveda anterior. Si
+    // falla, se crea igual: una copia vieja no abre la bóveda nueva
+    // (`key_check` la rechaza con `WrongVaultKey` y eso la desactiva), y un
+    // Keystore averiado no debe impedir crear la bóveda.
+    try {
+      await widget.biometric.disable();
+    } catch (_) {}
     try {
       await widget.session.create(password: password);
     } on VaultError catch (error) {

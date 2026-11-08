@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 
 import 'app.dart';
+import 'services/biometric_service.dart';
 import 'services/vault_location.dart';
 import 'src/rust/api/password.dart';
 import 'src/rust/api/session.dart';
@@ -20,6 +21,7 @@ Future<void> main() async {
         session: VaultSession(path: path),
         vaultExists: () => File(path).exists(),
         strengthOf: (password) => passwordStrength(password: password),
+        biometric: const PlatformBiometricService(),
       ),
     ),
   );

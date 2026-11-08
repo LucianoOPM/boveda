@@ -18,6 +18,9 @@ const confirmKey = Key('first-run-confirm');
 const acceptKey = Key('first-run-accept');
 const createKey = Key('first-run-create');
 
+/// Servicio de huella de cada prueba.
+late FakeBiometricService biometric;
+
 Future<void> pumpScreen(
   WidgetTester tester,
   FakeVaultSession session, {
@@ -30,6 +33,7 @@ Future<void> pumpScreen(
       home: FirstRunScreen(
         session: session,
         strengthOf: strengthOf,
+        biometric: biometric,
         onCreated: onCreated ?? () {},
         onAlreadyExists: onAlreadyExists ?? () {},
       ),
@@ -55,6 +59,7 @@ Future<void> pumpAsSecondRoute(
       builder: (_) => FirstRunScreen(
         session: session,
         strengthOf: fakeStrength,
+        biometric: biometric,
         onCreated: () {},
         onAlreadyExists: () {},
       ),
@@ -108,7 +113,34 @@ TextField fieldOf(WidgetTester tester, Key key) => tester.widget<TextField>(
 void main() {
   late FakeVaultSession session;
 
-  setUp(() => session = FakeVaultSession());
+  setUp(() {
+    session = FakeVaultSession();
+    biometric = FakeBiometricService();
+  });
+
+  testWidgets('llama a disable antes de create', (tester) async {
+    final order = <String>[];
+    biometric.onDisable = () async => order.add('disable');
+    session.onCreate = (_) async => order.add('create');
+    await pumpScreen(tester, session);
+    await fillValid(tester);
+    await tapCreate(tester);
+    await settleFuture(tester);
+
+    expect(order, ['disable', 'create']);
+  });
+
+  testWidgets('si disable falla igual crea la bóveda', (tester) async {
+    var created = 0;
+    biometric.onDisable = () async => throw StateError('sin canal');
+    await pumpScreen(tester, session, onCreated: () => created++);
+    await fillValid(tester);
+    await tapCreate(tester);
+    await settleFuture(tester);
+
+    expect(session.createCalls, [valid]);
+    expect(created, 1);
+  });
 
   testWidgets('muestra el título y la sugerencia', (tester) async {
     await pumpScreen(tester, session);
