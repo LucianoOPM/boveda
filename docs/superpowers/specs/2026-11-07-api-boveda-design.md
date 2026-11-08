@@ -62,6 +62,7 @@ Se reutilizan los tipos de la #4 en lugar de crear otros: ya se validan al const
 - Solo `Keep` descifra el secreto viejo, en un búfer `Zeroizing`. Si está dañado → `CorruptEntry`, sin tocar el archivo.
 - `edit` siempre vuelve a cifrar ambas partes con nonces nuevos y la versión de estructura actual (`SealedEntry::seal`); la versión de la fila no se usa. Actualiza `modified_at`, no `last_used_at`.
 - **Reparación:** con `Replace`, una entrada dañada (secreto dañado, o datos de búsqueda dañados que aparecían en `corrupt`) se reescribe completa y vuelve a ser válida. Se agrega a la caché si no estaba.
+- (Agregado en la #17.) Con `Replace`, si `get_entry` da `CorruptEntry` porque la fila no se puede leer (en la práctica, una `entry_schema_version` fuera de `u16`; en un archivo creado por el núcleo, el `CHECK` y `STRICT` impiden otros daños en una fila viva con id válido), `edit` lee aparte solo `last_used_at` (`Storage::get_last_used_at`) y reescribe la fila. La entrada reparada conserva su último uso, igual que cualquier `edit`. Un id inexistente o una lápida ya dan `EntryNotFound` en `get_entry`; `update_entry` lo repite como resguardo. Con `Keep`, esa fila sigue dando `CorruptEntry` sin tocar el archivo.
 
 ### `reveal` y `last_used_at` de mejor esfuerzo
 

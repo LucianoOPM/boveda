@@ -236,7 +236,9 @@ impl Vault {
     ///
     /// Siempre vuelve a cifrar ambas partes con nonces nuevos y la versión de
     /// estructura actual. Actualiza `modified_at`, no `last_used_at`. Con
-    /// [`SecretChange::Replace`] repara una entrada dañada. Con
+    /// [`SecretChange::Replace`] repara una entrada dañada, incluida una fila
+    /// que no se puede leer (por ejemplo, con la versión de estructura fuera
+    /// de rango), y conserva su `last_used_at`. Con
     /// [`SecretChange::Keep`] y el secreto dañado devuelve
     /// [`Error::CorruptEntry`] sin tocar el archivo.
     pub fn edit(&mut self, id: EntryId, search: SearchData, change: SecretChange) -> Result<()> {
@@ -244,10 +246,20 @@ impl Vault {
         let now = now_millis()?;
         // Los metadatos vienen de la fila, no de la caché: así funciona igual
         // para una entrada que estaba dañada.
-        let stored = self.storage.get_entry(id)?;
-        let secret = match change {
-            SecretChange::Keep => stored.sealed.open_secret(&unlocked.key)?,
-            SecretChange::Replace(secret) => secret,
+        let (secret, last_used_at) = match (self.storage.get_entry(id), change) {
+            (Ok(stored), SecretChange::Keep) => (
+                stored.sealed.open_secret(&unlocked.key)?,
+                stored.last_used_at,
+            ),
+            (Ok(stored), SecretChange::Replace(secret)) => (secret, stored.last_used_at),
+            // Una fila viva que no se pudo leer (p. ej. con la versión de
+            // estructura fuera de rango) se reescribe completa y conserva su
+            // último uso, que se lee aparte. Un id inexistente o una lápida
+            // ya dieron `EntryNotFound` en `get_entry`.
+            (Err(Error::CorruptEntry), SecretChange::Replace(secret)) => {
+                (secret, self.storage.get_last_used_at(id)?)
+            }
+            (Err(e), _) => return Err(e),
         };
         let sealed = SealedEntry::seal(&unlocked.key, id, &search, &secret)?;
         self.storage.update_entry(&sealed, now)?;
@@ -256,7 +268,7 @@ impl Vault {
             id,
             search,
             modified_at: now,
-            last_used_at: stored.last_used_at,
+            last_used_at,
         };
         match unlocked.entries.iter_mut().find(|e| e.id == id) {
             // El valor anterior se borra al soltarse.

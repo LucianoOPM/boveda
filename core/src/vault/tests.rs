@@ -565,6 +565,95 @@ fn delete_corrupt_entry() {
     assert!(relock(&mut vault).corrupt.is_empty());
 }
 
+/// Fija una columna entera de la fila de `id` por fuera de la API.
+fn set_column(path: &Path, id: EntryId, column: &str, value: i64) {
+    raw(path)
+        .execute(
+            &format!("UPDATE entries SET {column} = ?1 WHERE id = ?2"),
+            rusqlite::params![value, id.as_bytes().as_slice()],
+        )
+        .unwrap();
+}
+
+/// Ids en el orden de `search("")`: por uso reciente.
+fn recent_order(vault: &Vault) -> Vec<EntryId> {
+    vault.search("").unwrap().iter().map(|e| e.id()).collect()
+}
+
+/// Repara con `Replace` una entrada con `entry_schema_version = version`
+/// (fuera de `u16`) que tenía un último uso: lo conserva en la caché y en el
+/// archivo, también tras `lock` y `unlock`.
+fn assert_replace_repairs_schema_version(version: i64) {
+    let (_dir, path, mut vault) = new_vault();
+    let a = add_sample(&mut vault, "a");
+    let b = add_sample(&mut vault, "b");
+    set_column(&path, a, "last_used_at", 1_000);
+    set_column(&path, b, "last_used_at", 2_000);
+    set_column(&path, b, "entry_schema_version", version);
+    assert_eq!(relock(&mut vault).corrupt, vec![b]);
+
+    let secret = Secret::new(password("reparada"), None).unwrap();
+    vault
+        .edit(b, search_with_tags("b", &[]), SecretChange::Replace(secret))
+        .unwrap();
+    assert_eq!(find(&vault, b).last_used_at(), Some(2_000));
+    assert_eq!(row_bytes(&path, b).3, Some(2_000));
+    assert_eq!(recent_order(&vault), vec![b, a]);
+
+    let report = relock(&mut vault);
+    assert!(report.corrupt.is_empty());
+    assert_eq!(find(&vault, b).last_used_at(), Some(2_000));
+    assert_eq!(recent_order(&vault), vec![b, a]);
+    assert_eq!(
+        vault.reveal(b).unwrap().password().expose_secret(),
+        "reparada"
+    );
+}
+
+#[test]
+fn replace_repairs_schema_version_above_u16() {
+    assert_replace_repairs_schema_version(70_000);
+}
+
+#[test]
+fn replace_repairs_negative_schema_version() {
+    assert_replace_repairs_schema_version(-1);
+}
+
+#[test]
+fn keep_with_out_of_range_schema_version_is_corrupt_and_unchanged() {
+    let (_dir, path, mut vault) = new_vault();
+    let b = add_sample(&mut vault, "b");
+    set_column(&path, b, "entry_schema_version", 70_000);
+    relock(&mut vault);
+    let before = fs::read(&path).unwrap();
+
+    assert_eq!(
+        vault
+            .edit(b, search_with_tags("b", &[]), SecretChange::Keep)
+            .err(),
+        Some(Error::CorruptEntry)
+    );
+    assert_eq!(fs::read(&path).unwrap(), before);
+}
+
+#[test]
+fn replace_on_missing_entry_is_not_found() {
+    let (_dir, _path, mut vault) = new_vault();
+    let missing = EntryId::from_bytes([7; 16]);
+    let secret = Secret::new(password("nueva"), None).unwrap();
+    assert_eq!(
+        vault
+            .edit(
+                missing,
+                search_with_tags("x", &[]),
+                SecretChange::Replace(secret)
+            )
+            .err(),
+        Some(Error::EntryNotFound)
+    );
+}
+
 // --- change_master_password --------------------------------------------
 
 /// La fila de `header` completa: sal, nonce y llave cifrada.
