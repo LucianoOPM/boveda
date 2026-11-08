@@ -35,7 +35,7 @@ boveda/
 │   │   ├── lib.rs
 │   │   ├── error.rs        # tipo Error (thiserror), sin secretos
 │   │   ├── crypto/         # kdf.rs (Argon2), keys.rs, aead.rs
-│   │   ├── vault/          # mod.rs (API), header.rs, entry.rs, storage.rs, backup.rs
+│   │   ├── vault/          # mod.rs (API), header.rs, entry.rs, storage.rs, backup.rs, password.rs
 │   │   ├── search.rs
 │   │   └── protocol/       # identity.rs, pairing.rs, message.rs, transport.rs
 │   └── tests/
@@ -100,7 +100,7 @@ Los miembros del workspace se agregan conforme existen: `core` en la etapa 1, `m
 | Módulo | Responsabilidad |
 | --- | --- |
 | `crypto/` | Argon2id (`kdf.rs`); generar la llave de bóveda, derivar la llave maestra y cifrar o descifrar con ella la llave de bóveda, y crear y comprobar el verificador `key_check` (`keys.rs`); cifrar y descifrar cada parte de una entrada con XChaCha20-Poly1305 y su dato autenticado (`aead.rs`) |
-| `vault/` | API de la bóveda (`mod.rs`, estructura `Vault`); cabecera (formato 2, con `key_check`): codificarla como dato autenticado, leerla y validarla, y armar la v2 al desbloquear una v1 (`header.rs`); modelo de entrada (`entry.rs`) y entrada cifrada (`entry/sealed.rs`), almacenamiento SQLite con lápidas para las eliminadas y la migración de la cabecera v1 a v2 (`storage.rs`), respaldos: exportar con `VACUUM INTO` e importar validando una copia temporal (`backup.rs`) |
+| `vault/` | API de la bóveda (`mod.rs`, estructura `Vault`); cabecera (formato 2, con `key_check`): codificarla como dato autenticado, leerla y validarla, y armar la v2 al desbloquear una v1 (`header.rs`); modelo de entrada (`entry.rs`) y entrada cifrada (`entry/sealed.rs`), almacenamiento SQLite con lápidas para las eliminadas y la migración de la cabecera v1 a v2 (`storage.rs`), respaldos: exportar con `VACUUM INTO` e importar validando una copia temporal (`backup.rs`), regla de la contraseña maestra: longitud mínima y fortaleza (`password.rs`) |
 | `search.rs` | Búsqueda tolerante a errores sobre los datos de búsqueda |
 | `protocol/` | Identidades X25519, emparejamiento y envío con Noise (`snow`), descubrimiento mDNS |
 

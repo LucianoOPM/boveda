@@ -21,6 +21,7 @@ fn maps_every_core_error() {
         (E::Clock, VaultError::Clock),
         (E::WrongVaultKey, VaultError::WrongVaultKey),
         (E::AlreadyExists, VaultError::AlreadyExists),
+        (E::PasswordTooShort, VaultError::PasswordTooShort),
         (E::Storage(S::Io), VaultError::StorageIo),
         (E::Storage(S::Busy), VaultError::StorageBusy),
         (E::Storage(S::Corrupt), VaultError::StorageCorrupt),

@@ -18,6 +18,7 @@ use crate::crypto::keys::{self, VAULT_KEY_LEN, VaultKey};
 mod backup;
 pub(crate) mod entry;
 pub(crate) mod header;
+mod password;
 pub(crate) mod storage;
 #[cfg(test)]
 pub(crate) mod test_support;
@@ -26,6 +27,10 @@ pub use crate::error::{Error, InvalidEntryField, Result, StorageErrorKind};
 use entry::sealed::SealedEntry;
 pub use entry::{EntryId, SearchData, Secret};
 use header::VaultHeader;
+use password::require_master_password;
+pub use password::{
+    MIN_MASTER_PASSWORD_CHARS, PasswordStrength, STRONG_MASTER_PASSWORD_CHARS, password_strength,
+};
 use storage::{Migration, Storage};
 
 /// Bóveda abierta sobre un archivo. No deriva `Debug`.
@@ -123,11 +128,15 @@ impl Vault {
     /// Calibra Argon2id en este dispositivo. Una ruta que ya existe da
     /// [`Error::AlreadyExists`] sin tocarla. `path` debe ser absoluta (si
     /// no, `Storage(Io)`): el SQLite empaquetado interpretaría como URI una
-    /// ruta que empiece con `file:`.
+    /// ruta que empiece con `file:`. Una contraseña de menos de
+    /// [`MIN_MASTER_PASSWORD_CHARS`] caracteres da
+    /// [`Error::PasswordTooShort`] antes de tocar el disco.
     pub fn create(path: &Path, password: &SecretString) -> Result<Self> {
-        // La protección real está en `Storage::create`; esta comprobación
-        // solo sirve para fallar antes de calibrar (medio segundo y al
-        // menos 64 MiB) con una ruta que se va a rechazar igual.
+        // Las protecciones reales están en `create_with_params` y en
+        // `Storage::create`; estas comprobaciones solo sirven para fallar
+        // antes de calibrar (medio segundo y al menos 64 MiB) con una
+        // contraseña o una ruta que se van a rechazar igual.
+        require_master_password(password)?;
         storage::require_absolute(path)?;
         let params = kdf::calibrate()?;
         Self::create_with_params(path, password, params)
@@ -140,6 +149,7 @@ impl Vault {
         params: KdfParams,
     ) -> Result<Self> {
         // Todo lo que puede fallar en memoria ocurre antes de crear el archivo.
+        require_master_password(password)?;
         let (header, key) = VaultHeader::create(password, params)?;
         let storage = Storage::create(path, &header)?;
         Ok(Self {
@@ -416,14 +426,17 @@ impl Vault {
     /// Cambia la contraseña maestra: verifica `current`, calibra Argon2id y
     /// vuelve a cifrar solo la llave de bóveda, con sal y nonce nuevos.
     ///
-    /// No toca la llave de bóveda ni las entradas. Con `current` incorrecta
-    /// devuelve [`Error::WrongPassword`] sin calibrar ni cambiar nada.
+    /// No toca la llave de bóveda ni las entradas. Una `new` de menos de
+    /// [`MIN_MASTER_PASSWORD_CHARS`] caracteres da
+    /// [`Error::PasswordTooShort`] antes de verificar `current` (que corre
+    /// Argon2id). Con `current` incorrecta devuelve [`Error::WrongPassword`]
+    /// sin calibrar ni cambiar nada.
     pub fn change_master_password(
         &mut self,
         current: &SecretString,
         new: &SecretString,
     ) -> Result<()> {
-        self.verify_current(current)?;
+        self.check_password_change(current, new)?;
         let params = kdf::calibrate()?;
         self.rekey_with_params(new, params)
     }
@@ -437,8 +450,15 @@ impl Vault {
         new: &SecretString,
         params: KdfParams,
     ) -> Result<()> {
-        self.verify_current(current)?;
+        self.check_password_change(current, new)?;
         self.rekey_with_params(new, params)
+    }
+
+    /// Lo que comparten ambas variantes del cambio de contraseña antes de
+    /// cifrar: primero la longitud de la nueva (barata), después la actual.
+    fn check_password_change(&self, current: &SecretString, new: &SecretString) -> Result<()> {
+        require_master_password(new)?;
+        self.verify_current(current)
     }
 
     /// Comprueba la contraseña actual con la cabecera guardada. La llave

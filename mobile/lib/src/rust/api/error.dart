@@ -34,6 +34,9 @@ enum VaultError {
   clock,
   wrongVaultKey,
   alreadyExists,
+
+  /// La contraseña maestra nueva no llega al mínimo de caracteres.
+  passwordTooShort,
   storageIo,
   storageBusy,
   storageCorrupt,
