@@ -1,6 +1,6 @@
 # Especificación: gestor de contraseñas móvil con envío a PC
 
-Actualizado: 2026-11-06
+Actualizado: 2026-11-07
 
 ## Resumen y alcance
 
@@ -76,6 +76,127 @@ El identificador de la entrada va ligado al cifrado como dato autenticado, para 
 **Errores.** Una contraseña maestra incorrecta hace fallar el descifrado de la llave de bóveda y la app solo muestra "Contraseña incorrecta". Una entrada corrupta se marca como dañada sin bloquear el resto.
 
 **Respaldos.** Exportación del archivo de bóveda cifrado, que puede guardarse en la PC o en la nube porque es ilegible sin la contraseña maestra, e importación en un celular nuevo.
+
+## Formato de la bóveda
+
+Decisiones tomadas el 2026-11-07, antes de implementar las llaves. Fijan el formato en disco: cambiar cualquiera de ellas sube la versión del formato e incluye una migración.
+
+**Cabecera y llaves.**
+
+- `calibrate()` mide en el dispositivo y elige los parámetros de Argon2id para tardar unos 0.5 s, sin bajar nunca de 64 MiB de memoria, 3 iteraciones y paralelismo 1. Las pruebas usan exactamente esos mínimos.
+- Calibración (decidida el 2026-11-07): primero sube la memoria en pasos de 16 MiB hasta un tope de 128 MiB, para que la bóveda pueda abrirse en celulares con menos memoria libre que el que la creó; al llegar al tope sube las iteraciones. El paralelismo queda fijo en 1. `calibrate()` solo corre al crear la bóveda o al cambiar la contraseña maestra.
+- Al leer una cabecera se rechazan una versión de formato o un algoritmo desconocidos, y parámetros fuera de los límites: memoria fuera de 64–128 MiB, menos de 3 iteraciones o paralelismo distinto de 1.
+- Código (decidido el 2026-11-07): `crypto/keys.rs` deriva la llave maestra y cifra o descifra con ella la llave de bóveda; `vault/header.rs` codifica la cabecera como dato autenticado, la lee y la valida.
+- La cabecera guarda por separado (no como cadena PHC): versión del formato, algoritmo de derivación, memoria, iteraciones, paralelismo, sal de 16 bytes y la llave de bóveda cifrada con su nonce.
+- Al cifrar la llave de bóveda, los campos de la cabecera (versión, algoritmo, parámetros y sal) van como dato autenticado, en binario de ancho fijo y little-endian: `versión (u16) | algoritmo (u8) | memoria en KiB (u32) | iteraciones (u32) | paralelismo (u32) | sal (16 bytes)`. El algoritmo `1` es Argon2id versión 0x13. Alterar cualquier parámetro de la cabecera hace fallar el descifrado.
+- En el `Cargo.toml` de la raíz, `[profile.dev.package.argon2]` y `[profile.dev.package.blake2]` llevan `opt-level = 3` para que las pruebas en modo debug no sean lentas. Se agregan junto con la dependencia `argon2`.
+
+**Entradas.**
+
+- Identificador: 16 bytes aleatorios del generador del sistema (`getrandom`), guardados como `BLOB`.
+- Cada parte (datos de búsqueda y secreto) se serializa con `serde` + `postcard` y se cifra por separado. Se guarda como `nonce (24 bytes) | texto cifrado con etiqueta`.
+- Al descifrar, el texto plano va en `Zeroizing<Vec<u8>>` antes de deserializar. La contraseña y las notas del secreto son `SecretString` (`secrecy`): `Debug` no muestra su valor y solo se leen con `expose_secret()`.
+- Al cifrar se reserva `24 + len + 16` en un búfer `Zeroizing` (nonce, texto y etiqueta), se cifra `[24..]` con `encrypt_inout_detached` y se agrega la etiqueta sin reasignar; el contenido sale del búfer solo tras cifrar con éxito. Al descifrar se copia `[24..]` a un `Zeroizing<Vec<u8>>`, se usa `decrypt_in_place` y ese búfer se pasa a la deserialización. (`encrypt_in_place_detached` está deprecada en `aead` 0.6.)
+- Una parte de menos de 40 bytes (nonce y etiqueta) o que no se autentica cuenta como entrada dañada, igual que una que no se puede deserializar. Esa entrada falla sola: no impide abrir las demás.
+- Las dos partes de una entrada se cifran siempre juntas y con la misma versión de estructura.
+- Campos y reglas de la versión de estructura 1 (decididos el 2026-11-07; detalle en `docs/superpowers/specs/2026-11-07-modelo-entrada-design.md`):
+  - Obligatorios: servicio y contraseña. Opcionales: URL, usuario, etiquetas y notas. Las entradas de solo notas quedan fuera del MVP.
+  - El servicio, la URL, el usuario y las etiquetas se recortan; una URL o un usuario en blanco cuentan como ausentes. La contraseña y el contenido de las notas nunca se recortan; unas notas en blanco cuentan como ausentes.
+  - Límites en bytes UTF-8 tras normalizar: servicio y usuario 256, URL 2048, contraseña 1024, notas 16384, como máximo 32 etiquetas de 64.
+  - Etiquetas sin duplicados, comparando sin distinguir mayúsculas (`to_lowercase`); se conserva la primera forma escrita y el orden. "Médico" y "Medico" son distintas.
+  - Al leer una entrada se aplican las reglas de su versión de estructura. Una versión desconocida, bytes mal formados o un contenido que viola las reglas cuentan como entrada dañada.
+  - Limitación conocida del MVP: sin normalización Unicode (NFC), una palabra con acentos compuestos y descompuestos cuenta como dos etiquetas distintas.
+- Dato autenticado de cada parte, binario de ancho fijo sin separadores (28 bytes):
+
+  | Offset | Campo | Tamaño | Valor |
+  | --- | --- | --- | --- |
+  | 0–8 | Etiqueta | 9 bytes | ASCII `boveda-v1` |
+  | 9–24 | Identificador | 16 bytes | id de la entrada |
+  | 25–26 | Versión de estructura | 2 bytes | `u16` little-endian |
+  | 27 | Parte | 1 byte | `1` = datos de búsqueda, `2` = secreto |
+
+  Así se rechaza mover un secreto a otra entrada y también intercambiar las dos partes de una misma entrada.
+- **Fuera del modelo de amenazas de la v1:** volver una entrada a una versión anterior (rollback). Quien pueda escribir el archivo puede reemplazar ambas partes de una entrada por una copia vieja y válida de la misma entrada, y no se detecta.
+
+**Almacenamiento.** La tabla de entradas guarda, además de las partes cifradas, `modified_at`, `last_used_at` y la marca de eliminada, en claro. `last_used_at` ordena las usadas recientemente cuando no hay texto de búsqueda; revela cuándo se usó una entrada, pero no cuál es.
+
+Decisiones tomadas el 2026-11-07 (detalle en `docs/superpowers/specs/2026-11-07-almacenamiento-design.md`):
+
+- Fechas en milisegundos Unix, como `i64`. El almacenamiento no lee el reloj: recibe la hora de quien llama. `Vault` la lee en un único punto y devuelve un error tipado si el reloj marca una fecha anterior a 1970.
+- `PRAGMA application_id = 0x42564C54` ("BVLT") identifica el archivo como bóveda. Es fijo para siempre y no es un control de seguridad, porque no está autenticado. La versión es solo `format_version` de la cabecera; no se usa `user_version`.
+- Abrir nunca crea ni modifica el archivo. Un archivo que no es SQLite, o un SQLite con otro `application_id`, da `NotAVault`; una `format_version` desconocida da su propio error. Excepciones, propias de SQLite: al abrir en lectura y escritura revierte un `-journal` caliente, y al cerrar integra las transacciones pendientes de un `-wal`, aunque la apertura falle (por ejemplo, por una versión futura). En ambos casos el contenido se conserva.
+- En cada apertura de lectura y escritura se fijan `secure_delete = ON`, `journal_mode = DELETE` y `synchronous = FULL`, después de validar `format_version`: una bóveda de versión futura se rechaza sin cambiarle el modo de diario. La apertura en solo lectura (para validar un respaldo) no los fija: rechaza un archivo en WAL o con un `-journal` caliente, y nunca lo repara.
+- Las filas eliminadas son lápidas: `deleted = 1`, `modified_at` actualizado y las dos partes cifradas en `NULL`. Un `CHECK` impide una entrada viva sin partes y una lápida con partes. Una lápida nunca cuenta como entrada dañada.
+- Una fila con un id que no mide 16 bytes o una versión fuera de `u16` cuenta como entrada dañada y falla sola.
+- Decidido el 2026-11-07 (#22): todas las rutas de la API pública deben ser absolutas; una relativa da `Storage(Io)` sin crear ni modificar nada. El SQLite empaquetado de `rusqlite` se compila con `SQLITE_USE_URI`, así que una ruta que empiece con `file:` se interpretaría como URI (con parámetros como `?mode=`) aunque la conexión no use `SQLITE_OPEN_URI`: las comprobaciones previas tocarían el archivo literal y SQLite abriría otro. Una ruta absoluta no puede empezar así. La comprobación vive en el almacenamiento (`create`, `open`, la apertura en solo lectura y `VACUUM INTO`, que también acepta URIs); `export` e `import` la repiten al principio, antes de tocar el disco.
+
+Esquema de la versión de formato 1:
+
+```sql
+CREATE TABLE header (
+    id              INTEGER PRIMARY KEY CHECK (id = 1),
+    format_version  INTEGER NOT NULL,
+    kdf_algorithm   INTEGER NOT NULL,
+    kdf_memory_kib  INTEGER NOT NULL,
+    kdf_iterations  INTEGER NOT NULL,
+    kdf_parallelism INTEGER NOT NULL,
+    salt            BLOB NOT NULL CHECK (length(salt) = 16),
+    key_nonce       BLOB NOT NULL CHECK (length(key_nonce) = 24),
+    encrypted_key   BLOB NOT NULL CHECK (length(encrypted_key) = 48)
+) STRICT;
+
+CREATE TABLE entries (
+    id                   BLOB PRIMARY KEY NOT NULL,
+    entry_schema_version INTEGER NOT NULL,
+    search               BLOB,
+    secret               BLOB,
+    modified_at          INTEGER NOT NULL,   -- ms Unix
+    last_used_at         INTEGER,            -- NULL = nunca usada
+    deleted              INTEGER NOT NULL DEFAULT 0,
+    CHECK ((deleted = 0 AND search IS NOT NULL AND secret IS NOT NULL)
+        OR (deleted = 1 AND search IS NULL AND secret IS NULL))
+) STRICT, WITHOUT ROWID;
+```
+
+**Fuera del modelo de amenazas de la v1:** al confirmar una transacción se borra el `-journal`, pero sus bytes (cifrados) pueden quedar en la memoria flash hasta que el sistema reutilice esos bloques, y `secure_delete` no cubre eso. Tampoco se resuelven aquí los relojes que retroceden o están desfasados entre dispositivos: le corresponde a la sincronización (fase 3).
+
+**API.** Una sola estructura `Vault`. Decisiones tomadas el 2026-11-07 (detalle en `docs/superpowers/specs/2026-11-07-api-boveda-design.md`):
+
+- La llave de bóveda (`SecretBox<[u8; 32]>`) vive junto con la caché de datos de búsqueda descifrados en un solo `Option<Unlocked>`. `lock()` pone `None` y borra ambas de memoria; sobre una bóveda ya bloqueada no hace nada.
+- Con la bóveda bloqueada, todas las operaciones salvo `unlock` y `lock` devuelven `Error::Locked`. `unlock()` sobre una bóveda ya desbloqueada devuelve `Error::AlreadyUnlocked`.
+- `unlock()` devuelve un `UnlockReport` sin texto plano; las entradas válidas se leen con `entries()`.
+- `edit` recibe los datos de búsqueda completos y `SecretChange::Keep` (el secreto no sale del núcleo) o `Replace` (contraseña y notas juntas; repara una entrada dañada). Siempre vuelve a cifrar ambas partes y actualiza `modified_at`, no `last_used_at`.
+- `reveal()` actualiza `last_used_at` como mejor esfuerzo: si la escritura en disco falla, devuelve el secreto igual.
+- `change_master_password` verifica la contraseña actual antes de calibrar y solo vuelve a cifrar la llave de bóveda, con sal y nonce nuevos.
+- `create` sobre una ruta que ya existe devuelve `Error::AlreadyExists`. Un reloj anterior a 1970 devuelve `Error::Clock`.
+- Decidido el 2026-11-07 (#22): todas las rutas de la API pública deben ser absolutas (`create`, `open`, `export` e `import`); una relativa da `Storage(Io)` (motivo en "Almacenamiento"). `create` la rechaza antes de calibrar Argon2id.
+- Como `rusqlite::Connection` no es `Sync`, el `Mutex` vive en la fachada de `mobile/rust`, no en el núcleo.
+
+**Entradas dañadas.** `unlock()` devuelve en su `UnlockReport` los identificadores de las entradas con la fila ilegible o con los datos de búsqueda dañados, y el número de filas dañadas sin un identificador válido, sin fallar por ellas. Los secretos no se descifran al desbloquear, así que un secreto dañado no aparece en el `UnlockReport`: `reveal()` sobre esa entrada devuelve `CorruptEntry`. Ambos casos tienen su prueba: alterar un byte de una sola entrada y comprobar que el resto abre, y que `reveal()` de la dañada devuelve ese error.
+
+**Respaldos.**
+
+- Exportar es una copia consistente del archivo SQLite con `VACUUM INTO`, con la cabecera incluida: un respaldo es una bóveda que abre con la misma contraseña maestra. La copia de la llave en el Keystore no viaja; al restaurar se vuelve a activar la huella.
+- Importar solo reemplaza la bóveda actual después de abrir la importada con la contraseña y validar su versión de formato. Si algo falla, la bóveda actual queda intacta.
+- Al restaurar un respaldo se regenera la identidad del dispositivo, porque la llave privada del celular viaja dentro de la bóveda. Aplica a partir de la etapa 3.
+
+Decisiones tomadas el 2026-11-07 (detalle en `docs/superpowers/specs/2026-11-07-respaldos-design.md`):
+
+- `Vault::export(dest)` exige la bóveda desbloqueada (si no, `Error::Locked`), para que nadie exporte sin que el usuario esté presente. `dest` no debe existir (`AlreadyExists`). El respaldo sale compacto: las partes cifradas de las entradas eliminadas no viajan, y las lápidas sí.
+- No hace falta sincronizar el respaldo a mano: con `synchronous = FULL`, SQLite hace el fsync del archivo que genera `VACUUM INTO`.
+- `Vault::import(backup, dest, password)` es una función asociada, como `create`: sirve para restaurar sobre una bóveda existente y en un celular nuevo. Quien llama suelta antes su `Vault` sobre `dest` y, si la importación falla, la vuelve a abrir. La contraseña es la del respaldo. Devuelve la bóveda importada, desbloqueada, con su `UnlockReport`.
+- Se valida una copia temporal junto a `dest`: se abre en solo lectura, se revisa con `PRAGMA integrity_check`, se desbloquea y se descifran los datos de búsqueda. Las entradas con la fila ilegible o con los datos de búsqueda dañados se reportan y no impiden importar. Después la copia se renombra sobre `dest`. Los secretos no se descifran al importar: uno dañado aparece al usar `reveal()`, con `CorruptEntry`. Es intencional: un secreto se descifra solo al copiar, mostrar o enviar, y validarlos al importar pondría todas las contraseñas en memoria a la vez.
+- Si `dest` tiene un `-journal` o un `-wal` (un cierre forzado), se aplica abriéndola antes de reemplazarla; si no se puede abrir, no se reemplaza nada. Reemplazar una base sin su diario caliente la corrompería al aplicarlo sobre el respaldo. Si `dest` no existe, sus `-journal`, `-wal` y `-shm` son huérfanos: se borran antes de instalar el respaldo, porque no hay base que revertir y SQLite aplicaría el diario o el `-wal` viejo sobre el respaldo.
+- `export` e `import` exigen rutas absolutas, como toda la API pública (ver "Almacenamiento").
+- Único punto sin vuelta atrás: si falla la apertura final, `dest` ya es el respaldo validado y se puede reintentar con `Vault::open`.
+
+**Búsqueda.** `Vault::search(query)` sobre la caché de datos de búsqueda descifrados; nunca toca el secreto ni el disco. Decisiones tomadas el 2026-11-07 (detalle en `docs/superpowers/specs/2026-11-07-busqueda-design.md`):
+
+- Busca en servicio, dominio de la URL, usuario y cada etiqueta. El dominio se extrae a mano: sin esquema, sin `usuario:clave@`, sin puerto y sin ruta; acepta URLs sin esquema.
+- Sin texto, devuelve todas: las usadas más recientemente primero, las nunca usadas al final y, entre empates, por servicio.
+- Buscador principal: `nucleo-matcher` (MPL-2.0, permitida en `deny.toml`) por subsecuencia ("gm" encuentra "Gmail"), sin distinguir mayúsculas y con "telefono" encontrando "Teléfono". Cada palabra del texto debe coincidir con algún campo; el puntaje es la suma del mejor de cada palabra. Los signos (`^ ! ' $`) son literales.
+- Respaldo, solo si el principal no encuentra nada: distancia OSA (`strsim`) por palabras, sin acentos ni mayúsculas, contra cada palabra de los campos y contra su inicio del mismo largo. Tolera 1 con 3 a 5 caracteres y 2 con 6 o más; las palabras de menos de 3 solo coinciden por subsecuencia.
+- Las copias internas de `nucleo-matcher` y `strsim` no se pueden borrar de memoria: es una limitación aceptada, porque son datos de búsqueda y no secretos.
 
 ## Emparejamiento y envío
 
@@ -156,7 +277,7 @@ Las pruebas del núcleo son las más importantes, porque un error ahí puede dej
 - Una contraseña maestra incorrecta falla.
 - Modificar un solo byte de una entrada cifrada se detecta.
 - Intercambiar el secreto de una entrada con el de otra se rechaza.
-- Bóvedas de ejemplo fijas en el repositorio que siempre deben abrirse, para detectar cambios accidentales de formato.
+- Bóvedas de ejemplo fijas en el repositorio que siempre deben abrirse, para detectar cambios accidentales de formato. Decidido el 2026-11-07: una por versión de formato, `core/tests/fixtures/vault-vN.db` con N igual a la `format_version`; nunca se modifican ni se borran; se generan una sola vez con `KdfParams::MIN`, y las pruebas de integración (`core/tests/vault.rs`) las leen sobre una copia, solo con la API pública (detalle en `docs/superpowers/specs/2026-11-07-pruebas-integracion-design.md`).
 - Exportar, borrar e importar un respaldo recupera todas las entradas.
 
 **Protocolo** (ambos extremos en el mismo proceso, por localhost):

@@ -1,14 +1,9 @@
-pub fn add(left: u64, right: u64) -> u64 {
-    left + right
-}
+//! Núcleo de Bóveda: criptografía, formato de la bóveda, búsqueda y protocolo.
+//!
+//! Lo que usan las apps se expone desde el módulo `vault` (y, más adelante,
+//! `protocol`); el resto es privado al crate.
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn it_works() {
-        let result = add(2, 2);
-        assert_eq!(result, 4);
-    }
-}
+mod crypto;
+mod error;
+mod search;
+pub mod vault;

@@ -1,6 +1,6 @@
 # Roadmap al MVP: gestor de contraseñas
 
-Actualizado: 2026-11-06
+Actualizado: 2026-11-07
 
 Cuatro etapas llevan del repositorio vacío al MVP; cada una termina en algo que ya funciona y tiene un criterio claro para darla por cerrada.
 
@@ -23,15 +23,15 @@ Cada criterio (hexágono) cierra su etapa; no se empieza la siguiente hasta cump
 
 Resultado: el crate `vault-core` crea, abre y respalda una bóveda cifrada, probado de punta a punta sin ninguna interfaz.
 
-- [ ] Repositorio con workspace de Cargo, crate `vault-core` e integración continua que ejecute `cargo test`, `clippy`, `cargo audit` y `cargo deny`.
-- [ ] Llaves: Argon2id calibrado a unos 0.5 s, llave de bóveda de 256 bits, y funciones para cifrarla y descifrarla con la llave derivada.
-- [ ] Modelo de entrada con número de versión, separado en datos de búsqueda (servicio, URL, usuario, etiquetas) y secreto (contraseña, notas).
-- [ ] Cifrado por entrada con XChaCha20-Poly1305, el identificador como dato autenticado y `zeroize` para los secretos.
-- [ ] Almacenamiento SQLite: tabla de cabecera y tabla de entradas con fecha de modificación y marca de eliminada.
-- [ ] API de la bóveda: crear, desbloquear, bloquear, agregar, editar, eliminar, revelar secreto y cambiar contraseña maestra.
-- [ ] Búsqueda tolerante a errores sobre los datos de búsqueda, con las usadas recientemente primero cuando no hay texto.
-- [ ] Exportar e importar el respaldo cifrado.
-- [ ] Pruebas: ida y vuelta del cifrado, contraseña incorrecta, byte alterado, secreto intercambiado entre entradas, bóvedas de ejemplo fijas y restauración de respaldo.
+- [x] Repositorio con workspace de Cargo, crate `vault-core` e integración continua que ejecute `cargo test`, `clippy`, `cargo audit` y `cargo deny`.
+- [x] Llaves: Argon2id calibrado a unos 0.5 s, llave de bóveda de 256 bits, y funciones para cifrarla y descifrarla con la llave derivada.
+- [x] Modelo de entrada con número de versión, separado en datos de búsqueda (servicio, URL, usuario, etiquetas) y secreto (contraseña, notas).
+- [x] Cifrado por entrada con XChaCha20-Poly1305, el identificador como dato autenticado y `zeroize` para los secretos.
+- [x] Almacenamiento SQLite: tabla de cabecera y tabla de entradas con fecha de modificación y marca de eliminada.
+- [x] API de la bóveda: crear, desbloquear, bloquear, agregar, editar, eliminar, revelar secreto y cambiar contraseña maestra.
+- [x] Búsqueda tolerante a errores sobre los datos de búsqueda, con las usadas recientemente primero cuando no hay texto.
+- [x] Exportar e importar el respaldo cifrado.
+- [x] Pruebas: ida y vuelta del cifrado, contraseña incorrecta, byte alterado, secreto intercambiado entre entradas, bóvedas de ejemplo fijas y restauración de respaldo.
 
 **Se cierra cuando** todas esas pruebas pasan en la integración continua.
 
@@ -61,6 +61,7 @@ Resultado: tocas "Enviar a PC" en el celular, pones la huella y pegas la contras
 - [ ] Servidor en la PC: escucha solo en redes privadas, anuncio por mDNS, confirmación al emparejar y rechazo de dispositivos no emparejados.
 - [ ] Portapapeles: escribir con `arboard` excluido del historial y la nube, notificación, y borrado a los 30 s solo si sigue la misma contraseña.
 - [ ] Android: escanear el QR y guardar la llave privada del celular dentro de la bóveda.
+- [ ] Al restaurar un respaldo, regenerar la identidad del celular y pedir emparejar de nuevo (ver "Formato de la bóveda" en la especificación).
 - [ ] Android: enviar con huella obligatoria, buscando la PC por última IP, luego mDNS y luego IP manual.
 - [ ] Android: aviso si no se encuentra la PC, con la opción de copiar localmente.
 - [ ] Lista de dispositivos emparejados y revocación en ambas apps.

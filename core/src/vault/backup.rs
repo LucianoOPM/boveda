@@ -1,0 +1,235 @@
+//! Respaldos: exportar la bóveda e importar un respaldo.
+//!
+//! Un respaldo es una bóveda completa, con su cabecera: abre con la misma
+//! contraseña maestra con la que se exportó.
+//!
+//! - Exportar usa `VACUUM INTO`, que escribe una copia consistente y
+//!   compacta: "all deleted content is purged from the backup, leaving
+//!   behind no forensic traces" (`lang_vacuum.html`). Tampoco hace falta
+//!   sincronizarla a mano: con `synchronous` en `NORMAL` o `FULL` (aquí,
+//!   siempre `FULL`), SQLite hace el fsync del archivo generado.
+//! - Las rutas deben ser absolutas, como en todo el almacenamiento (ver
+//!   [`require_absolute`]).
+
+use std::fs::{self, OpenOptions};
+use std::io;
+use std::path::{Path, PathBuf};
+
+use secrecy::SecretString;
+
+use super::storage::{Storage, require_absolute};
+use super::{UnlockReport, Unlocked, Vault};
+use crate::error::{Error, Result, StorageErrorKind};
+
+/// Sufijo de la copia temporal de un respaldo, junto a `dest`: así el
+/// renombrado final queda en el mismo volumen, como exige `fs::rename`.
+pub(crate) const IMPORT_SUFFIX: &str = ".import";
+
+/// Exporta la bóveda abierta en `storage` a `dest`, que debe ser absoluta y
+/// no existir. Quien llama ya comprobó que la bóveda está desbloqueada.
+///
+/// `dest` se crea vacío con `create_new`, que falla de forma atómica si ya
+/// existe; `VACUUM INTO` acepta un destino vacío. Si algo falla después,
+/// se borra `dest`: solo puede ser el archivo creado en esta llamada.
+pub(super) fn export(storage: &Storage, dest: &Path) -> Result<()> {
+    require_absolute(dest)?;
+    OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(dest)
+        .map_err(|e| match e.kind() {
+            io::ErrorKind::AlreadyExists => Error::AlreadyExists,
+            _ => Error::Storage(StorageErrorKind::Io),
+        })?;
+
+    if let Err(e) = storage.vacuum_into(dest) {
+        let _ = fs::remove_file(dest);
+        return Err(e);
+    }
+    Ok(())
+}
+
+/// Importa `backup` sobre `dest` (exista o no) y devuelve la bóveda
+/// importada, desbloqueada con `password` (la del respaldo).
+///
+/// Se valida una copia temporal, no el original: así se instala
+/// exactamente lo que se validó, y el respaldo nunca se abre con SQLite.
+/// Hasta el `rename`, `dest` no se toca; si algo falla antes, la copia se
+/// borra y `dest` queda igual.
+pub(super) fn import(
+    backup: &Path,
+    dest: &Path,
+    password: &SecretString,
+) -> Result<(Vault, UnlockReport)> {
+    require_absolute(backup)?;
+    require_absolute(dest)?;
+
+    // El guardián se declara antes de cualquier conexión sobre la copia,
+    // para soltarse después de ella: en Windows no se borra un archivo
+    // abierto.
+    let temp = copy_to_temp(backup, &with_suffix(dest, IMPORT_SUFFIX))?;
+    let (unlocked, report) = validate(&temp.0, password)?;
+
+    settle_dest(dest)?;
+    fs::rename(&temp.0, dest).map_err(io_error)?;
+    sync_parent(dest);
+
+    // Único paso sin vuelta atrás: si esta apertura falla, `dest` ya es el
+    // respaldo validado y la app puede reintentar con `Vault::open`.
+    let storage = Storage::open(dest)?;
+    Ok((
+        Vault {
+            storage,
+            unlocked: Some(unlocked),
+        },
+        report,
+    ))
+}
+
+/// Copia `backup` a `temp` (la copia temporal, junto a `dest`) y la
+/// sincroniza. Devuelve el guardián que la borra al soltarse.
+///
+/// - Si `backup` es el mismo archivo que `temp`, se rechaza con
+///   `Storage(Io)`: borrar el sobrante o el guardián destruirían el
+///   respaldo del usuario.
+/// - Un `temp` sobrante de un intento interrumpido se borra primero, y la
+///   copia se crea con `create_new`: el guardián solo borra un archivo que
+///   creó esta llamada.
+/// - No se usa `fs::copy`, que copia también los permisos: la copia de un
+///   respaldo de solo lectura no se podría sincronizar, y la bóveda
+///   instalada heredaría los permisos del respaldo. Aquí la copia toma los
+///   permisos por defecto del proceso.
+fn copy_to_temp(backup: &Path, temp: &Path) -> Result<TempFile> {
+    if same_file(backup, temp) {
+        return Err(Error::Storage(StorageErrorKind::Io));
+    }
+    match fs::remove_file(temp) {
+        Ok(()) => {}
+        Err(e) if e.kind() == io::ErrorKind::NotFound => {}
+        Err(e) => return Err(io_error(e)),
+    }
+
+    let mut source = fs::File::open(backup).map_err(io_error)?;
+    let mut copy = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(temp)
+        .map_err(io_error)?;
+    let guard = TempFile(temp.to_path_buf());
+    io::copy(&mut source, &mut copy).map_err(io_error)?;
+    copy.sync_all().map_err(io_error)?;
+    Ok(guard)
+}
+
+/// Si las dos rutas existen y apuntan al mismo archivo. Si alguna no
+/// existe, no pueden ser el mismo.
+fn same_file(a: &Path, b: &Path) -> bool {
+    match (fs::canonicalize(a), fs::canonicalize(b)) {
+        (Ok(a), Ok(b)) => a == b,
+        _ => false,
+    }
+}
+
+/// Abre la copia en solo lectura (rechaza un archivo ajeno, en WAL o de una
+/// versión desconocida), revisa su integridad, la desbloquea y descifra los
+/// datos de búsqueda. Cierra la conexión antes de volver.
+fn validate(path: &Path, password: &SecretString) -> Result<(Unlocked, UnlockReport)> {
+    let storage = Storage::open_read_only(path)?;
+    storage.check_integrity()?;
+    let key = storage.read_header()?.unlock(password)?;
+    let loaded = Vault::load_entries(&storage, key)?;
+    storage.close()?;
+    Ok(loaded)
+}
+
+/// Si `dest` tiene un `-journal` o un `-wal` (un cierre forzado a mitad de
+/// una transacción), lo aplica abriendo y cerrando `dest` con
+/// `Storage::open`, que revierte el diario o integra el WAL.
+///
+/// Reemplazar `dest` sin hacerlo dañaría el respaldo: "Overwriting a
+/// database file with another without also deleting any hot journal
+/// associated with the original database" es una causa de corrupción
+/// ("How To Corrupt Your Database Files", §1.4). Si `dest` existe, el
+/// diario no se borra: antes del `rename` dañaría la bóveda actual si el
+/// `rename` falla, y después dejaría un intervalo en el que un corte de luz
+/// lo aplicaría sobre el respaldo. Si `dest` no se puede abrir, se devuelve
+/// el error sin reemplazar nada.
+///
+/// Si `dest` no existe, sus `-journal`, `-wal` y `-shm` son huérfanos (una
+/// bóveda borrada a mano, restos de otra instalación): no hay base que
+/// revertir ni que dañar, así que se borran y se sincroniza el directorio
+/// antes del `rename`. Si quedaran, SQLite aplicaría el diario o el WAL
+/// viejo sobre el respaldo. Si la sincronización falla, se devuelve
+/// `Storage(Io)` sin reemplazar nada: no está garantizado que el borrado
+/// persista antes del `rename`. Se usa `symlink_metadata` y no
+/// `Path::exists`, que da `false` ante cualquier error (por ejemplo, sin
+/// permisos) y haría borrar el diario de una bóveda que sí existe.
+fn settle_dest(dest: &Path) -> Result<()> {
+    match fs::symlink_metadata(dest) {
+        Ok(_) => {}
+        Err(e) if e.kind() == io::ErrorKind::NotFound => {
+            for suffix in ["-journal", "-wal", "-shm"] {
+                match fs::remove_file(with_suffix(dest, suffix)) {
+                    Ok(()) => {}
+                    Err(e) if e.kind() == io::ErrorKind::NotFound => {}
+                    Err(e) => return Err(io_error(e)),
+                }
+            }
+            sync_dir_of(dest).map_err(io_error)?;
+            return Ok(());
+        }
+        Err(e) => return Err(io_error(e)),
+    }
+    let journal = with_suffix(dest, "-journal").exists();
+    let wal = with_suffix(dest, "-wal").exists();
+    if journal || wal {
+        Storage::open(dest)?.close()?;
+    }
+    Ok(())
+}
+
+/// Borra el archivo al soltarse, ignorando el error (tras el `rename` ya no
+/// existe).
+struct TempFile(PathBuf);
+
+impl Drop for TempFile {
+    fn drop(&mut self) {
+        let _ = fs::remove_file(&self.0);
+    }
+}
+
+/// Ruta con un sufijo agregado al nombre del archivo.
+fn with_suffix(path: &Path, suffix: &str) -> PathBuf {
+    let mut name = path.as_os_str().to_owned();
+    name.push(suffix);
+    PathBuf::from(name)
+}
+
+/// Sincroniza el directorio de `path` para que el `rename` sobreviva a un
+/// corte de luz. Mejor esfuerzo: ignora el error.
+fn sync_parent(path: &Path) {
+    let _ = sync_dir_of(path);
+}
+
+/// Sincroniza el directorio de `path`, para que un `rename` o un borrado
+/// persistan ante un corte de luz. En Windows no aplica.
+#[cfg(unix)]
+fn sync_dir_of(path: &Path) -> io::Result<()> {
+    match path.parent() {
+        Some(parent) => fs::File::open(parent)?.sync_all(),
+        None => Ok(()),
+    }
+}
+
+#[cfg(not(unix))]
+fn sync_dir_of(_path: &Path) -> io::Result<()> {
+    Ok(())
+}
+
+/// Los errores de E/S se descartan: pueden traer rutas.
+fn io_error(_: io::Error) -> Error {
+    Error::Storage(StorageErrorKind::Io)
+}
+
+#[cfg(test)]
+mod tests;

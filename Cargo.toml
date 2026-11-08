@@ -17,6 +17,14 @@ publish = false
 [profile.dev.package."*"]
 opt-level = 2
 
+# Argon2id y su función hash (BLAKE2b) concentran casi todo el tiempo de las
+# pruebas del núcleo: van con la optimización máxima.
+[profile.dev.package.argon2]
+opt-level = 3
+
+[profile.dev.package.blake2]
+opt-level = 3
+
 [profile.release]
 lto = true
 codegen-units = 1

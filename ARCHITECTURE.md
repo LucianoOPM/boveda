@@ -20,21 +20,25 @@ boveda/
 ├── ARCHITECTURE.md
 ├── docs/
 │   ├── especificacion.md
-│   └── roadmap.md
+│   ├── roadmap.md
+│   └── superpowers/
+│       ├── specs/          # diseños por issue (AAAA-MM-DD-tema-design.md)
+│       └── plans/          # planes de implementación por issue
 │
 ├── core/                   # crate vault-core (definitivo)
 │   ├── Cargo.toml
 │   ├── CLAUDE.md
 │   ├── src/
 │   │   ├── lib.rs
+│   │   ├── error.rs        # tipo Error (thiserror), sin secretos
 │   │   ├── crypto/         # kdf.rs (Argon2), keys.rs, aead.rs
-│   │   ├── vault/          # mod.rs (API), entry.rs, storage.rs, backup.rs
+│   │   ├── vault/          # mod.rs (API), header.rs, entry.rs, storage.rs, backup.rs
 │   │   ├── search.rs
 │   │   └── protocol/       # identity.rs, pairing.rs, message.rs, transport.rs
 │   └── tests/
 │       ├── vault.rs
 │       ├── protocol.rs
-│       └── fixtures/       # bóvedas de ejemplo fijas
+│       └── fixtures/       # bóvedas de ejemplo fijas (vault-vN.db, ver su README)
 │
 ├── mobile/                 # app Flutter (esperado, etapa 2)
 │   ├── CLAUDE.md
@@ -84,8 +88,8 @@ Los miembros del workspace se agregan conforme existen: `core` en la etapa 1, `m
 
 | Módulo | Responsabilidad |
 | --- | --- |
-| `crypto/` | Argon2id, llave de bóveda, cifrado XChaCha20-Poly1305 |
-| `vault/` | API de la bóveda, modelo de entrada, almacenamiento SQLite, respaldos |
+| `crypto/` | Argon2id (`kdf.rs`); generar la llave de bóveda, derivar la llave maestra y cifrar o descifrar con ella la llave de bóveda (`keys.rs`); cifrar y descifrar cada parte de una entrada con XChaCha20-Poly1305 y su dato autenticado (`aead.rs`) |
+| `vault/` | API de la bóveda (`mod.rs`, estructura `Vault`); cabecera: codificarla como dato autenticado, leerla y validarla (`header.rs`); modelo de entrada (`entry.rs`) y entrada cifrada (`entry/sealed.rs`), almacenamiento SQLite con lápidas para las eliminadas (`storage.rs`), respaldos: exportar con `VACUUM INTO` e importar validando una copia temporal (`backup.rs`) |
 | `search.rs` | Búsqueda tolerante a errores sobre los datos de búsqueda |
 | `protocol/` | Identidades X25519, emparejamiento y envío con Noise (`snow`), descubrimiento mDNS |
 
@@ -123,6 +127,7 @@ Sin dependencias de interfaz ni de plataforma.
 | Núcleo en Rust compartido | La parte delicada se escribe y prueba una sola vez |
 | Crate puente separado | Los detalles de flutter_rust_bridge no contaminan el núcleo |
 | Dos llaves (maestra y de bóveda) | Cambiar la contraseña maestra y usar huella sin recifrar entradas |
+| Borrado de memoria garantizado solo dentro de `vault-core` | El núcleo guarda secretos y texto plano en `SecretString`/`Zeroizing` y evita reasignaciones que dejen copias; fuera del núcleo es de mejor esfuerzo, porque Dart no permite borrar sus cadenas. Excepción documentada: las copias internas de `nucleo-matcher` y `strsim` durante la búsqueda (datos de búsqueda, no secretos) |
 | Entrada cifrada en dos partes | Búsqueda rápida sin exponer contraseñas en memoria |
 | Fecha de modificación y marca de eliminada | Preparan la sincronización futura sin migrar datos |
 | Noise (`snow`) | Protocolo estudiado para el intercambio de llaves y el canal cifrado |
