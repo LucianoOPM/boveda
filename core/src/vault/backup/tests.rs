@@ -481,3 +481,66 @@ fn imported_vault_is_writable_and_exportable() {
     assert!(again.entries().unwrap().iter().any(|e| e.id() == new_id));
     assert_eq!(again.entries().unwrap().len(), 3);
 }
+
+// --- El -journal de la bóveda actual -----------------------------------
+
+#[test]
+fn import_rolls_back_hot_journal_of_dest() {
+    let dir = tempfile::tempdir().unwrap();
+    let (backup, entries) = make_backup(dir.path());
+    let old = dir.path().join("vieja.db");
+    make_current(&old);
+    let dest = dir.path().join("boveda.db");
+    make_hot_journal_copy(&old, &dest);
+
+    let (imported, _) = Vault::import(&backup, &dest, &password("respaldo")).unwrap();
+    assert_eq!(ids_and_services(&imported), entries);
+    drop(imported);
+
+    assert!(!sibling(&dest, "-journal").exists());
+    let mut reopened = Vault::open(&dest).unwrap();
+    let report = reopened.unlock(&password("respaldo")).unwrap();
+    assert_eq!(report.unidentified_corrupt, 0);
+    assert!(report.corrupt.is_empty());
+    assert_eq!(ids_and_services(&reopened), entries);
+    assert_eq!(Storage::open(&dest).unwrap().check_integrity(), Ok(()));
+}
+
+#[test]
+fn import_keeps_unopenable_dest_with_journal() {
+    let dir = tempfile::tempdir().unwrap();
+    let (backup, _) = make_backup(dir.path());
+    let dest = dir.path().join("boveda.db");
+    fs::write(&dest, "no soy bóveda").unwrap();
+    let journal = sibling(&dest, "-journal");
+    fs::write(&journal, [0xAA_u8; 1024]).unwrap();
+
+    assert_import_fails_intact(&backup, &dest, "respaldo", Error::NotAVault);
+    assert_eq!(fs::read(&journal).unwrap(), [0xAA_u8; 1024]);
+}
+
+#[cfg(windows)]
+#[test]
+fn import_fails_while_dest_is_open() {
+    let dir = tempfile::tempdir().unwrap();
+    let (backup, _) = make_backup(dir.path());
+    let dest = dir.path().join("boveda.db");
+    make_current(&dest);
+    let before = fs::read(&dest).unwrap();
+    let conn = raw(&dest);
+    let _: i64 = conn
+        .query_row("SELECT count(*) FROM entries", [], |r| r.get(0))
+        .unwrap();
+
+    let err = Vault::import(&backup, &dest, &password("respaldo"))
+        .err()
+        .unwrap();
+    drop(conn);
+
+    assert!(matches!(
+        err,
+        Error::Storage(StorageErrorKind::Io | StorageErrorKind::Busy)
+    ));
+    assert_eq!(fs::read(&dest).unwrap(), before);
+    assert!(!sibling(&dest, IMPORT_SUFFIX).exists());
+}

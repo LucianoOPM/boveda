@@ -80,6 +80,7 @@ pub(super) fn import(
 
     let (unlocked, report) = validate(&temp.0, password)?;
 
+    settle_dest(dest)?;
     fs::rename(&temp.0, dest).map_err(io_error)?;
     sync_parent(dest);
 
@@ -105,6 +106,27 @@ fn validate(path: &Path, password: &SecretString) -> Result<(Unlocked, UnlockRep
     let loaded = Vault::load_entries(&storage, key)?;
     storage.close()?;
     Ok(loaded)
+}
+
+/// Si `dest` tiene un `-journal` o un `-wal` (un cierre forzado a mitad de
+/// una transacción), lo aplica abriendo y cerrando `dest` con
+/// `Storage::open`, que revierte el diario o integra el WAL.
+///
+/// Reemplazar `dest` sin hacerlo dañaría el respaldo: "Overwriting a
+/// database file with another without also deleting any hot journal
+/// associated with the original database" es una causa de corrupción
+/// ("How To Corrupt Your Database Files", §1.4). El diario no se borra:
+/// antes del `rename` dañaría la bóveda actual si el `rename` falla, y
+/// después dejaría un intervalo en el que un corte de luz lo aplicaría
+/// sobre el respaldo. Si `dest` no se puede abrir, se devuelve el error
+/// sin reemplazar nada.
+fn settle_dest(dest: &Path) -> Result<()> {
+    let journal = with_suffix(dest, "-journal").exists();
+    let wal = with_suffix(dest, "-wal").exists();
+    if journal || wal {
+        Storage::open(dest)?.close()?;
+    }
+    Ok(())
 }
 
 /// Borra el archivo al soltarse, ignorando el error (tras el `rename` ya no
