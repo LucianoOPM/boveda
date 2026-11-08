@@ -23,7 +23,11 @@ Future<void> pumpScreen(
 }) async {
   await tester.pumpWidget(
     MaterialApp(
-      home: UnlockScreen(session: session, onUnlocked: onUnlocked ?? (_) {}),
+      home: UnlockScreen(
+        session: session,
+        biometric: FakeBiometricService(),
+        onUnlocked: onUnlocked ?? (_) {},
+      ),
     ),
   );
   await tester.pump();

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../services/biometric_service.dart';
 import '../src/rust/api/error.dart';
 import '../src/rust/api/session.dart';
 import '../widgets/password_field.dart';
@@ -14,10 +15,12 @@ class UnlockScreen extends StatefulWidget {
   const UnlockScreen({
     super.key,
     required this.session,
+    required this.biometric,
     required this.onUnlocked,
   });
 
   final VaultSession session;
+  final BiometricService biometric;
 
   /// Se llama con la bóveda desbloqueada y el total de entradas dañadas
   /// (con y sin id) del `UnlockReport`.
