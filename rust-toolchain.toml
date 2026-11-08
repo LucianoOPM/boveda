@@ -1,7 +1,9 @@
 # Toolchain compartido por el núcleo y las dos apps.
+# La versión está fijada para que la CI y la PC compilen igual. Subirla es un
+# commit propio que cambia este archivo (ver CLAUDE.md de la raíz).
 # Los targets de Android se instalan solos la primera vez que cargo lo lea.
 [toolchain]
-channel = "stable"
+channel = "1.99.1"
 components = ["rustfmt", "clippy"]
 targets = [
     "aarch64-linux-android",   # celulares físicos

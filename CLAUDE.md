@@ -22,6 +22,7 @@ Gestor de contraseñas personal: bóveda cifrada en Android y envío de contrase
 - Trabaja dentro de la etapa actual del roadmap. No implementes funciones fuera del alcance del MVP (relay, sincronización, autollenado).
 - Antes de dar una tarea por terminada, ejecuta las pruebas y el lint de arriba y confirma que pasan.
 - Commits pequeños con Conventional Commits (`feat:`, `fix:`, `test:`, `refactor:`, `docs:`, `chore:`).
+- La versión de Rust está fijada en `rust-toolchain.toml`. Actualizarla es un commit explícito (`chore: actualizar Rust a X`) que solo cambia ese archivo y lo que la nueva versión exija; no se cambia de paso en otra tarea.
 
 ## Idioma
 

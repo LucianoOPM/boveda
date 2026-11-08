@@ -13,15 +13,26 @@ concurrency:
 env:
   CARGO_TERM_COLOR: always
 
+# Rust: cada job instala la versión fijada en rust-toolchain.toml con
+# `rustup toolchain install` sin argumentos (rustup >= 1.28), sin una acción
+# aparte que repita la versión. rustup instala además los targets de Android
+# que lista el archivo, también en Windows y en los jobs que no los usan: se
+# aceptan unos segundos de descarga porque omitirlos exigiría pasar por encima
+# del archivo con RUSTUP_TOOLCHAIN y repetir aquí la versión y los componentes.
+
 jobs:
   core:
     # Ciclo rápido para el TDD del núcleo: solo vault-core, sin compilar Tauri.
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt, clippy
+      - name: Toolchain de rust-toolchain.toml
+        # bash también en Windows: con pwsh, un fallo de rustup quedaría oculto
+        # por el código de salida de `rustc --version`.
+        shell: bash
+        run: |
+          rustup toolchain install
+          rustc --version
       - uses: Swatinem/rust-cache@v2
       - name: Formato
         run: cargo fmt --all -- --check
@@ -35,9 +46,13 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v5
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt, clippy
+      - name: Toolchain de rust-toolchain.toml
+        # bash también en Windows: con pwsh, un fallo de rustup quedaría oculto
+        # por el código de salida de `rustc --version`.
+        shell: bash
+        run: |
+          rustup toolchain install
+          rustc --version
       - uses: Swatinem/rust-cache@v2
       - name: Formato
         run: cargo fmt --all -- --check
@@ -50,6 +65,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
+      - name: Toolchain de rust-toolchain.toml
+        # bash también en Windows: con pwsh, un fallo de rustup quedaría oculto
+        # por el código de salida de `rustc --version`.
+        shell: bash
+        run: |
+          rustup toolchain install
+          rustc --version
       - uses: taiki-e/install-action@v2
         with:
           tool: cargo-audit,cargo-deny
