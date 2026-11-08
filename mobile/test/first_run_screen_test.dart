@@ -33,6 +33,31 @@ Future<void> pumpScreen(
   );
 }
 
+/// Monta la pantalla encima de una ruta base, para que "volver" pueda
+/// sacarla.
+Future<void> pumpAsSecondRoute(
+  WidgetTester tester,
+  FakeVaultSession session,
+) async {
+  final navigator = GlobalKey<NavigatorState>();
+  await tester.pumpWidget(
+    MaterialApp(
+      navigatorKey: navigator,
+      home: const Scaffold(body: Text('base')),
+    ),
+  );
+  navigator.currentState!.push(
+    MaterialPageRoute<void>(
+      builder: (_) => FirstRunScreen(
+        session: session,
+        strengthOf: fakeStrength,
+        onCreated: () {},
+      ),
+    ),
+  );
+  await tester.pumpAndSettle();
+}
+
 Future<void> typePassword(WidgetTester tester, String text) async {
   await tester.enterText(find.byKey(passwordKey), text);
   await tester.pump();
@@ -191,8 +216,35 @@ void main() {
       isNull,
     );
 
+    pending.complete();
+    await settleFuture(tester);
+  });
+
+  // Como segunda ruta, un "volver" que no se bloquee saca la pantalla; como
+  // única ruta, `maybePop` delega en el sistema y la prueba no lo notaría.
+  testWidgets('control: sin crear, volver sí saca la pantalla', (
+    tester,
+  ) async {
+    await pumpAsSecondRoute(tester, session);
+
+    await tester.binding.handlePopRoute();
+    await tester.pumpAndSettle();
+    expect(find.byType(FirstRunScreen), findsNothing);
+  });
+
+  testWidgets('durante la creación volver no saca la pantalla', (
+    tester,
+  ) async {
+    final pending = Completer<void>();
+    session.onCreate = (_) => pending.future;
+    await pumpAsSecondRoute(tester, session);
+    await fillValid(tester);
+    await tapCreate(tester);
+    await tester.pump();
+
     await tester.binding.handlePopRoute();
     await tester.pump();
+    await tester.pump(const Duration(seconds: 1));
     expect(find.byType(FirstRunScreen), findsOneWidget);
 
     pending.complete();
