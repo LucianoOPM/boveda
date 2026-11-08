@@ -99,7 +99,7 @@ impl EntrySummary {
 /// con [`Vault::entries`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UnlockReport {
-    /// Entradas con la fila ilegible o con los datos de búsqueda dañados.
+    /// Ids de las entradas con la fila ilegible o con los datos de búsqueda dañados.
     /// Los secretos no se descifran al desbloquear: un secreto dañado no
     /// aparece aquí, sino al usar [`Vault::reveal`], con
     /// [`Error::CorruptEntry`].
@@ -341,9 +341,9 @@ impl Vault {
     /// temporal junto a `dest`: se abre en solo lectura (versión de
     /// formato), se revisa su integridad (`PRAGMA integrity_check`), se
     /// desbloquea con `password` y se descifran sus datos de búsqueda. Si
-    /// algo falla, `dest` queda intacta. Las entradas con los datos de
-    /// búsqueda dañados no impiden importar: se reportan como en
-    /// [`Vault::unlock`].
+    /// algo falla, `dest` queda intacta.
+    /// Las entradas con la fila ilegible o con los datos de búsqueda dañados
+    /// no impiden importar: se reportan como en [`Vault::unlock`].
     ///
     /// Los secretos (contraseña y notas) **no** se descifran al importar: un
     /// secreto dañado no aparece en el [`UnlockReport`] y se descubre al
