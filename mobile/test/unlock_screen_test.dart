@@ -658,5 +658,56 @@ void main() {
 
       expect(unlockPrompts(), 1);
     });
+
+    // Android 16 cierra el diálogo al tocar inicio con `ERROR_USER_CANCELED`,
+    // el mismo código que una cancelación del usuario, antes de `onPause`;
+    // `hidden` llega unos 0.5 s después. Mientras el diálogo está abierto la
+    // app queda en `inactive` (sin el foco de la ventana).
+    testWidgets('18d cancelada por el sistema antes de hidden se vuelve a '
+        'pedir al volver', (tester) async {
+      biometric.enabled = true;
+      final prompts = [Completer<Uint8List>(), Completer<Uint8List>()];
+      var next = 0;
+      biometric.onUnlock = () => prompts[next++].future;
+      await pumpScreen(tester, session);
+      await drain(tester);
+      await setLifecycle(tester, AppLifecycleState.inactive);
+
+      prompts[0].completeError(fail(BiometricFailure.canceled));
+      await drain(tester);
+      await tester.pump(const Duration(milliseconds: 500));
+      await setLifecycle(tester, AppLifecycleState.hidden);
+      await setLifecycle(tester, AppLifecycleState.resumed);
+      await drain(tester);
+
+      expect(unlockPrompts(), 2);
+      expect(field(tester).focusNode!.hasFocus, isFalse);
+      prompts[1].completeError(fail(BiometricFailure.canceled));
+      await drain(tester);
+      await tester.pump(const Duration(seconds: 1));
+    });
+
+    testWidgets('18e cancelada por el usuario con la app en inactive enfoca '
+        'el campo y no se vuelve a pedir', (tester) async {
+      biometric.enabled = true;
+      final prompt = Completer<Uint8List>();
+      biometric.onUnlock = () => prompt.future;
+      await pumpScreen(tester, session);
+      await drain(tester);
+      await setLifecycle(tester, AppLifecycleState.inactive);
+
+      prompt.completeError(fail(BiometricFailure.canceled));
+      await drain(tester);
+      await tester.pump(const Duration(seconds: 1));
+      await setLifecycle(tester, AppLifecycleState.resumed);
+      await drain(tester);
+
+      expect(field(tester).focusNode!.hasFocus, isTrue);
+      expect(unlockPrompts(), 1);
+      await setLifecycle(tester, AppLifecycleState.inactive);
+      await setLifecycle(tester, AppLifecycleState.resumed);
+      await drain(tester);
+      expect(unlockPrompts(), 1);
+    });
   });
 }

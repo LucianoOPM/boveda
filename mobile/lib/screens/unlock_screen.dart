@@ -22,7 +22,10 @@ import '../widgets/password_field.dart';
 /// en segundo plano, #39); para reintentar está "Usar huella". Si el diálogo
 /// se cancela porque la app se ocultó (Kotlin lo cancela en `onStop`), la
 /// huella se vuelve a pedir una vez al volver; si la cancela el usuario, se
-/// queda en la contraseña. El campo
+/// queda en la contraseña. Android 16 cierra el diálogo por su cuenta al
+/// tocar inicio, con el mismo código que el usuario y antes de ocultar la
+/// app: una cancelación con la app en `inactive` cuenta como del sistema si
+/// `hidden` llega dentro de `_systemCancelWindow`. El campo
 /// no se enfoca al abrir (Android no abre el teclado durante la animación de
 /// arranque, ver el diseño de la #37): se enfoca si la huella no se usa o
 /// falla. Sin huella activa, y si el dispositivo la admite, la casilla
@@ -54,6 +57,12 @@ class UnlockScreen extends StatefulWidget {
 }
 
 class _UnlockScreenState extends State<UnlockScreen> {
+  /// Cuánto se espera `hidden` después de una cancelación con la app en
+  /// `inactive`. Android 16 cierra el diálogo al tocar inicio con el mismo
+  /// código que una cancelación del usuario, antes de `onPause`, y `hidden`
+  /// llega unos 0.5 s después (#39, hallazgo de la prueba a mano).
+  static const _systemCancelWindow = Duration(seconds: 1);
+
   static const _generic = 'No se pudo desbloquear la bóveda. Intenta de nuevo.';
 
   final _password = TextEditingController();
@@ -94,6 +103,10 @@ class _UnlockScreenState extends State<UnlockScreen> {
   /// Pedir la huella otra vez en el siguiente `resumed`.
   bool _retryOnResume = false;
 
+  /// Una cancelación llegó con la app en `inactive`: si `hidden` llega antes
+  /// de que venza, la canceló el sistema al ocultarse; si no, el usuario.
+  Timer? _cancelWindow;
+
   @override
   void initState() {
     super.initState();
@@ -105,6 +118,7 @@ class _UnlockScreenState extends State<UnlockScreen> {
 
   @override
   void dispose() {
+    _cancelWindow?.cancel();
     _lifecycle.dispose();
     _password
       ..clear()
@@ -122,6 +136,11 @@ class _UnlockScreenState extends State<UnlockScreen> {
 
   void _onHide() {
     if (_promptOpen) _hiddenDuringPrompt = true;
+    if (_cancelWindow case final window?) {
+      window.cancel();
+      _cancelWindow = null;
+      _retryOnResume = true;
+    }
   }
 
   void _onResume() {
@@ -195,6 +214,13 @@ class _UnlockScreenState extends State<UnlockScreen> {
         } else {
           _retryOnResume = true;
         }
+      case BiometricFallback() when !_isResumed:
+        // El diálogo tenía el foco: no se sabe todavía quién canceló.
+        setState(() => _busy = false);
+        _cancelWindow = Timer(_systemCancelWindow, () {
+          _cancelWindow = null;
+          if (mounted) _release();
+        });
       case BiometricFallback():
         _release();
       case BiometricDisabled():
