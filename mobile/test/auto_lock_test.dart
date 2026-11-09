@@ -172,15 +172,20 @@ void main() {
           ),
         ),
       );
-      await drain(tester);
+      // La ruta termina de entrar: al bloquear, una salida animada la dejaría
+      // visible unos 300 ms al volver.
+      await tester.pump();
+      await tester.pump(const Duration(seconds: 1));
       expect(find.text('detalle'), findsOneWidget);
 
       await setLifecycle(tester, AppLifecycleState.hidden);
       await drain(tester);
 
+      // Con la app oculta no hay cuadros: se comprueba en los primeros cuadros
+      // tras volver, sin avanzar el reloj (una salida animada seguiría ahí).
+      await expectLocked(tester);
       expect(find.text('detalle'), findsNothing);
       expect(find.text('copiado'), findsNothing);
-      await expectLocked(tester);
     });
 
     testWidgets('5b cierra un diálogo', (tester) async {
@@ -191,14 +196,17 @@ void main() {
           builder: (_) => const AlertDialog(content: Text('¿Eliminar?')),
         ),
       );
-      await drain(tester);
+      await tester.pump();
+      await tester.pump(const Duration(seconds: 1));
       expect(find.text('¿Eliminar?'), findsOneWidget);
 
       await setLifecycle(tester, AppLifecycleState.hidden);
       await drain(tester);
 
-      expect(find.text('¿Eliminar?'), findsNothing);
+      // Con la app oculta no hay cuadros: se comprueba en los primeros cuadros
+      // tras volver, sin avanzar el reloj (una salida animada seguiría ahí).
       await expectLocked(tester);
+      expect(find.text('¿Eliminar?'), findsNothing);
     });
 
     testWidgets('5c cierra una ruta con PopScope(canPop: false)', (
@@ -215,14 +223,17 @@ void main() {
           ),
         ),
       );
-      await drain(tester);
+      await tester.pump();
+      await tester.pump(const Duration(seconds: 1));
       expect(find.text('edición'), findsOneWidget);
 
       await setLifecycle(tester, AppLifecycleState.hidden);
       await drain(tester);
 
-      expect(find.text('edición'), findsNothing);
+      // Con la app oculta no hay cuadros: se comprueba en los primeros cuadros
+      // tras volver, sin avanzar el reloj (una salida animada seguiría ahí).
       await expectLocked(tester);
+      expect(find.text('edición'), findsNothing);
     });
 
     for (final away in [
@@ -383,6 +394,24 @@ void main() {
       // La activación vieja termina en `failed` (`Locked`), pero su aviso no
       // sale sobre el desbloqueo nuevo.
       expect(find.text('No se pudo activar la huella.'), findsNothing);
+    });
+
+    testWidgets('8b casilla marcada y unlock que termina con la app oculta: '
+        'bloquea sin intentar activar la huella', (tester) async {
+      biometric.available = true;
+      final pending = Completer<UnlockReport>();
+      session.onUnlock = (_) => pending.future;
+      await pumpApp(tester);
+      await checkEnableBiometric(tester);
+      await submitPassword(tester);
+
+      await setLifecycle(tester, AppLifecycleState.hidden);
+      pending.complete(emptyReport);
+      await drain(tester);
+
+      expect(session.lockCalls, 1);
+      expect(biometric.calls, isNot(contains('beginEnable')));
+      await expectLocked(tester);
     });
 
     testWidgets('9 la marca de la activación se reinicia: un desbloqueo '

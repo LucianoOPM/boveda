@@ -275,7 +275,7 @@ class _VaultGateState extends State<VaultGate> {
     unawaited(
       Future.sync(widget.session.lock).then((_) {}, onError: (Object _) {}),
     );
-    Navigator.of(context).popUntil((route) => route.isFirst);
+    _removeStackedRoutes(Navigator.of(context));
     ScaffoldMessenger.of(context)
       ..clearSnackBars()
       ..removeCurrentSnackBar();
@@ -283,6 +283,25 @@ class _VaultGateState extends State<VaultGate> {
       _epoch++;
       _state = VaultGateState.locked;
     });
+  }
+
+  /// Quita, sin animación, todo lo apilado sobre la primera ruta. `popUntil`
+  /// animaría la salida: con la app oculta no hay cuadros, así que al volver
+  /// la pantalla de detalle (o un diálogo) se vería unos 300 ms sobre el
+  /// desbloqueo. `removeRoute` la quita y la desecha en el acto.
+  void _removeStackedRoutes(NavigatorState navigator) {
+    while (true) {
+      Route<dynamic>? top;
+      // Con un predicado que acepta la primera ruta que ve, `popUntil` no
+      // quita nada: solo da la ruta de arriba.
+      navigator.popUntil((route) {
+        top = route;
+        return true;
+      });
+      final route = top;
+      if (route == null || route.isFirst) return;
+      navigator.removeRoute(route);
+    }
   }
 
   @override

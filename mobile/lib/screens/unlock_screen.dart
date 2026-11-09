@@ -129,6 +129,14 @@ class _UnlockScreenState extends State<UnlockScreen> {
 
   bool get _canUnlock => !_busy && _password.text.isNotEmpty;
 
+  /// La app no está a la vista (como `VaultGate._isAway`).
+  bool get _isAway => switch (SchedulerBinding.instance.lifecycleState) {
+    AppLifecycleState.hidden ||
+    AppLifecycleState.paused ||
+    AppLifecycleState.detached => true,
+    _ => false,
+  };
+
   bool get _isResumed {
     final state = SchedulerBinding.instance.lifecycleState;
     return state == null || state == AppLifecycleState.resumed;
@@ -280,7 +288,10 @@ class _UnlockScreenState extends State<UnlockScreen> {
       return;
     }
     if (!mounted) return;
-    if (_enableBiometric && _canOfferBiometric) {
+    // Con la app oculta no se activa la huella: el diálogo se pediría con la
+    // actividad detenida y Rust quedaría desbloqueado mientras se resuelve.
+    // `onUnlocked` llega a `_enterUnlocked`, que bloquea (#39).
+    if (_enableBiometric && _canOfferBiometric && !_isAway) {
       widget.onVaultOpened?.call();
       setState(() => _activating = true);
       final outcome = await enableBiometric(widget.session, widget.biometric);
