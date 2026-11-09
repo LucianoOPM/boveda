@@ -441,6 +441,13 @@ void main() {
       expect(session.lockCalls, 1);
       pending.complete(emptyReport);
       await drain(tester);
+
+      // El desbloqueo nuevo terminó con la app oculta: `_enterUnlocked`
+      // bloquea en lugar de mostrar la principal.
+      expect(session.unlockCalls, [password, password]);
+      expect(session.lockCalls, 2);
+      expect(session.locked, isTrue);
+      await expectLocked(tester);
     });
 
     testWidgets('10a oferta: beginEnable pendiente y hidden no activa al '
