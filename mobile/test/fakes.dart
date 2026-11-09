@@ -4,6 +4,7 @@
 import 'dart:typed_data';
 
 import 'package:boveda/services/biometric_service.dart';
+import 'package:boveda/src/rust/api/error.dart';
 import 'package:boveda/src/rust/api/entries.dart';
 import 'package:boveda/src/rust/api/password.dart';
 import 'package:boveda/src/rust/api/session.dart';
@@ -11,9 +12,24 @@ import 'package:boveda/src/rust/api/session.dart';
 /// Reporte de desbloqueo sin entradas dañadas.
 const emptyReport = UnlockReport(corrupt: [], unidentifiedCorrupt: 0);
 
-/// Sesión simulada. Solo `create`, `open` y `unlock` hacen algo; el resto lanza
+/// Sesión simulada. `create`, `open`, `unlock`, `unlockWithKey`,
+/// `exportVaultKey`, `lock` e `isLocked` hacen algo; el resto lanza
 /// `UnimplementedError` para que una llamada inesperada falle la prueba.
+///
+/// Lleva el estado de bloqueo como la fachada: [locked] empieza en `true`,
+/// `create`, `unlock` y `unlockWithKey` lo ponen en `false` al terminar con
+/// éxito, `lock` en `true`, y `exportVaultKey` con la bóveda bloqueada lanza
+/// `VaultError.locked`.
 class FakeVaultSession implements VaultSession {
+  /// La bóveda está bloqueada en el núcleo simulado.
+  bool locked = true;
+
+  /// Llamadas a `lock`.
+  int lockCalls = 0;
+
+  /// Si no es `null`, `lock()` lo lanza (después de bloquear).
+  Object? lockError;
+
   /// Contraseñas recibidas por `create`, en orden.
   final List<String> createCalls = [];
 
@@ -37,9 +53,10 @@ class FakeVaultSession implements VaultSession {
   bool _disposed = false;
 
   @override
-  Future<void> create({required String password}) {
+  Future<void> create({required String password}) async {
     createCalls.add(password);
-    return onCreate(password);
+    await onCreate(password);
+    locked = false;
   }
 
   @override
@@ -96,22 +113,29 @@ class FakeVaultSession implements VaultSession {
 
   @override
   Future<Uint8List> exportVaultKey() async {
+    if (locked) throw VaultError.locked;
     final key = await onExportVaultKey();
     exportedKeys.add(key);
     return key;
   }
 
   @override
-  Future<UnlockReport> unlockWithKey({required List<int> key}) {
+  Future<UnlockReport> unlockWithKey({required List<int> key}) async {
     unlockWithKeyCalls.add(key);
-    return onUnlockWithKey(key);
+    final report = await onUnlockWithKey(key);
+    locked = false;
+    return report;
   }
 
   @override
-  Future<bool> isLocked() => throw UnimplementedError();
+  Future<bool> isLocked() async => locked;
 
   @override
-  Future<void> lock() => throw UnimplementedError();
+  Future<void> lock() async {
+    lockCalls++;
+    locked = true;
+    if (lockError case final error?) throw error;
+  }
 
   @override
   Future<String?> revealNotes({required String id}) =>
@@ -126,9 +150,11 @@ class FakeVaultSession implements VaultSession {
       throw UnimplementedError();
 
   @override
-  Future<UnlockReport> unlock({required String password}) {
+  Future<UnlockReport> unlock({required String password}) async {
     unlockCalls.add(password);
-    return onUnlock(password);
+    final report = await onUnlock(password);
+    locked = false;
+    return report;
   }
 }
 

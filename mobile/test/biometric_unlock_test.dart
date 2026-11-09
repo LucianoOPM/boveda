@@ -20,7 +20,8 @@ void main() {
   late FakeBiometricService biometric;
 
   setUp(() {
-    session = FakeVaultSession();
+    // Activar la huella exige la bóveda desbloqueada.
+    session = FakeVaultSession()..locked = false;
     biometric = FakeBiometricService();
   });
 

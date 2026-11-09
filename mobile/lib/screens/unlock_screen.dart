@@ -26,10 +26,16 @@ class UnlockScreen extends StatefulWidget {
     required this.session,
     required this.biometric,
     required this.onUnlocked,
+    this.onVaultOpened,
   });
 
   final VaultSession session;
   final BiometricService biometric;
+
+  /// Se llama cuando `unlock` tuvo éxito y la pantalla va a activar la huella
+  /// con la casilla: desde aquí Rust está desbloqueado aunque la interfaz
+  /// siga en el desbloqueo, y ocultar la app debe bloquear (#39).
+  final VoidCallback? onVaultOpened;
 
   /// Se llama con la bóveda desbloqueada y el total de entradas dañadas
   /// (con y sin id) del `UnlockReport`.
@@ -188,9 +194,12 @@ class _UnlockScreenState extends State<UnlockScreen> {
     }
     if (!mounted) return;
     if (_enableBiometric && _canOfferBiometric) {
+      widget.onVaultOpened?.call();
       setState(() => _activating = true);
       final outcome = await enableBiometric(widget.session, widget.biometric);
-      if (outcome == EnableOutcome.failed) {
+      // Si el bloqueo sacó la pantalla del árbol, la activación terminó en
+      // `failed` por `Locked`: el aviso no va sobre el desbloqueo nuevo.
+      if (outcome == EnableOutcome.failed && mounted) {
         messenger.showSnackBar(
           const SnackBar(content: Text('No se pudo activar la huella.')),
         );
