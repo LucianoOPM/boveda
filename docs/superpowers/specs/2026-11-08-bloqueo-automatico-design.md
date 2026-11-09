@@ -39,7 +39,7 @@ Verificado con Context7 (API de Flutter) y en el código de la #35 a la #38:
 ## Decisiones
 
 1. **Disparador: solo `hidden`**, con un `AppLifecycleListener` en `VaultGate`. `inactive` no bloquea: llega con la huella, la cortina y el selector de recientes, que no sacan al usuario de la app. Apagar la pantalla llega como `onStop` y bloquea.
-2. **Qué hace el bloqueo:** `session.lock()`, `popUntil(isFirst)` en el `Navigator` raíz, `clearSnackBars()`, una pantalla de desbloqueo nueva. Si `lock()` lanza, igual se muestra el desbloqueo. La fachada bloquea aunque el `Mutex` esté envenenado, así que en la práctica `lock()` no falla.
+2. **Qué hace el bloqueo:** `session.lock()`, quitar sin animación lo apilado en el `Navigator` raíz (ver el hallazgo 9), `clearSnackBars()`, una pantalla de desbloqueo nueva. Si `lock()` lanza, igual se muestra el desbloqueo. La fachada bloquea aunque el `Mutex` esté envenenado, así que en la práctica `lock()` no falla.
 3. **Regla general al terminar:** toda operación asíncrona que termina con Rust desbloqueado revisa el ciclo de vida. Si la app está en `hidden`, `paused` o `detached`, bloquea en lugar de mostrar la bóveda. Con un desbloqueo en curso no se llama a `lock()` al ocultarse. Durante la activación de la huella con la casilla, Rust ya está desbloqueado y sin ninguna operación larga en curso, así que sí se bloquea al ocultarse.
 4. **Inactividad: 5 minutos**, valor por omisión hasta la etapa 4, en la constante `defaultAutoLockTimeout`. El temporizador corre solo con la bóveda en pantalla (`unlocked` y `offerBiometric`).
 5. **Actividad:** cualquier toque en la app, las teclas físicas y escribir en un campo de texto de las pantallas de la bóveda. El teclado en pantalla no genera eventos globales en Flutter, así que lo reporta un componente compartido, `ActivityTextField`, sobre el que se arma `PasswordField`. `mobile/CLAUDE.md` exige usarlo.
@@ -91,7 +91,7 @@ Campos nuevos:
 
 1. `_idle?.cancel()`; `_idle = null`; `_openWhileLocked = false`.
 2. `session.lock()` sin esperar el resultado en la interfaz: si lanza, se ignora (sin detalles). Se lanza antes de cambiar de pantalla, para que la llave se borre lo antes posible.
-3. `Navigator.of(context).popUntil((route) => route.isFirst)`: cierra rutas, diálogos y hojas que apilen la #40 y la #41.
+3. Quita sin animación (`removeRoute`) todo lo apilado sobre la primera ruta del `Navigator` raíz (hallazgo 9): cierra rutas, diálogos y hojas que apilen la #40 y la #41.
 4. `ScaffoldMessenger.of(context).clearSnackBars()`.
 5. `setState`: `_epoch++` y `_state = locked`.
 
@@ -326,6 +326,8 @@ En el emulador (Android 16, API 37) pasaron las pruebas 1 a 13. Lo que no estaba
 6. **Callbacks tardíos del diálogo** (Kotlin, al implementar): cada callback del `BiometricPrompt` actúa solo si su diálogo sigue siendo el activo. Si `cancelPrompt` ya lo resolvió, el aviso tardío del sistema se ignora: si no, su `onError` borraría la llave de una activación nueva.
 7. **El aviso "No se pudo activar la huella."** solo se muestra si la pantalla sigue montada: tras un bloqueo, la activación vieja termina en `failed` por `Locked` y el aviso aparecía sobre el desbloqueo nuevo.
 8. **Prueba 12:** desde `adb` no se puede asegurar que la salida coincida con Argon2id (`onStop` llegó 0.5 s después del toque). Al volver se ve el desbloqueo; la carrera la cubren las pruebas 6 a 6c.
+9. **Salida animada al bloquear** (revisión final): `popUntil` anima la salida y, como con la app oculta no hay cuadros, al volver la ruta de detalle o un diálogo seguían visibles unos 300 ms sobre el desbloqueo. Las pruebas 5, 5b y 5c no lo veían porque la ruta no terminaba de entrar. Ahora `_lock` quita las rutas con `removeRoute` (sin animación), y las pruebas dejan terminar la entrada y comprueban en los primeros cuadros tras volver, sin avanzar el reloj.
+10. **Casilla con el desbloqueo terminado en segundo plano** (revisión final): si `unlock` terminaba con la app oculta y la casilla marcada, se pedía el diálogo de activar con la actividad detenida, y Rust quedaba desbloqueado mientras el sistema lo resolvía. Ahora la activación se salta si la app no está a la vista, y `onUnlocked` bloquea vía `_enterUnlocked` (prueba 8b).
 
 ## Comentarios en issues
 
