@@ -20,4 +20,6 @@ Interfaz de la bóveda. Dart nunca hace criptografía ni guarda la bóveda: todo
 - `FLAG_SECURE` en toda la app: sin capturas de pantalla y contenido oculto en apps recientes.
 - El envío a la PC exige huella en cada envío. No agregues una opción para desactivarla.
 - La app se bloquea al pasar a segundo plano y tras el tiempo de inactividad configurado.
+- En las pantallas de la bóveda, todo campo de texto es `ActivityTextField` o `PasswordField`: escribir cuenta como actividad para el bloqueo por inactividad (el teclado en pantalla no genera eventos globales).
+- Toda operación asíncrona que termina con Rust desbloqueado pasa por `_enterUnlocked` de `VaultGate`, que bloquea si la app está oculta. Las pantallas de la bóveda se apilan en el `Navigator` raíz, que el bloqueo vacía con `popUntil(isFirst)`.
 - La contraseña maestra se pide cada 7 días aunque se use huella.
