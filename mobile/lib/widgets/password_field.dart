@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import 'activity_text_field.dart';
+
 /// Campo para escribir una contraseña maestra.
 ///
 /// Oculta el texto por omisión, con un botón para mostrarlo. El teclado no
@@ -13,6 +15,9 @@ import 'package:flutter/material.dart';
 /// [textInputAction], [onSubmitted] y [focusNode] son opcionales y se pasan
 /// tal cual al `TextField`; sin ellos, el campo se comporta como el
 /// `TextField` por omisión.
+///
+/// Se arma sobre [ActivityTextField]: escribir cuenta como actividad para el
+/// bloqueo automático.
 class PasswordField extends StatefulWidget {
   const PasswordField({
     super.key,
@@ -44,7 +49,7 @@ class _PasswordFieldState extends State<PasswordField> {
 
   @override
   Widget build(BuildContext context) {
-    return TextField(
+    return ActivityTextField(
       controller: widget.controller,
       enabled: widget.enabled,
       onChanged: widget.onChanged,
