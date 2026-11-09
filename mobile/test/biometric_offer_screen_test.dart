@@ -19,7 +19,8 @@ void main() {
   late int done;
 
   setUp(() {
-    session = FakeVaultSession();
+    // La oferta aparece con la bóveda recién creada, desbloqueada.
+    session = FakeVaultSession()..locked = false;
     biometric = FakeBiometricService();
     done = 0;
   });

@@ -10,7 +10,7 @@
 //! esperara el `Mutex` mientras otra corre Argon2id, congelaría la interfaz.
 
 use std::path::PathBuf;
-use std::sync::{Mutex, MutexGuard};
+use std::sync::{Mutex, MutexGuard, PoisonError};
 
 use flutter_rust_bridge::frb;
 use secrecy::{ExposeSecret, ExposeSecretMut, SecretBox, SecretString};
@@ -122,8 +122,14 @@ impl VaultSession {
     }
 
     /// Bloquea. Sin bóveda, o con la bóveda ya bloqueada, no hace nada.
+    ///
+    /// Nunca falla: con el `Mutex` envenenado por un pánico anterior,
+    /// bloquea igual, porque bloquear solo suelta la llave y es seguro sobre
+    /// cualquier estado (#39). El envenenamiento se conserva: el resto de las
+    /// operaciones siguen dando `SessionPoisoned`.
     pub fn lock(&self) -> FacadeResult<()> {
-        if let Some(vault) = self.slot()?.as_mut() {
+        let mut slot = self.vault.lock().unwrap_or_else(PoisonError::into_inner);
+        if let Some(vault) = slot.as_mut() {
             vault.lock();
         }
         Ok(())

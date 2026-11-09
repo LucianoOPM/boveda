@@ -25,6 +25,16 @@ class MainActivity : FlutterActivity() {
             .setMethodCallHandler(biometric::handle)
     }
 
+    // La actividad deja de verse: el diálogo de la huella se cancela y Dart
+    // recibe `canceled` (#39). `super.onStop()` va primero: envía a Dart el
+    // aviso de ciclo de vida (`paused`, con `hidden` sintetizado) antes que
+    // la respuesta `canceled`, para que la pantalla sepa que la cancelación
+    // vino de ocultar la app y vuelva a pedir la huella al regresar.
+    override fun onStop() {
+        super.onStop()
+        biometric.cancelPrompt()
+    }
+
     override fun onDestroy() {
         biometric.onDestroy()
         super.onDestroy()

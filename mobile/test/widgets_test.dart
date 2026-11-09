@@ -1,9 +1,12 @@
 // Pruebas de los widgets reutilizables: campo de contraseña, indicador de
-// fortaleza, aviso de entradas dañadas y marcador. No cargan la librería de
+// fortaleza, aviso de entradas dañadas, marcador y piezas del bloqueo
+// automático. No cargan la librería de
 // Rust.
 
 import 'package:boveda/screens/placeholder_screen.dart';
+import 'package:boveda/services/auto_lock.dart';
 import 'package:boveda/src/rust/api/password.dart';
+import 'package:boveda/widgets/activity_text_field.dart';
 import 'package:boveda/widgets/damaged_entries_banner.dart';
 import 'package:boveda/widgets/password_field.dart';
 import 'package:boveda/widgets/strength_indicator.dart';
@@ -188,5 +191,77 @@ void main() {
     );
     expect(find.text('Pantalla principal: #40'), findsOneWidget);
     expect(find.byType(MaterialBanner), findsNothing);
+  });
+
+  group('bloqueo automático', () {
+    /// Monta [child] dentro de un `AutoLockScope` cuyo controlador cuenta
+    /// los reportes de actividad.
+    Future<List<int>> pumpInScope(WidgetTester tester, Widget child) async {
+      final reports = <int>[0];
+      final autoLock = AutoLockController()..onActivity = () => reports[0]++;
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: AutoLockScope(controller: autoLock, child: child),
+          ),
+        ),
+      );
+      return reports;
+    }
+
+    test('defaultAutoLockTimeout es de 5 minutos', () {
+      expect(defaultAutoLockTimeout, const Duration(minutes: 5));
+    });
+
+    test('AutoLockScope no notifica a sus dependientes', () {
+      final a = AutoLockScope(
+        controller: AutoLockController(),
+        child: const SizedBox(),
+      );
+      final b = AutoLockScope(
+        controller: AutoLockController(),
+        child: const SizedBox(),
+      );
+      expect(b.updateShouldNotify(a), isFalse);
+    });
+
+    testWidgets('ActivityTextField reporta actividad y llama a onChanged', (
+      tester,
+    ) async {
+      final changes = <String>[];
+      final reports = await pumpInScope(
+        tester,
+        ActivityTextField(controller: controller, onChanged: changes.add),
+      );
+      await tester.enterText(find.byType(TextField), 'a');
+      expect(reports[0], 1);
+      expect(changes, ['a']);
+    });
+
+    testWidgets('ActivityTextField fuera del alcance no lanza', (tester) async {
+      final changes = <String>[];
+      await pumpInScaffold(
+        tester,
+        ActivityTextField(controller: controller, onChanged: changes.add),
+      );
+      await tester.enterText(find.byType(TextField), 'a');
+      expect(tester.takeException(), isNull);
+      expect(changes, ['a']);
+    });
+
+    testWidgets('PasswordField reporta actividad', (tester) async {
+      final changes = <String>[];
+      final reports = await pumpInScope(
+        tester,
+        PasswordField(
+          controller: controller,
+          label: 'Contraseña',
+          onChanged: changes.add,
+        ),
+      );
+      await tester.enterText(find.byType(TextField), 'a');
+      expect(reports[0], 1);
+      expect(changes, ['a']);
+    });
   });
 }

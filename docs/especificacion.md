@@ -73,6 +73,17 @@ El identificador de la entrada va ligado al cifrado como dato autenticado, para 
 
 **Bloqueo automático.** Tras un tiempo de inactividad o al pasar la app a segundo plano, la llave de bóveda se borra de memoria.
 
+Decidido el 2026-11-08 (#39, detalle en `docs/superpowers/specs/2026-11-08-bloqueo-automatico-design.md`):
+
+- **Disparador:** `AppLifecycleState.hidden`, que en Android precede a `onStop` (botón de inicio, otra app, pantalla apagada). `inactive` no bloquea: llega con los diálogos del sistema (incluida la huella), la cortina de notificaciones y el selector de recientes, que no sacan al usuario de la app.
+- **Inactividad:** 5 minutos fijos hasta la etapa 4, que agrega el ajuste. El valor vive en una sola constante (`defaultAutoLockTimeout`). Cuenta solo con la bóveda desbloqueada en pantalla.
+- **Actividad:** cualquier toque en la app, las teclas físicas y escribir en un campo de las pantallas de la bóveda (`ActivityTextField` o `PasswordField`).
+- **Al bloquear:** se borra la llave en Rust, se cierran todas las rutas sobre la raíz y los `SnackBar`, y se monta un desbloqueo nuevo. La fachada bloquea aunque el `Mutex` esté envenenado (`PoisonError::into_inner`), así que `lock()` no falla en la práctica; el envenenamiento se conserva para el resto de las operaciones.
+- **Operaciones en curso:** toda operación asíncrona que termina con Rust desbloqueado (desbloqueo con contraseña o con huella, crear la bóveda, `AlreadyUnlocked`) revisa el ciclo de vida al terminar y, si la app está en `hidden`, `paused` o `detached`, bloquea en lugar de mostrar la bóveda. Con un desbloqueo en curso no se llama a `lock()` al ocultarse, para no desfasar Rust y la interfaz durante Argon2id. Durante la activación de la huella con la casilla, Rust ya está desbloqueado y sí se bloquea al ocultarse.
+- **Huella al ocultarse:** la app cancela el diálogo en `onStop` (`BiometricVault.cancelPrompt` desde `MainActivity.onStop`) y responde `canceled` de inmediato, sin esperar el callback del sistema. Si la cancelación vino de ocultar la app, se vuelve a pedir la huella una vez al volver; si la canceló el usuario, se queda en la contraseña. Android 16 cierra el diálogo por su cuenta al tocar inicio, antes de `onPause` y con el mismo código que una cancelación del usuario (`ERROR_USER_CANCELED`): una cancelación que llega con la app en `inactive` cuenta como del sistema si `hidden` llega en menos de 1 s. El diálogo automático espera a que la app esté en `resumed`.
+- **Miniatura de recientes:** Android la toma al salir, posiblemente antes de que se pinte el desbloqueo. Ocultarla le corresponde a la protección de pantalla (`FLAG_SECURE`, #43), no al bloqueo.
+- **Selector de archivos y otras actividades:** mecanismo genérico que se implementa en la #44 (ver el diseño).
+
 **Errores.** Una contraseña maestra incorrecta hace fallar el descifrado de la llave de bóveda y la app solo muestra "Contraseña incorrecta". Una entrada corrupta se marca como dañada sin bloquear el resto.
 
 **Respaldos.** Exportación del archivo de bóveda cifrado, que puede guardarse en la PC o en la nube porque es ilegible sin la contraseña maestra, e importación en un celular nuevo.

@@ -73,8 +73,9 @@ fn lock_after_unlock_locks() {
 }
 
 #[test]
-fn poisoned_mutex_gives_session_poisoned() {
+fn poisoned_mutex_still_locks() {
     let (_dir, session) = opened_fixture();
+    session.unlock(FIXTURE_PASSWORD.into()).unwrap();
     std::thread::scope(|scope| {
         let handle = scope.spawn(|| {
             let _guard = session.vault.lock().unwrap();
@@ -82,8 +83,16 @@ fn poisoned_mutex_gives_session_poisoned() {
         });
         assert!(handle.join().is_err());
     });
+    // Bloquear funciona aunque el candado esté envenenado...
+    assert_eq!(session.lock(), Ok(()));
+    let vault = session
+        .vault
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    assert!(vault.as_ref().unwrap().is_locked());
+    drop(vault);
+    // ...y el envenenamiento se conserva para el resto de las operaciones.
     assert_eq!(session.is_locked(), Err(VaultError::SessionPoisoned));
-    assert_eq!(session.lock(), Err(VaultError::SessionPoisoned));
 }
 
 #[test]

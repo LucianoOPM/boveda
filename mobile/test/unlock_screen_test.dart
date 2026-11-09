@@ -11,6 +11,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'fakes.dart';
+import 'lifecycle.dart';
 
 const password = 'prueba-bóveda-v2';
 const passwordKey = Key('unlock-password');
@@ -589,5 +590,124 @@ void main() {
         expect(unlocked, isEmpty);
       });
     }
+
+    for (final away in [AppLifecycleState.inactive, AppLifecycleState.hidden]) {
+      testWidgets('18 montada en ${away.name} no pide la huella hasta '
+          'resumed', (tester) async {
+        biometric.enabled = true;
+        biometric.onUnlock = () async => throw fail(BiometricFailure.canceled);
+        await setLifecycle(tester, away);
+        await pumpScreen(tester, session);
+        await drain(tester);
+        expect(unlockPrompts(), 0);
+
+        await setLifecycle(tester, AppLifecycleState.resumed);
+        await drain(tester);
+        expect(unlockPrompts(), 1);
+
+        await setLifecycle(tester, AppLifecycleState.inactive);
+        await setLifecycle(tester, AppLifecycleState.resumed);
+        await drain(tester);
+        expect(unlockPrompts(), 1);
+      });
+    }
+
+    testWidgets('18b cancelada al ocultarse se vuelve a pedir una vez al '
+        'volver', (tester) async {
+      biometric.enabled = true;
+      final prompts = [Completer<Uint8List>(), Completer<Uint8List>()];
+      var next = 0;
+      biometric.onUnlock = () => prompts[next++].future;
+      await pumpScreen(tester, session);
+      await drain(tester);
+      expect(unlockPrompts(), 1);
+
+      // Kotlin cancela el diálogo en onStop y responde `canceled`.
+      await setLifecycle(tester, AppLifecycleState.hidden);
+      prompts[0].completeError(fail(BiometricFailure.canceled));
+      await drain(tester);
+      await setLifecycle(tester, AppLifecycleState.resumed);
+      await drain(tester);
+
+      expect(unlockPrompts(), 2);
+      expect(field(tester).focusNode!.hasFocus, isFalse);
+
+      // Esta vez cancela el usuario, sin ocultar la app.
+      prompts[1].completeError(fail(BiometricFailure.canceled));
+      await drain(tester);
+      expect(field(tester).focusNode!.hasFocus, isTrue);
+
+      await setLifecycle(tester, AppLifecycleState.inactive);
+      await setLifecycle(tester, AppLifecycleState.resumed);
+      await drain(tester);
+      expect(unlockPrompts(), 2);
+    });
+
+    testWidgets('18c cancelada por el usuario no se vuelve a pedir', (
+      tester,
+    ) async {
+      biometric.enabled = true;
+      biometric.onUnlock = () async => throw fail(BiometricFailure.canceled);
+      await pumpScreen(tester, session);
+      await drain(tester);
+      expect(field(tester).focusNode!.hasFocus, isTrue);
+
+      await setLifecycle(tester, AppLifecycleState.inactive);
+      await setLifecycle(tester, AppLifecycleState.resumed);
+      await drain(tester);
+
+      expect(unlockPrompts(), 1);
+    });
+
+    // Android 16 cierra el diálogo al tocar inicio con `ERROR_USER_CANCELED`,
+    // el mismo código que una cancelación del usuario, antes de `onPause`;
+    // `hidden` llega unos 0.5 s después. Mientras el diálogo está abierto la
+    // app queda en `inactive` (sin el foco de la ventana).
+    testWidgets('18d cancelada por el sistema antes de hidden se vuelve a '
+        'pedir al volver', (tester) async {
+      biometric.enabled = true;
+      final prompts = [Completer<Uint8List>(), Completer<Uint8List>()];
+      var next = 0;
+      biometric.onUnlock = () => prompts[next++].future;
+      await pumpScreen(tester, session);
+      await drain(tester);
+      await setLifecycle(tester, AppLifecycleState.inactive);
+
+      prompts[0].completeError(fail(BiometricFailure.canceled));
+      await drain(tester);
+      await tester.pump(const Duration(milliseconds: 500));
+      await setLifecycle(tester, AppLifecycleState.hidden);
+      await setLifecycle(tester, AppLifecycleState.resumed);
+      await drain(tester);
+
+      expect(unlockPrompts(), 2);
+      expect(field(tester).focusNode!.hasFocus, isFalse);
+      prompts[1].completeError(fail(BiometricFailure.canceled));
+      await drain(tester);
+      await tester.pump(const Duration(seconds: 1));
+    });
+
+    testWidgets('18e cancelada por el usuario con la app en inactive enfoca '
+        'el campo y no se vuelve a pedir', (tester) async {
+      biometric.enabled = true;
+      final prompt = Completer<Uint8List>();
+      biometric.onUnlock = () => prompt.future;
+      await pumpScreen(tester, session);
+      await drain(tester);
+      await setLifecycle(tester, AppLifecycleState.inactive);
+
+      prompt.completeError(fail(BiometricFailure.canceled));
+      await drain(tester);
+      await tester.pump(const Duration(seconds: 1));
+      await setLifecycle(tester, AppLifecycleState.resumed);
+      await drain(tester);
+
+      expect(field(tester).focusNode!.hasFocus, isTrue);
+      expect(unlockPrompts(), 1);
+      await setLifecycle(tester, AppLifecycleState.inactive);
+      await setLifecycle(tester, AppLifecycleState.resumed);
+      await drain(tester);
+      expect(unlockPrompts(), 1);
+    });
   });
 }

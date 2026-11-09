@@ -37,6 +37,10 @@ import javax.crypto.spec.GCMParameterSpec
  * - Los arreglos con la llave se ponen en ceros apenas se entregan. Es de
  *   mejor esfuerzo, como todo borrado fuera del núcleo.
  * - Nada se escribe en logs.
+ * - Un diálogo abierto se cancela cuando la actividad deja de verse
+ *   (`MainActivity.onStop` llama a [cancelPrompt]): la llamada pendiente
+ *   responde `canceled` de inmediato. Es una garantía de la app, no de la
+ *   plataforma (#39).
  *
  * La huella solo se ofrece desde la API 30; por debajo, el canal responde
  * que no está disponible sin tocar el Keystore.
@@ -50,7 +54,7 @@ class BiometricVault(private val activity: Activity) {
     private var pendingCipher: Cipher? = null
 
     /** Diálogo abierto: solo uno a la vez. */
-    private var signal: CancellationSignal? = null
+    private var active: ActivePrompt? = null
 
     fun handle(call: MethodCall, result: MethodChannel.Result) {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
@@ -82,10 +86,24 @@ class BiometricVault(private val activity: Activity) {
         }
     }
 
+    /**
+     * Cancela el diálogo abierto, si hay, y responde `canceled` a su llamada
+     * de inmediato, sin esperar el callback del sistema: si ese callback no
+     * llegara, la llamada de Dart quedaría colgada. El [Reply] ignora la
+     * respuesta duplicada del sistema. En la activación, `onError` borra la
+     * llave recién creada.
+     */
+    fun cancelPrompt() {
+        val prompt = active ?: return
+        active = null
+        prompt.signal.cancel()
+        prompt.onError()
+        prompt.reply.error(CANCELED)
+    }
+
     /** La actividad se destruye: cierra el diálogo y descarta una activación a medias. */
     fun onDestroy() {
-        signal?.cancel()
-        signal = null
+        cancelPrompt()
         if (pendingCipher != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             abortEnable()
         }
@@ -102,7 +120,7 @@ class BiometricVault(private val activity: Activity) {
 
     @RequiresApi(Build.VERSION_CODES.R)
     private fun beginEnable(reply: Reply) {
-        if (signal != null) return reply.error(BUSY)
+        if (active != null) return reply.error(BUSY)
         val cipher = try {
             deleteAll()
             Cipher.getInstance(TRANSFORMATION).apply {
@@ -157,7 +175,7 @@ class BiometricVault(private val activity: Activity) {
 
     @RequiresApi(Build.VERSION_CODES.R)
     private fun unlock(reply: Reply) {
-        if (signal != null) return reply.error(BUSY)
+        if (active != null) return reply.error(BUSY)
         val bytes = try {
             if (file.exists()) file.readBytes() else null
         } catch (_: Exception) {
@@ -209,21 +227,31 @@ class BiometricVault(private val activity: Activity) {
     ) {
         val executor = activity.mainExecutor
         val cancel = CancellationSignal()
-        signal = cancel
+        val current = ActivePrompt(cancel, reply, onError)
+        active = current
+
+        // Cada callback actúa solo si este diálogo sigue abierto. Si
+        // [cancelPrompt] ya lo resolvió, el aviso tardío del sistema se
+        // ignora: su `onError` borraría la llave de una activación nueva.
+        fun finish(): Boolean {
+            if (active !== current) return false
+            active = null
+            return true
+        }
         val dialog = BiometricPrompt.Builder(activity)
             .setTitle(title)
             .setAllowedAuthenticators(BiometricManager.Authenticators.BIOMETRIC_STRONG)
             // En la API de la plataforma, el botón negativo llama a este
             // listener y no a `onAuthenticationError`: cuenta como cancelar.
             .setNegativeButton(negative, executor) { _, _ ->
-                signal = null
+                if (!finish()) return@setNegativeButton
                 onError()
                 reply.error(CANCELED)
             }
             .build()
         val callback = object : BiometricPrompt.AuthenticationCallback() {
             override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
-                signal = null
+                if (!finish()) return
                 val authenticated = result.cryptoObject?.cipher
                 if (authenticated == null) {
                     onError()
@@ -234,7 +262,7 @@ class BiometricVault(private val activity: Activity) {
             }
 
             override fun onAuthenticationError(errorCode: Int, errString: CharSequence) {
-                signal = null
+                if (!finish()) return
                 onError()
                 reply.error(codeFor(errorCode))
             }
@@ -245,7 +273,7 @@ class BiometricVault(private val activity: Activity) {
         try {
             dialog.authenticate(BiometricPrompt.CryptoObject(cipher), cancel, executor, callback)
         } catch (_: Exception) {
-            signal = null
+            finish()
             onError()
             reply.error(FAILED)
         }
@@ -297,6 +325,13 @@ class BiometricVault(private val activity: Activity) {
         file.delete()
         tmp.delete()
     }
+
+    /** Diálogo abierto, con lo necesario para cancelarlo desde [cancelPrompt]. */
+    private class ActivePrompt(
+        val signal: CancellationSignal,
+        val reply: Reply,
+        val onError: () -> Unit,
+    )
 
     /** Responde una sola vez al canal, aunque el diálogo avise dos veces. */
     private class Reply(private val result: MethodChannel.Result) {

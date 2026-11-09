@@ -60,6 +60,11 @@ abstract class VaultSession implements RustOpaqueInterface {
   Future<bool> isLocked();
 
   /// Bloquea. Sin bóveda, o con la bóveda ya bloqueada, no hace nada.
+  ///
+  /// Nunca falla: con el `Mutex` envenenado por un pánico anterior,
+  /// bloquea igual, porque bloquear solo suelta la llave y es seguro sobre
+  /// cualquier estado (#39). El envenenamiento se conserva: el resto de las
+  /// operaciones siguen dando `SessionPoisoned`.
   Future<void> lock();
 
   /// Crea una sesión sin bóveda sobre `path`. No toca el disco: el núcleo
