@@ -314,6 +314,19 @@ La miniatura de recientes (pruebas 2, 5 y 12) no es parte del esperado: Android 
   - "Toda operación asíncrona que termina con Rust desbloqueado pasa por `_enterUnlocked` de `VaultGate`, que bloquea si la app está oculta."
 - `docs/roadmap.md`: sin cambios; la casilla de la etapa 2 se marca con el merge.
 
+## Hallazgos de la implementación y de la prueba a mano
+
+En el emulador (Android 16, API 37) pasaron las pruebas 1 a 13. Lo que no estaba previsto:
+
+1. **Android 16 cierra el diálogo de la huella por su cuenta al tocar inicio.** Responde `onAuthenticationError` con `ERROR_USER_CANCELED` (10), el mismo código que una cancelación del usuario, unos 150 ms **antes** de `onPause`. Cuando llega `onStop`, `cancelPrompt` ya no encuentra diálogo (comprobado con un log temporal que solo registraba el código y el momento; se quitó). Ni el código ni el orden de los mensajes distinguen las dos cancelaciones. Lo que las distingue es lo que sigue: tras una del sistema, `hidden` llega unos 0.5 s después; tras una del usuario, la app vuelve a `resumed`. Mientras el diálogo está abierto, la app está en `inactive` (sin el foco de la ventana). Arreglo, en un `fix:` propio: un `fallback` que llega con la app sin estar en `resumed` espera hasta 1 s (`_systemCancelWindow`). Si llega `hidden`, se reintenta al volver; si no, se trata como del usuario y se enfoca el campo. Si algo falla, el costo es pequeño en cualquier dirección: en un celular lento, `hidden` puede llegar tarde y la pantalla cae a la contraseña (el comportamiento aceptado en la sección "UnlockScreen"); quien cancela y sale en menos de 1 s recibe la huella al volver. Pruebas 18d y 18e. `cancelPrompt` en `onStop` se mantiene para los fabricantes que no cierran el diálogo, y `MainActivity.onStop` llama primero a `super.onStop()`, que envía a Dart el aviso de ciclo de vida antes de la respuesta `canceled`.
+2. **Sin cuadros con la app en `hidden`.** El binding desactiva los cuadros fuera de `resumed` e `inactive`, así que la pantalla nueva se construye al volver, también en el celular. Las pruebas de widgets comprueban `lockCalls` con la app oculta y la pantalla después de volver a `resumed`.
+3. **`AppLifecycleListener` rechaza transiciones inválidas** y el binding de pruebas no sintetiza los estados intermedios. `test/lifecycle.dart` recorre `resumed ↔ inactive ↔ hidden ↔ paused ↔ detached` paso a paso.
+4. **El selector de recientes no llega ni a `onPause`** (prueba 4): la app sigue al frente y no bloquea. La cortina de notificaciones tampoco genera eventos (prueba 6). El diálogo de la huella no genera `onPause` ni `onStop` (prueba 1, al activar y al desbloquear).
+5. **Observación para la #43:** la miniatura de recientes muestra la pantalla principal tal cual, porque abrir los recientes no saca la app del frente. Ocultarla es de `FLAG_SECURE`.
+6. **Callbacks tardíos del diálogo** (Kotlin, al implementar): cada callback del `BiometricPrompt` actúa solo si su diálogo sigue siendo el activo. Si `cancelPrompt` ya lo resolvió, el aviso tardío del sistema se ignora: si no, su `onError` borraría la llave de una activación nueva.
+7. **El aviso "No se pudo activar la huella."** solo se muestra si la pantalla sigue montada: tras un bloqueo, la activación vieja termina en `failed` por `Locked` y el aviso aparecía sobre el desbloqueo nuevo.
+8. **Prueba 12:** desde `adb` no se puede asegurar que la salida coincida con Argon2id (`onStop` llegó 0.5 s después del toque). Al volver se ve el desbloqueo; la carrera la cubren las pruebas 6 a 6c.
+
 ## Comentarios en issues
 
 Se publican después de aprobar este diseño:
