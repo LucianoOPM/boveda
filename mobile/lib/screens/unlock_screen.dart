@@ -151,7 +151,23 @@ class _UnlockScreenState extends State<UnlockScreen> {
     }
   }
 
+  /// Cancela la ventana de una cancelación pendiente de atribuir. Devuelve
+  /// si había una.
+  bool _cancelWindowIfPending() {
+    final window = _cancelWindow;
+    if (window == null) return false;
+    window.cancel();
+    _cancelWindow = null;
+    return true;
+  }
+
   void _onResume() {
+    // Volver a `resumed` sin pasar por `hidden`: la cancelación fue del
+    // usuario. Se enfoca el campo sin esperar a que venza la ventana.
+    if (_cancelWindowIfPending()) {
+      _release();
+      return;
+    }
     if (_waitingResume) {
       _waitingResume = false;
       unawaited(_start());
@@ -200,6 +216,8 @@ class _UnlockScreenState extends State<UnlockScreen> {
 
   Future<void> _unlockWithBiometric() async {
     if (_busy) return;
+    // Otra acción: la ventana ya no debe tocar el formulario al vencer.
+    _cancelWindowIfPending();
     setState(() {
       _busy = true;
       _error = null;
@@ -257,6 +275,8 @@ class _UnlockScreenState extends State<UnlockScreen> {
   Future<void> _unlock() async {
     // Cubre el botón y la tecla "Hecho": nunca corren dos `unlock` a la vez.
     if (!_canUnlock) return;
+    // Otra acción: la ventana no debe reactivar el botón durante Argon2id.
+    _cancelWindowIfPending();
     // Antes del primer `await`: el `ScaffoldMessenger` raíz sobrevive al
     // cambio de pantalla, así que el aviso de activación fallida se ve en
     // la pantalla principal sin volver a leer el `context`.

@@ -709,5 +709,51 @@ void main() {
       await drain(tester);
       expect(unlockPrompts(), 1);
     });
+
+    testWidgets('18f desbloquear dentro de la ventana: el botón sigue '
+        'desactivado durante el unlock aunque pase la ventana', (tester) async {
+      biometric.enabled = true;
+      final prompt = Completer<Uint8List>();
+      biometric.onUnlock = () => prompt.future;
+      final pending = Completer<UnlockReport>();
+      session.onUnlock = (_) => pending.future;
+      await pumpScreen(tester, session);
+      await drain(tester);
+      await setLifecycle(tester, AppLifecycleState.inactive);
+      prompt.completeError(fail(BiometricFailure.canceled));
+      await drain(tester);
+
+      await type(tester, password);
+      await submitWithButton(tester);
+      expect(session.unlockCalls, [password]);
+      await tester.pump(const Duration(seconds: 2));
+
+      expect(button(tester).onPressed, isNull);
+      expect(field(tester).enabled, isFalse);
+      pending.complete(emptyReport);
+      await drain(tester);
+    });
+
+    testWidgets('18g resumed dentro de la ventana enfoca el campo en el '
+        'acto y un hidden posterior no reintenta', (tester) async {
+      biometric.enabled = true;
+      final prompt = Completer<Uint8List>();
+      biometric.onUnlock = () => prompt.future;
+      await pumpScreen(tester, session);
+      await drain(tester);
+      await setLifecycle(tester, AppLifecycleState.inactive);
+      prompt.completeError(fail(BiometricFailure.canceled));
+      await drain(tester);
+
+      await setLifecycle(tester, AppLifecycleState.resumed);
+      await drain(tester);
+      expect(field(tester).focusNode!.hasFocus, isTrue);
+
+      await tester.pump(const Duration(milliseconds: 500));
+      await setLifecycle(tester, AppLifecycleState.hidden);
+      await setLifecycle(tester, AppLifecycleState.resumed);
+      await drain(tester);
+      expect(unlockPrompts(), 1);
+    });
   });
 }

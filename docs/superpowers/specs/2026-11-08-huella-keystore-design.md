@@ -181,6 +181,8 @@ Funciones sin estado que reciben la sesión y el servicio.
 2. `final key = await session.exportVaultKey()`. Si falla → `abortEnable()` y `failed`.
 3. `completeEnable(key)` en un `try`, con `key.fillRange(0, key.length, 0)` en el `finally`, también si falla. Error → `failed`. `invokeMethod` codifica el mensaje antes de su primer `await`, así que los ceros no alcanzan la copia en tránsito.
 
+**Bloqueo durante la exportación** (aclarado en la #39, ver `docs/superpowers/specs/2026-11-08-bloqueo-automatico-design.md`). Si la app se bloquea con `exportVaultKey` ya en curso, la activación termina igual: el `lock()` de la fachada espera el `Mutex` y corre después, así que la llave ya salió del núcleo. Es correcto. El usuario ya confirmó con la huella, y la llave va solo a su destino previsto: Kotlin la cifra con la llave del Keystore y la guarda en `vault_key.bin`. No va a la pantalla, que ya salió del árbol. Los arreglos se sobrescriben con ceros igual que en el camino normal: el `Uint8List` en el `finally` de `enableBiometric` y el `ByteArray` en el `finally` de `completeEnable`. Si el bloqueo llega antes de `exportVaultKey`, la exportación da `Locked`, se llama a `abortEnable` y la llave no sale de Rust.
+
 **`unlockWithBiometric(session, biometric) → BiometricUnlockOutcome`**
 
 | Paso | Resultado |
