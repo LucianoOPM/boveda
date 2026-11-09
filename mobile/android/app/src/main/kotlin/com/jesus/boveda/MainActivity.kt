@@ -25,6 +25,13 @@ class MainActivity : FlutterActivity() {
             .setMethodCallHandler(biometric::handle)
     }
 
+    // La actividad deja de verse: el diálogo de la huella se cancela y Dart
+    // recibe `canceled` (#39).
+    override fun onStop() {
+        biometric.cancelPrompt()
+        super.onStop()
+    }
+
     override fun onDestroy() {
         biometric.onDestroy()
         super.onDestroy()
