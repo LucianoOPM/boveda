@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
+import 'package:flutter/services.dart';
 
 import 'screens/biometric_offer_screen.dart';
 import 'screens/first_run_screen.dart';
@@ -48,8 +49,16 @@ class _BovedaAppState extends State<BovedaApp> {
   Widget build(BuildContext context) {
     return MaterialApp(
       title: 'Bóveda',
-      builder: (context, child) =>
-          AutoLockScope(controller: _autoLock, child: child!),
+      // Por encima del `Navigator`: cubre rutas, diálogos y hojas. Cualquier
+      // toque cuenta como actividad; el `Listener` translúcido no lo consume.
+      builder: (context, child) => AutoLockScope(
+        controller: _autoLock,
+        child: Listener(
+          behavior: HitTestBehavior.translucent,
+          onPointerDown: (_) => _autoLock.reportActivity(),
+          child: child,
+        ),
+      ),
       home: VaultGate(
         session: widget.session,
         vaultExists: widget.vaultExists,
@@ -88,6 +97,9 @@ enum VaultGateState {
 ///   desfasaría Rust y la interfaz.
 /// - Toda transición a un estado con Rust desbloqueado pasa por
 ///   `_enterUnlocked`, que bloquea si la app está oculta.
+/// - Con la bóveda en pantalla (`unlocked`, `offerBiometric`), bloquea tras
+///   `autoLockTimeout` sin actividad: toques, teclas físicas y lo que se
+///   escribe en un `ActivityTextField`.
 /// - Cada bloqueo sube `_epoch`, la `key` de la pantalla: toda pantalla
 ///   montada sale del árbol y sus `await` pendientes encuentran
 ///   `mounted == false`.
@@ -132,17 +144,44 @@ class _VaultGateState extends State<VaultGate> {
 
   late final AppLifecycleListener _lifecycle;
 
+  /// Temporizador de inactividad; solo corre con la bóveda en pantalla.
+  Timer? _idle;
+
   @override
   void initState() {
     super.initState();
     _lifecycle = AppLifecycleListener(onHide: _onHidden);
+    widget.autoLock.onActivity = _restartIdle;
+    HardwareKeyboard.instance.addHandler(_onKey);
     _start();
   }
 
   @override
   void dispose() {
+    _idle?.cancel();
+    HardwareKeyboard.instance.removeHandler(_onKey);
+    if (widget.autoLock.onActivity == _restartIdle) {
+      widget.autoLock.onActivity = null;
+    }
     _lifecycle.dispose();
     super.dispose();
+  }
+
+  /// Una tecla física cuenta como actividad. No la consume.
+  bool _onKey(KeyEvent event) {
+    _restartIdle();
+    return false;
+  }
+
+  /// Reinicia la cuenta de inactividad con la bóveda en pantalla; en otro
+  /// estado solo cancela el temporizador.
+  void _restartIdle() {
+    _idle?.cancel();
+    _idle = null;
+    if (_state == VaultGateState.unlocked ||
+        _state == VaultGateState.offerBiometric) {
+      _idle = Timer(widget.autoLockTimeout, _lock);
+    }
   }
 
   /// Sin archivo, primer uso. Con archivo, se abre (queda bloqueada). Si
@@ -210,6 +249,7 @@ class _VaultGateState extends State<VaultGate> {
       _damagedEntries = damagedEntries;
       _state = next;
     });
+    _restartIdle();
   }
 
   void _onHidden() {
@@ -229,6 +269,8 @@ class _VaultGateState extends State<VaultGate> {
   /// error se descarta sin detalles.
   void _lock() {
     if (!mounted) return;
+    _idle?.cancel();
+    _idle = null;
     _openWhileLocked = false;
     unawaited(
       Future.sync(widget.session.lock).then((_) {}, onError: (Object _) {}),

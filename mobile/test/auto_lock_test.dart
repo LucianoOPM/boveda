@@ -2,7 +2,6 @@
 // con `BovedaApp` y los dobles de la sesión y de la huella.
 
 import 'dart:async';
-import 'dart:typed_data';
 
 import 'package:boveda/app.dart';
 import 'package:boveda/screens/biometric_offer_screen.dart';
@@ -12,6 +11,7 @@ import 'package:boveda/services/biometric_service.dart';
 import 'package:boveda/src/rust/api/error.dart';
 import 'package:boveda/src/rust/api/session.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'fakes.dart';
@@ -525,6 +525,105 @@ void main() {
 
       expect(session.lockCalls, 0);
       expect(find.text('No se pudo abrir la bóveda.'), findsOneWidget);
+    });
+  });
+
+  group('inactividad', () {
+    testWidgets('11 bloquea a los 5 minutos', (tester) async {
+      await pumpUnlocked(tester);
+
+      await tester.pump(const Duration(minutes: 4, seconds: 59));
+      expect(session.lockCalls, 0);
+      await tester.pump(const Duration(seconds: 1));
+
+      expect(session.lockCalls, 1);
+      await expectLocked(tester);
+    });
+
+    testWidgets('12 un toque reinicia la cuenta', (tester) async {
+      await pumpUnlocked(tester);
+
+      await tester.pump(const Duration(minutes: 4));
+      await tester.tapAt(const Offset(10, 10));
+      await tester.pump(const Duration(minutes: 4));
+      expect(session.lockCalls, 0);
+      await tester.pump(const Duration(minutes: 1));
+
+      expect(session.lockCalls, 1);
+    });
+
+    testWidgets('13 una tecla física reinicia la cuenta', (tester) async {
+      await pumpUnlocked(tester);
+
+      await tester.pump(const Duration(minutes: 4));
+      await tester.sendKeyEvent(LogicalKeyboardKey.keyA);
+      await tester.pump(const Duration(minutes: 4));
+      expect(session.lockCalls, 0);
+      await tester.pump(const Duration(minutes: 1));
+
+      expect(session.lockCalls, 1);
+    });
+
+    testWidgets('14 en el desbloqueo no corre', (tester) async {
+      await pumpApp(tester);
+
+      await tester.pump(const Duration(minutes: 10));
+
+      expect(session.lockCalls, 0);
+    });
+
+    testWidgets('14 en la oferta sí bloquea', (tester) async {
+      await pumpOffer(tester);
+
+      await tester.pump(const Duration(minutes: 5));
+
+      expect(session.lockCalls, 1);
+      await expectLocked(tester);
+    });
+
+    testWidgets('14b tras bloquear por inactividad no queda ningún '
+        'temporizador', (tester) async {
+      await pumpUnlocked(tester);
+      await tester.pump(const Duration(minutes: 5));
+      expect(session.lockCalls, 1);
+
+      await tester.pump(const Duration(minutes: 10));
+
+      expect(session.lockCalls, 1);
+    });
+
+    testWidgets('14b tras bloquear por hidden y volver no queda ningún '
+        'temporizador', (tester) async {
+      await pumpUnlocked(tester);
+      await setLifecycle(tester, AppLifecycleState.hidden);
+      await setLifecycle(tester, AppLifecycleState.resumed);
+      expect(session.lockCalls, 1);
+
+      await tester.pump(const Duration(minutes: 10));
+
+      expect(session.lockCalls, 1);
+    });
+
+    testWidgets('15 respeta el tiempo inyectado', (tester) async {
+      await pumpUnlocked(tester, timeout: const Duration(minutes: 1));
+
+      await tester.pump(const Duration(seconds: 59));
+      expect(session.lockCalls, 0);
+      await tester.pump(const Duration(seconds: 1));
+
+      expect(session.lockCalls, 1);
+    });
+
+    testWidgets('al desmontar no quedan temporizadores ni manejador de '
+        'teclado', (tester) async {
+      await pumpUnlocked(tester);
+
+      await tester.pumpWidget(const SizedBox());
+      // Con el manejador colgado, la tecla crearía un temporizador nuevo y
+      // la prueba fallaría por temporizadores pendientes.
+      await tester.sendKeyEvent(LogicalKeyboardKey.keyA);
+
+      expect(tester.takeException(), isNull);
     });
   });
 }
