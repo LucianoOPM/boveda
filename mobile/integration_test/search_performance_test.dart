@@ -10,6 +10,11 @@
 // Criterios (diseño de la #40): cada `search` de ida y vuelta por debajo de
 // 50 ms, sin contar la primera; percentil 90 de construcción y de
 // rasterizado de cuadros por debajo de 16 ms.
+//
+// Preparar la bóveda (calibrar Argon2id y 500 inserciones) puede pasar de
+// los 30 s que package:test da por omisión a `setUpAll` en un emulador lento.
+@Timeout(Duration(minutes: 5))
+library;
 
 import 'dart:io';
 
@@ -166,6 +171,8 @@ void main() {
     await dir.delete(recursive: true);
   });
 
+  // Las pruebas comparten la bóveda: `revealPassword` de esta cambia el
+  // orden de recientes que ven las siguientes.
   testWidgets('criterios funcionales con el núcleo real', (tester) async {
     expect((await session.search(query: '')).length, 500);
 
@@ -206,6 +213,13 @@ void main() {
 
   testWidgets('escribir letra por letra no traba la interfaz', (tester) async {
     final counting = _CountingSession(session);
+    // `IntegrationTestWidgetsFlutterBinding` no registra el teclado simulado:
+    // sin él, `enterText` usa el cliente -1, que `TextInput` solo acepta en
+    // debug (dentro de un `assert`), y en profile lo escrito se descarta. Se
+    // registra antes de montar, para que el `setClient` de `autofocus` lo
+    // reciba el doble. El teclado real no aparece durante la medición.
+    binding.testTextInput.register();
+    addTearDown(binding.testTextInput.unregister);
     await tester.pumpWidget(
       MaterialApp(home: SearchScreen(session: counting, damagedEntries: 0)),
     );
