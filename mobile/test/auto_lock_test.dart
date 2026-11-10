@@ -6,6 +6,7 @@ import 'dart:async';
 import 'package:boveda/app.dart';
 import 'package:boveda/screens/biometric_offer_screen.dart';
 import 'package:boveda/screens/first_run_screen.dart';
+import 'package:boveda/screens/search_screen.dart';
 import 'package:boveda/screens/unlock_screen.dart';
 import 'package:boveda/services/biometric_service.dart';
 import 'package:boveda/src/rust/api/error.dart';
@@ -17,7 +18,6 @@ import 'package:flutter_test/flutter_test.dart';
 import 'fakes.dart';
 import 'lifecycle.dart';
 
-const mainText = 'Pantalla principal: #40';
 const password = 'frase larga de prueba';
 
 late FakeVaultSession session;
@@ -68,7 +68,7 @@ Future<void> pumpUnlocked(WidgetTester tester, {Duration? timeout}) async {
   await pumpApp(tester, autoLockTimeout: timeout);
   await submitPassword(tester);
   await drain(tester);
-  expect(find.text(mainText), findsOneWidget);
+  expect(find.byType(SearchScreen), findsOneWidget);
 }
 
 /// Llena el primer uso y toca "Crear bóveda".
@@ -102,7 +102,7 @@ Future<void> checkEnableBiometric(WidgetTester tester) async {
 }
 
 BuildContext mainContext(WidgetTester tester) =>
-    tester.element(find.text(mainText));
+    tester.element(find.byType(SearchScreen));
 
 /// Vuelve a `resumed` y comprueba que se ve el desbloqueo. Con la app en
 /// `hidden` el binding no produce cuadros (`framesEnabled` es falso), así
@@ -111,7 +111,7 @@ Future<void> expectLocked(WidgetTester tester) async {
   await setLifecycle(tester, AppLifecycleState.resumed);
   await drain(tester);
   expect(find.byType(UnlockScreen), findsOneWidget);
-  expect(find.text(mainText), findsNothing);
+  expect(find.byType(SearchScreen), findsNothing);
 }
 
 void main() {
@@ -136,7 +136,7 @@ void main() {
       await setLifecycle(tester, AppLifecycleState.inactive);
 
       expect(session.lockCalls, 0);
-      expect(find.text(mainText), findsOneWidget);
+      expect(find.byType(SearchScreen), findsOneWidget);
     });
 
     testWidgets('3 offerBiometric y hidden bloquea', (tester) async {
@@ -274,7 +274,7 @@ void main() {
       await drain(tester);
 
       expect(session.lockCalls, 0);
-      expect(find.text(mainText), findsOneWidget);
+      expect(find.byType(SearchScreen), findsOneWidget);
     });
 
     testWidgets('6b huella: unlockWithKey pendiente y hidden bloquea al '
@@ -421,7 +421,7 @@ void main() {
       await checkEnableBiometric(tester);
       await submitPassword(tester);
       await drain(tester);
-      expect(find.text(mainText), findsOneWidget);
+      expect(find.byType(SearchScreen), findsOneWidget);
       expect(biometric.enabled, isTrue);
 
       await setLifecycle(tester, AppLifecycleState.hidden);
@@ -570,6 +570,38 @@ void main() {
       await tester.pump(const Duration(minutes: 1));
 
       expect(session.lockCalls, 1);
+    });
+
+    testWidgets('escribir en la búsqueda reinicia la cuenta', (tester) async {
+      await pumpUnlocked(tester);
+
+      await tester.pump(const Duration(minutes: 4));
+      // Sin tocar la pantalla: solo lo que llega del teclado en pantalla.
+      tester.testTextInput.enterText('gm');
+      await tester.pump(const Duration(minutes: 4));
+      expect(session.lockCalls, 0);
+      await tester.pump(const Duration(minutes: 1));
+
+      expect(session.lockCalls, 1);
+    });
+
+    testWidgets('bloquear descarta el texto de búsqueda', (tester) async {
+      await pumpUnlocked(tester);
+      await tester.enterText(find.byType(TextField), 'gm');
+      await tester.pump();
+
+      await setLifecycle(tester, AppLifecycleState.hidden);
+      await expectLocked(tester);
+      await submitPassword(tester);
+      await drain(tester);
+
+      expect(find.byType(SearchScreen), findsOneWidget);
+      expect(
+        tester.widget<TextField>(find.byType(TextField)).controller!.text,
+        isEmpty,
+      );
+      expect(session.searchCalls.last, '');
+      expect(fieldHasFocus(tester, find.byType(SearchScreen)), isTrue);
     });
 
     testWidgets('14 en el desbloqueo no corre', (tester) async {

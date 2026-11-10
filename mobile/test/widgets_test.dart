@@ -170,29 +170,13 @@ void main() {
     expect(find.text('2 entradas no se pudieron leer'), findsNothing);
   });
 
-  testWidgets('PlaceholderScreen muestra el banner y el texto', (tester) async {
+  testWidgets('PlaceholderScreen muestra el texto', (tester) async {
     await tester.pumpWidget(
       const MaterialApp(
-        home: PlaceholderScreen(
-          text: 'Pantalla principal: #40',
-          banner: DamagedEntriesBanner(count: 1),
-        ),
+        home: PlaceholderScreen(text: 'No se pudo abrir la bóveda.'),
       ),
     );
-    expect(find.text('1 entrada no se pudo leer'), findsOneWidget);
-    expect(find.text('Pantalla principal: #40'), findsOneWidget);
-  });
-
-  testWidgets('PlaceholderScreen sin banner muestra solo el texto', (
-    tester,
-  ) async {
-    await tester.pumpWidget(
-      const MaterialApp(
-        home: PlaceholderScreen(text: 'Pantalla principal: #40'),
-      ),
-    );
-    expect(find.text('Pantalla principal: #40'), findsOneWidget);
-    expect(find.byType(MaterialBanner), findsNothing);
+    expect(find.text('No se pudo abrir la bóveda.'), findsOneWidget);
   });
 
   group('bloqueo automático', () {

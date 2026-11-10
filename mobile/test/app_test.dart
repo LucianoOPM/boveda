@@ -6,6 +6,7 @@ import 'dart:io';
 import 'package:boveda/app.dart';
 import 'package:boveda/screens/biometric_offer_screen.dart';
 import 'package:boveda/screens/first_run_screen.dart';
+import 'package:boveda/screens/search_screen.dart';
 import 'package:boveda/screens/unlock_screen.dart';
 import 'package:boveda/services/biometric_service.dart';
 import 'package:boveda/src/rust/api/error.dart';
@@ -121,7 +122,7 @@ void main() {
     await tester.tap(find.byKey(const Key('first-run-create')));
     await tester.pumpAndSettle();
 
-    expect(find.text('Pantalla principal: #40'), findsOneWidget);
+    expect(find.byType(SearchScreen), findsOneWidget);
     expect(find.byType(FirstRunScreen), findsNothing);
     expect(find.byType(MaterialBanner), findsNothing);
     expect(session.createCalls, [password]);
@@ -199,7 +200,7 @@ void main() {
   ) async {
     await unlockFromScreen(tester);
 
-    expect(find.text('Pantalla principal: #40'), findsOneWidget);
+    expect(find.byType(SearchScreen), findsOneWidget);
     expect(find.byType(UnlockScreen), findsNothing);
     expect(find.byType(MaterialBanner), findsNothing);
     expect(session.unlockCalls, ['prueba-bóveda-v2']);
@@ -210,7 +211,7 @@ void main() {
         UnlockReport(corrupt: ['a' * 32, 'b' * 32], unidentifiedCorrupt: 1);
     await unlockFromScreen(tester);
 
-    expect(find.text('Pantalla principal: #40'), findsOneWidget);
+    expect(find.byType(SearchScreen), findsOneWidget);
     expect(find.text('3 entradas no se pudieron leer'), findsOneWidget);
   });
 
@@ -230,7 +231,7 @@ void main() {
     session.onUnlock = (_) async => throw VaultError.alreadyUnlocked;
     await unlockFromScreen(tester);
 
-    expect(find.text('Pantalla principal: #40'), findsOneWidget);
+    expect(find.byType(SearchScreen), findsOneWidget);
     expect(find.byType(MaterialBanner), findsNothing);
   });
 
@@ -243,7 +244,7 @@ void main() {
     await createFromFirstRun(tester);
 
     expect(find.byType(BiometricOfferScreen), findsOneWidget);
-    expect(find.text("Pantalla principal: #40"), findsNothing);
+    expect(find.byType(SearchScreen), findsNothing);
   });
 
   testWidgets("sin huella disponible pasa a la pantalla principal", (
@@ -254,7 +255,7 @@ void main() {
     await createFromFirstRun(tester);
 
     expect(find.byType(BiometricOfferScreen), findsNothing);
-    expect(find.text("Pantalla principal: #40"), findsOneWidget);
+    expect(find.byType(SearchScreen), findsOneWidget);
   });
 
   testWidgets("si isAvailable lanza pasa a la pantalla principal", (
@@ -265,7 +266,7 @@ void main() {
     await tester.pumpAndSettle();
     await createFromFirstRun(tester);
 
-    expect(find.text("Pantalla principal: #40"), findsOneWidget);
+    expect(find.byType(SearchScreen), findsOneWidget);
   });
 
   testWidgets("activación fallida desde el desbloqueo muestra el SnackBar en "
@@ -288,7 +289,7 @@ void main() {
     await tester.tap(find.byKey(const Key("unlock-submit")));
     await tester.pumpAndSettle();
 
-    expect(find.text("Pantalla principal: #40"), findsOneWidget);
+    expect(find.byType(SearchScreen), findsOneWidget);
     expect(find.text("No se pudo activar la huella."), findsOneWidget);
   });
 
@@ -300,7 +301,48 @@ void main() {
     await tester.tap(find.byKey(const Key("offer-skip")));
     await tester.pumpAndSettle();
 
-    expect(find.text("Pantalla principal: #40"), findsOneWidget);
+    expect(find.byType(SearchScreen), findsOneWidget);
     expect(biometric.calls, isNot(contains("beginEnable")));
+  });
+
+  group('foco al llegar a la pantalla principal', () {
+    bool searchHasFocus(WidgetTester tester) =>
+        fieldHasFocus(tester, find.byType(SearchScreen));
+
+    testWidgets('tras desbloquear con contraseña', (tester) async {
+      await unlockFromScreen(tester);
+      expect(find.byType(SearchScreen), findsOneWidget);
+      expect(searchHasFocus(tester), isTrue);
+    });
+
+    testWidgets('tras desbloquear con huella', (tester) async {
+      biometric
+        ..available = true
+        ..enabled = true;
+      await pumpApp(tester, session, () async => true);
+      await tester.pumpAndSettle();
+      expect(biometric.calls, contains('unlock'));
+      expect(find.byType(SearchScreen), findsOneWidget);
+      expect(searchHasFocus(tester), isTrue);
+    });
+
+    testWidgets('tras crear sin huella', (tester) async {
+      await pumpApp(tester, session, () async => false);
+      await tester.pumpAndSettle();
+      await createFromFirstRun(tester);
+      expect(find.byType(SearchScreen), findsOneWidget);
+      expect(searchHasFocus(tester), isTrue);
+    });
+
+    testWidgets('tras la oferta de la huella', (tester) async {
+      biometric.available = true;
+      await pumpApp(tester, session, () async => false);
+      await tester.pumpAndSettle();
+      await createFromFirstRun(tester);
+      await tester.tap(find.byKey(const Key('offer-skip')));
+      await tester.pumpAndSettle();
+      expect(find.byType(SearchScreen), findsOneWidget);
+      expect(searchHasFocus(tester), isTrue);
+    });
   });
 }
