@@ -756,4 +756,51 @@ void main() {
       expect(unlockPrompts(), 1);
     });
   });
+
+  group('teclado', () {
+    final passwordField = find.byKey(passwordKey);
+
+    Future<void> focusField(WidgetTester tester) async {
+      await tester.tap(passwordField);
+      await tester.pump();
+      expect(fieldHasFocus(tester, passwordField), isTrue);
+    }
+
+    testWidgets('la casilla de la huella no quita el foco del campo', (
+      tester,
+    ) async {
+      biometric.available = true;
+      await pumpScreen(tester, session);
+      await tester.pump();
+      await focusField(tester);
+
+      await tester.ensureVisible(find.byKey(enableKey));
+      await tester.tap(find.byKey(enableKey));
+      await tester.pump();
+      expect(fieldHasFocus(tester, passwordField), isTrue);
+      expect(
+        tester.widget<CheckboxListTile>(find.byKey(enableKey)).value,
+        isTrue,
+      );
+    });
+
+    testWidgets('Desbloquear desactivado no quita el foco', (tester) async {
+      await pumpScreen(tester, session);
+      await focusField(tester);
+      expect(button(tester).onPressed, isNull);
+
+      await tester.tap(find.byKey(submitKey));
+      await tester.pump();
+      expect(fieldHasFocus(tester, passwordField), isTrue);
+    });
+
+    testWidgets('un espacio vacío quita el foco', (tester) async {
+      await pumpScreen(tester, session);
+      await focusField(tester);
+
+      await tester.tapAt(const Offset(1, 1));
+      await tester.pump();
+      expect(fieldHasFocus(tester, passwordField), isFalse);
+    });
+  });
 }

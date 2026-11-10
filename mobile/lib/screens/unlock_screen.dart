@@ -371,39 +371,45 @@ class _UnlockScreenState extends State<UnlockScreen> {
               ],
               if (_canOfferBiometric) ...[
                 const SizedBox(height: 8),
-                CheckboxListTile(
-                  key: const Key('unlock-enable-biometric'),
-                  value: _enableBiometric,
-                  onChanged: _busy
-                      ? null
-                      : (value) =>
-                            setState(() => _enableBiometric = value ?? false),
-                  controlAffinity: ListTileControlAffinity.leading,
-                  contentPadding: EdgeInsets.zero,
-                  title: const Text('Usar huella para desbloquear'),
+                // En el grupo del campo: tocarlo no cierra el teclado.
+                TextFieldTapRegion(
+                  child: CheckboxListTile(
+                    key: const Key('unlock-enable-biometric'),
+                    value: _enableBiometric,
+                    onChanged: _busy
+                        ? null
+                        : (value) =>
+                              setState(() => _enableBiometric = value ?? false),
+                    controlAffinity: ListTileControlAffinity.leading,
+                    contentPadding: EdgeInsets.zero,
+                    title: const Text('Usar huella para desbloquear'),
+                  ),
                 ),
               ],
               const SizedBox(height: 24),
-              FilledButton(
-                key: const Key('unlock-submit'),
-                onPressed: _canUnlock ? _unlock : null,
-                child: _busy
-                    ? Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          const SizedBox.square(
-                            dimension: 16,
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          ),
-                          const SizedBox(width: 12),
-                          Text(
-                            _activating
-                                ? 'Activando huella…'
-                                : 'Desbloqueando…',
-                          ),
-                        ],
-                      )
-                    : const Text('Desbloquear'),
+              // En el grupo del campo: tocarlo no cierra el teclado.
+              TextFieldTapRegion(
+                child: FilledButton(
+                  key: const Key('unlock-submit'),
+                  onPressed: _canUnlock ? _unlock : null,
+                  child: _busy
+                      ? Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            const SizedBox.square(
+                              dimension: 16,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            ),
+                            const SizedBox(width: 12),
+                            Text(
+                              _activating
+                                  ? 'Activando huella…'
+                                  : 'Desbloqueando…',
+                            ),
+                          ],
+                        )
+                      : const Text('Desbloquear'),
+                ),
               ),
               if (_biometricEnabled) ...[
                 const SizedBox(height: 8),

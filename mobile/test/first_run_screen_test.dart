@@ -435,4 +435,49 @@ void main() {
       );
     });
   }
+
+  group('teclado', () {
+    final passwordField = find.byKey(const Key('first-run-password'));
+
+    Future<void> focusField(WidgetTester tester) async {
+      await tester.tap(passwordField);
+      await tester.pump();
+      expect(fieldHasFocus(tester, passwordField), isTrue);
+    }
+
+    testWidgets('la casilla no quita el foco del campo', (tester) async {
+      await pumpScreen(tester, session);
+      await focusField(tester);
+
+      final accept = find.byKey(const Key('first-run-accept'));
+      await tester.ensureVisible(accept);
+      await tester.pump();
+      await tester.tap(accept);
+      await tester.pump();
+      expect(fieldHasFocus(tester, passwordField), isTrue);
+      expect(tester.widget<CheckboxListTile>(accept).value, isTrue);
+    });
+
+    testWidgets('Crear bóveda desactivado no quita el foco', (tester) async {
+      await pumpScreen(tester, session);
+      await focusField(tester);
+
+      final create = find.byKey(const Key('first-run-create'));
+      await tester.ensureVisible(create);
+      await tester.pump();
+      expect(tester.widget<FilledButton>(create).onPressed, isNull);
+      await tester.tap(create, warnIfMissed: false);
+      await tester.pump();
+      expect(fieldHasFocus(tester, passwordField), isTrue);
+    });
+
+    testWidgets('un espacio vacío quita el foco', (tester) async {
+      await pumpScreen(tester, session);
+      await focusField(tester);
+
+      await tester.tapAt(const Offset(1, 1));
+      await tester.pump();
+      expect(fieldHasFocus(tester, passwordField), isFalse);
+    });
+  });
 }
