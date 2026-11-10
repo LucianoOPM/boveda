@@ -292,6 +292,8 @@ Decidido el 2026-11-08 (#37, detalle en `docs/superpowers/specs/2026-11-08-desbl
 
 **Pantalla principal.** Cursor en la barra de búsqueda al desbloquear. La lista se filtra mientras se escribe, tolera errores y busca en servicio, dominio de la URL, usuario y etiquetas. Sin texto, muestra primero las entradas usadas recientemente.
 
+Decidido el 2026-11-10 (#40, detalle en `docs/superpowers/specs/2026-11-10-pantalla-principal-design.md`): la app llama a la búsqueda del núcleo en cada cambio del texto, sin retardo, y descarta las respuestas viejas. Cada elemento muestra el servicio y, debajo, el usuario o, si no hay, la URL tal como está guardada; la lista respeta el orden del núcleo. Las entradas dañadas no aparecen en la lista, porque nunca llegan a la caché de búsqueda: solo las cuenta el aviso del desbloqueo. En toda la app, tocar fuera de un campo o desplazar una lista cierra el teclado, salvo los controles del mismo formulario (botón de envío, casillas e íconos del campo).
+
 **Acciones:**
 
 - Deslizar una entrada en la lista la envía a la PC sin abrirla.

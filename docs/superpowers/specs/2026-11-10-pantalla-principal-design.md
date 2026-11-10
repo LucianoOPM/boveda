@@ -91,7 +91,7 @@ class SearchScreen extends StatefulWidget {
 
 **Estado:**
 
-- `TextEditingController _query` y `FocusNode _focus`, de la pantalla; se liberan en `dispose`.
+- `TextEditingController _query`, `FocusNode _focus` y `ScrollController _scroll`, de la pantalla; se liberan en `dispose`.
 - `int _generation`: sube con cada búsqueda lanzada.
 - `List<EntrySummary>? _results`: `null` mientras no llega la primera respuesta.
 - `String _shownQuery`: el texto al que corresponden los resultados en pantalla.
@@ -134,7 +134,7 @@ Future<void> _search(String query) async {
 | Vacío con texto | "Sin resultados para «`_shownQuery.trim()`»" |
 | Con resultados | La lista |
 
-Mientras llega una búsqueda nueva se siguen viendo los resultados anteriores, sin parpadeo.
+Mientras llega una búsqueda nueva se siguen viendo los resultados anteriores, sin parpadeo. Cuando llegan resultados de un texto distinto del que se mostraba, la lista vuelve al principio (`_scroll.jumpTo(0)`): si el usuario la había desplazado y los resultados nuevos siguen siendo largos, el mejor resultado tiene que verse arriba (precisión agregada en el plan, Review Focus 4).
 
 **Estructura:** `Scaffold` sin `AppBar` → `SafeArea` → `Column`:
 
@@ -338,6 +338,13 @@ mobile/integration_test/search_performance_test.dart  # nuevo
   - `widgets/`: `activity_text_field.dart` cierra el teclado al tocar fuera; los controles del formulario van en `TextFieldTapRegion`.
 - `mobile/CLAUDE.md`: se amplía la regla de `ActivityTextField`: tocar fuera de un campo cierra el teclado; los controles del formulario (botón de envío, casillas, íconos fuera del campo) se envuelven en `TextFieldTapRegion` para no cerrarlo; toda lista desplazable de las pantallas de la bóveda usa `keyboardDismissBehavior: onDrag`.
 - `docs/roadmap.md`: marcar "Pantalla principal con la barra de búsqueda enfocada y la lista filtrándose al escribir", en un commit propio, **solo después** de que pasen la prueba de rendimiento y los ocho casos a mano. Si algo falla ahí, se corrige antes y el roadmap espera.
+
+## Hallazgos de la implementación
+
+1. **`onDrag` y `onTapOutside` se solapan.** El toque con el que empieza un arrastre sobre la lista ya dispara `onTapOutside` y quita el foco, así que la prueba de desplazar comprueba también la propiedad `keyboardDismissBehavior`. `onDrag` queda como respaldo.
+2. **"Usar huella" no tiene prueba de grupo.** Al pulsarlo, el campo se desactiva y suelta el foco por eso; una prueba pasaría aunque el botón estuviera en el grupo.
+3. **`PlaceholderScreen` pierde `banner`**, que solo usaba el marcador de la pantalla principal; queda para los mensajes de error.
+4. **Prueba de rendimiento sin ejecutar en la implementación.** La escribe la implementación y la ejecuta el usuario en el emulador y en el celular, junto con la prueba a mano. Espera cada respuesta contando las búsquedas respondidas (una sesión que delega en la real), no un elemento visible, que podría venir del prefijo anterior.
 
 ## PR
 
