@@ -8,6 +8,8 @@ import 'package:boveda/src/rust/api/error.dart';
 import 'package:boveda/src/rust/api/entries.dart';
 import 'package:boveda/src/rust/api/password.dart';
 import 'package:boveda/src/rust/api/session.dart';
+import 'package:flutter/widgets.dart';
+import 'package:flutter_test/flutter_test.dart';
 
 /// Reporte de desbloqueo sin entradas dañadas.
 const emptyReport = UnlockReport(corrupt: [], unidentifiedCorrupt: 0);
@@ -240,3 +242,11 @@ class FakeBiometricService implements BiometricService {
     enabled = false;
   }
 }
+
+/// Si el campo de texto dentro de [field] tiene el foco.
+bool fieldHasFocus(WidgetTester tester, Finder field) => tester
+    .widget<EditableText>(
+      find.descendant(of: field, matching: find.byType(EditableText)),
+    )
+    .focusNode
+    .hasFocus;
