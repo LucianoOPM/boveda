@@ -304,7 +304,7 @@ Si la prueba muestra trabas, se agrega un retardo a la búsqueda y se documenta 
 4. Bóveda vacía: "Todavía no hay contraseñas guardadas".
 5. Teclado: tocar fuera lo cierra; la tecla "buscar" no; el ✕ borra y lo deja abierto; en el desbloqueo y el primer uso, las casillas no lo cierran y un espacio vacío sí.
 6. Inicio → volver → desbloquear: el campo de búsqueda vacío.
-7. Mirar el emulador mientras corre la prueba de rendimiento: la lista se filtra sin trabas a cada letra. (La app real todavía no puede agregar entradas, #41.)
+7. Mirar el emulador mientras corre la prueba de rendimiento: la lista se filtra sin trabas a cada letra (sin el teclado real: la prueba usa el simulado, ver "Hallazgos"). (La app real todavía no puede agregar entradas, #41.)
 8. Con el teclado abierto y texto en la búsqueda, esperar la inactividad sin tocar nada: se bloquea, y al desbloquear el campo está vacío y con el foco. Para no esperar 5 minutos se baja `defaultAutoLockTimeout` solo en la copia local, sin commit, y se restaura después.
 
 ### Antes de dar la issue por terminada
@@ -345,6 +345,7 @@ mobile/integration_test/search_performance_test.dart  # nuevo
 2. **"Usar huella" no tiene prueba de grupo.** Al pulsarlo, el campo se desactiva y suelta el foco por eso; una prueba pasaría aunque el botón estuviera en el grupo.
 3. **`PlaceholderScreen` pierde `banner`**, que solo usaba el marcador de la pantalla principal; queda para los mensajes de error.
 4. **Prueba de rendimiento sin ejecutar en la implementación.** La escribe la implementación y la ejecuta el usuario en el emulador y en el celular, junto con la prueba a mano. Espera cada respuesta contando las búsquedas respondidas (una sesión que delega en la real), no un elemento visible, que podría venir del prefijo anterior.
+5. **`enterText` en profile necesita el teclado simulado** (hallazgo de la revisión final). `IntegrationTestWidgetsFlutterBinding` no lo registra (`registerTestTextInput` es `false`), así que `enterText` manda el texto con el cliente `-1`, que `TextInput` solo acepta dentro de un `assert`: en profile lo escrito se descarta. La prueba registra `binding.testTextInput` antes de montar la pantalla. Consecuencia para el caso 7 de la prueba a mano: el teclado real no aparece durante la medición; lo que se mira es la lista filtrándose.
 
 ## PR
 
