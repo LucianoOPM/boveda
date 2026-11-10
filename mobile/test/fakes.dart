@@ -15,7 +15,7 @@ import 'package:flutter_test/flutter_test.dart';
 const emptyReport = UnlockReport(corrupt: [], unidentifiedCorrupt: 0);
 
 /// Sesión simulada. `create`, `open`, `unlock`, `unlockWithKey`,
-/// `exportVaultKey`, `lock` e `isLocked` hacen algo; el resto lanza
+/// `exportVaultKey`, `lock`, `isLocked` y `search` hacen algo; el resto lanza
 /// `UnimplementedError` para que una llamada inesperada falle la prueba.
 ///
 /// Lleva el estado de bloqueo como la fachada: [locked] empieza en `true`,
@@ -147,9 +147,18 @@ class FakeVaultSession implements VaultSession {
   Future<String> revealPassword({required String id}) =>
       throw UnimplementedError();
 
+  /// Textos recibidos por `search`, en orden.
+  final List<String> searchCalls = [];
+
+  /// Lo que hace `search` después de registrar la llamada. Por omisión,
+  /// ninguna entrada, enseguida.
+  Future<List<EntrySummary>> Function(String query) onSearch = (_) async => [];
+
   @override
-  Future<List<EntrySummary>> search({required String query}) =>
-      throw UnimplementedError();
+  Future<List<EntrySummary>> search({required String query}) {
+    searchCalls.add(query);
+    return onSearch(query);
+  }
 
   @override
   Future<UnlockReport> unlock({required String password}) async {
@@ -158,6 +167,27 @@ class FakeVaultSession implements VaultSession {
     locked = false;
     return report;
   }
+}
+
+/// `EntrySummary` de prueba. Sin [id], uno de 32 caracteres hexadecimales
+/// derivado del servicio: único mientras los servicios de la prueba lo sean.
+EntrySummary entry(
+  String service, {
+  String? id,
+  String? username,
+  String? url,
+  List<String> tags = const [],
+  int? lastUsedAt,
+}) {
+  return EntrySummary(
+    id: id ?? service.hashCode.toRadixString(16).padLeft(32, '0'),
+    service: service,
+    url: url,
+    username: username,
+    tags: tags,
+    modifiedAt: 0,
+    lastUsedAt: lastUsedAt,
+  );
 }
 
 /// La regla del núcleo por longitud. Las pruebas usan solo ASCII, así que
