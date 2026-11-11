@@ -348,6 +348,36 @@ void main() {
       expect(fieldHasFocus(tester, field), isTrue);
     });
 
+    testWidgets('ActivityTextField pasa textCapitalization y minLines', (
+      tester,
+    ) async {
+      final controller = TextEditingController();
+      addTearDown(controller.dispose);
+      await pumpWithSpace(
+        tester,
+        ActivityTextField(
+          controller: controller,
+          textCapitalization: TextCapitalization.sentences,
+          minLines: 3,
+          maxLines: 8,
+        ),
+      );
+      final text = tester.widget<TextField>(find.byType(TextField));
+      expect(text.textCapitalization, TextCapitalization.sentences);
+      expect(text.minLines, 3);
+      expect(text.maxLines, 8);
+    });
+
+    testWidgets('ActivityTextField sin ellos conserva los valores por '
+        'omisión', (tester) async {
+      final controller = TextEditingController();
+      addTearDown(controller.dispose);
+      await pumpWithSpace(tester, ActivityTextField(controller: controller));
+      final text = tester.widget<TextField>(find.byType(TextField));
+      expect(text.textCapitalization, TextCapitalization.none);
+      expect(text.minLines, isNull);
+    });
+
     testWidgets('PasswordField: el ojo no quita el foco y tocar fuera sí', (
       tester,
     ) async {

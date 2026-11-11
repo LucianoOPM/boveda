@@ -33,6 +33,8 @@ class ActivityTextField extends StatelessWidget {
     this.autocorrect = true,
     this.enableIMEPersonalizedLearning = true,
     this.keyboardType,
+    this.textCapitalization = TextCapitalization.none,
+    this.minLines,
     this.maxLines = 1,
     this.decoration = const InputDecoration(),
   });
@@ -49,6 +51,8 @@ class ActivityTextField extends StatelessWidget {
   final bool autocorrect;
   final bool enableIMEPersonalizedLearning;
   final TextInputType? keyboardType;
+  final TextCapitalization textCapitalization;
+  final int? minLines;
   final int? maxLines;
   final InputDecoration? decoration;
 
@@ -72,6 +76,8 @@ class ActivityTextField extends StatelessWidget {
       autocorrect: autocorrect,
       enableIMEPersonalizedLearning: enableIMEPersonalizedLearning,
       keyboardType: keyboardType,
+      textCapitalization: textCapitalization,
+      minLines: minLines,
       maxLines: maxLines,
       decoration: decoration,
     );

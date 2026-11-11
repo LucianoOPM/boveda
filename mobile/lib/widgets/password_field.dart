@@ -2,7 +2,11 @@ import 'package:flutter/material.dart';
 
 import 'activity_text_field.dart';
 
-/// Campo para escribir una contraseña maestra.
+/// Campo para escribir una contraseña: la maestra o la de una entrada.
+///
+/// No aplica ninguna regla sobre lo escrito: el mínimo y el indicador de
+/// fortaleza son solo de la contraseña maestra y los pone la pantalla que
+/// los necesita.
 ///
 /// Oculta el texto por omisión, con un botón para mostrarlo. El teclado no
 /// sugiere, no corrige ni aprende lo escrito, y el campo no declara pistas de
