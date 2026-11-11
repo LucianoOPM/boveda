@@ -3,6 +3,7 @@
 import 'dart:async';
 
 import 'package:boveda/screens/entry_detail_screen.dart';
+import 'package:boveda/screens/entry_form_screen.dart';
 import 'package:boveda/src/rust/api/entries.dart';
 import 'package:boveda/src/rust/api/error.dart';
 import 'package:flutter/material.dart';
@@ -470,9 +471,48 @@ void main() {
   });
 
   group('editar y reparar', () {
-    testWidgets('sin formulario, "Editar" está desactivado', (tester) async {
+    testWidgets('por omisión abre el formulario real: editar, guardar y ver '
+        'lo que el núcleo guardó', (tester) async {
+      session.onEntry = (id) async =>
+          entry('Gmail', id: id, username: 'normalizado@example.com');
       await pumpDetail(tester, openForm: null);
-      expect(tester.widget<IconButton>(editButton).onPressed, isNull);
+      await tapAndPump(tester, showPassword);
+
+      await tester.tap(editAction);
+      await tester.pumpAndSettle();
+      expect(find.byType(EntryFormScreen), findsOneWidget);
+      expect(find.widgetWithText(AppBar, 'Editar entrada'), findsOneWidget);
+
+      await tester.enterText(
+        find.byKey(const Key('username')),
+        '  normalizado@example.com ',
+      );
+      await tester.ensureVisible(find.byKey(const Key('save')));
+      await tester.tap(find.byKey(const Key('save')));
+      await tester.pumpAndSettle();
+
+      expect(find.byType(EntryFormScreen), findsNothing);
+      final call = session.editCalls.single;
+      expect(call.id, gmail.id);
+      expect(call.input.username, '  normalizado@example.com ');
+      expect(call.newPassword, isNull);
+      expect(call.newNotes, isNull);
+      expect(session.entryCalls, [gmail.id]);
+      expect(find.text('normalizado@example.com'), findsOneWidget);
+      // Lo revelado antes de editar se descartó.
+      expect(find.text(fakePassword), findsNothing);
+    });
+
+    testWidgets('por omisión, "Reparar" abre el formulario en modo reparar', (
+      tester,
+    ) async {
+      session.onRevealPassword = (_) async => throw VaultError.corruptEntry;
+      await pumpDetail(tester, openForm: null);
+      await tapAndPump(tester, showPassword);
+      await tester.tap(find.widgetWithText(FilledButton, 'Reparar'));
+      await tester.pumpAndSettle();
+
+      expect(find.widgetWithText(AppBar, 'Reparar entrada'), findsOneWidget);
     });
 
     testWidgets('abrir el formulario descarta lo revelado', (tester) async {

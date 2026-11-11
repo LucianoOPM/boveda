@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import '../src/rust/api/entries.dart';
 import '../src/rust/api/error.dart';
 import '../src/rust/api/session.dart';
+import 'entry_form_screen.dart';
 
 /// Abre el formulario de edición de [entry] (en modo reparar si [repair]) y
 /// devuelve `true` si guardó.
@@ -45,9 +46,27 @@ class EntryDetailScreen extends StatefulWidget {
   /// crear.
   final EntrySummary entry;
 
-  /// Cómo abrir el formulario. Sin él, "Editar" y "Reparar" quedan
-  /// desactivados.
+  /// Cómo abrir el formulario. Por omisión, [EntryFormScreen] en el
+  /// `Navigator` raíz; las pruebas lo reemplazan.
   final OpenEntryForm? openForm;
+
+  /// Apila el formulario en el `Navigator` raíz, que el bloqueo vacía.
+  static Future<bool?> _pushForm(
+    BuildContext context,
+    EntrySummary entry, {
+    required bool repair,
+    required VaultSession session,
+  }) {
+    return Navigator.of(context, rootNavigator: true).push<bool>(
+      MaterialPageRoute(
+        builder: (_) => EntryFormScreen.edit(
+          session: session,
+          entry: entry,
+          repair: repair,
+        ),
+      ),
+    );
+  }
 
   @override
   State<EntryDetailScreen> createState() => _EntryDetailScreenState();
@@ -166,11 +185,17 @@ class _EntryDetailScreenState extends State<EntryDetailScreen> {
   }
 
   Future<void> _openForm({required bool repair}) async {
-    final openForm = widget.openForm;
-    if (openForm == null) return;
     // La pantalla cubierta no retiene nada revelado.
     setState(_discardSecrets);
-    final saved = await openForm(context, _entry, repair: repair);
+    final openForm = widget.openForm;
+    final saved = openForm != null
+        ? await openForm(context, _entry, repair: repair)
+        : await EntryDetailScreen._pushForm(
+            context,
+            _entry,
+            repair: repair,
+            session: widget.session,
+          );
     if (!mounted || saved != true) return;
     // Tras guardar, el secreto ya no está dañado: lo reemplazó el formulario
     // o se pudo descifrar para conservarlo.
@@ -236,7 +261,7 @@ class _EntryDetailScreenState extends State<EntryDetailScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final canEdit = widget.openForm != null && !_deleting;
+    final canEdit = !_deleting;
     return Scaffold(
       appBar: AppBar(
         title: Text(_entry.service, overflow: TextOverflow.ellipsis),
