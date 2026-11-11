@@ -1,4 +1,4 @@
-//! Entradas: búsqueda, alta, edición, borrado y revelado.
+//! Entradas: búsqueda, lectura por id, alta, edición, borrado y revelado.
 //!
 //! El id cruza como 32 caracteres hexadecimales en minúsculas: en Dart, un
 //! `Uint8List` se compara por referencia y no serviría en `==`, `Set`, `Map`
@@ -32,7 +32,8 @@ pub struct EntryInput {
     pub tags: Vec<String>,
 }
 
-/// Contraseña y notas nuevas. No deriva `Debug`: lleva el secreto.
+/// Contraseña y notas de una entrada nueva (`add`). No deriva `Debug`:
+/// lleva el secreto.
 pub struct NewSecret {
     pub password: String,
     pub notes: Option<String>,
@@ -61,22 +62,41 @@ impl VaultSession {
             .map(entry_id_to_hex)
     }
 
-    /// Reemplaza los datos de búsqueda. Con `new_secret` en `None` conserva
-    /// el secreto (no sale del núcleo); con `Some`, lo reemplaza.
+    /// Reemplaza los datos de búsqueda. Con `new_password` y `new_notes` en
+    /// `None` conserva el secreto, que no sale del núcleo. Con uno solo,
+    /// reemplaza esa parte y la otra no sale del núcleo. Con los dos,
+    /// reemplaza el secreto completo (repara una entrada dañada). Unas notas
+    /// en blanco las quitan.
     pub fn edit(
         &self,
         id: String,
         input: EntryInput,
-        new_secret: Option<NewSecret>,
+        new_password: Option<String>,
+        new_notes: Option<String>,
     ) -> FacadeResult<()> {
-        // El secreto primero, como en `add`.
-        let change = match new_secret {
-            None => SecretChange::Keep,
-            Some(secret) => SecretChange::Replace(secret_data(secret)?),
+        // El secreto primero, como en `add`: los `String` recibidos se
+        // borran antes de cualquier salida con error.
+        let new_password = new_password.map(secret_from);
+        let new_notes = new_notes.map(secret_from);
+        let change = match (new_password, new_notes) {
+            (None, None) => SecretChange::Keep,
+            (Some(password), None) => SecretChange::ReplacePassword(password),
+            (None, Some(notes)) => SecretChange::ReplaceNotes(Some(notes)),
+            (Some(password), Some(notes)) => {
+                SecretChange::Replace(Secret::new(password, Some(notes))?)
+            }
         };
         let id = entry_id_from_hex(&id)?;
         let search = search_data(&input)?;
         self.with_vault(|vault| vault.edit(id, search, change))
+    }
+
+    /// Datos de búsqueda y fechas de una entrada, desde la caché del núcleo:
+    /// no toca el disco ni el secreto. Un id que no está en la lista da
+    /// `EntryNotFound`.
+    pub fn entry(&self, id: String) -> FacadeResult<EntrySummary> {
+        let id = entry_id_from_hex(&id)?;
+        self.with_vault(|vault| vault.entry(id).map(EntrySummary::from))
     }
 
     pub fn delete(&self, id: String) -> FacadeResult<()> {

@@ -84,8 +84,13 @@ class FakeVaultSession implements VaultSession {
   Future<void> edit({
     required String id,
     required EntryInput input,
-    NewSecret? newSecret,
+    String? newPassword,
+    String? newNotes,
   }) => throw UnimplementedError();
+
+  @override
+  Future<EntrySummary> entry({required String id}) =>
+      throw UnimplementedError();
 
   @override
   Future<void> exportBackup({required String dest}) =>

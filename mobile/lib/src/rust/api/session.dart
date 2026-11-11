@@ -22,13 +22,22 @@ abstract class VaultSession implements RustOpaqueInterface {
 
   Future<void> delete({required String id});
 
-  /// Reemplaza los datos de búsqueda. Con `new_secret` en `None` conserva
-  /// el secreto (no sale del núcleo); con `Some`, lo reemplaza.
+  /// Reemplaza los datos de búsqueda. Con `new_password` y `new_notes` en
+  /// `None` conserva el secreto, que no sale del núcleo. Con uno solo,
+  /// reemplaza esa parte y la otra no sale del núcleo. Con los dos,
+  /// reemplaza el secreto completo (repara una entrada dañada). Unas notas
+  /// en blanco las quitan.
   Future<void> edit({
     required String id,
     required EntryInput input,
-    NewSecret? newSecret,
+    String? newPassword,
+    String? newNotes,
   });
+
+  /// Datos de búsqueda y fechas de una entrada, desde la caché del núcleo:
+  /// no toca el disco ni el secreto. Un id que no está en la lista da
+  /// `EntryNotFound`.
+  Future<EntrySummary> entry({required String id});
 
   /// Exporta un respaldo a `dest`, que debe ser absoluta y no existir.
   /// Exige la bóveda desbloqueada.

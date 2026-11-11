@@ -97,9 +97,6 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   PlatformInt64? dco_decode_opt_box_autoadd_i_64(dynamic raw);
 
   @protected
-  NewSecret? dco_decode_opt_box_autoadd_new_secret(dynamic raw);
-
-  @protected
   PasswordStrength dco_decode_password_strength(dynamic raw);
 
   @protected
@@ -187,11 +184,6 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   PlatformInt64? sse_decode_opt_box_autoadd_i_64(SseDeserializer deserializer);
-
-  @protected
-  NewSecret? sse_decode_opt_box_autoadd_new_secret(
-    SseDeserializer deserializer,
-  );
 
   @protected
   PasswordStrength sse_decode_password_strength(SseDeserializer deserializer);
@@ -298,12 +290,6 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void sse_encode_opt_box_autoadd_i_64(
     PlatformInt64? self,
-    SseSerializer serializer,
-  );
-
-  @protected
-  void sse_encode_opt_box_autoadd_new_secret(
-    NewSecret? self,
     SseSerializer serializer,
   );
 
