@@ -14,9 +14,16 @@ import 'package:flutter_test/flutter_test.dart';
 /// Reporte de desbloqueo sin entradas dañadas.
 const emptyReport = UnlockReport(corrupt: [], unidentifiedCorrupt: 0);
 
-/// Sesión simulada. `create`, `open`, `unlock`, `unlockWithKey`,
-/// `exportVaultKey`, `lock`, `isLocked` y `search` hacen algo; el resto lanza
-/// `UnimplementedError` para que una llamada inesperada falle la prueba.
+/// Id que devuelve `add` por omisión en la sesión simulada.
+const fakeNewId = '000000000000000000000000000000aa';
+
+/// Contraseña y notas de prueba que revela la sesión simulada por omisión.
+const fakePassword = 'secreta-de-prueba';
+const fakeNotes = 'notas de prueba';
+
+/// Sesión simulada. Los respaldos (`exportBackup`, `importBackup`) lanzan
+/// `UnimplementedError` para que una llamada inesperada falle la prueba; el
+/// resto registra sus llamadas y hace lo que diga su `on…`.
 ///
 /// Lleva el estado de bloqueo como la fachada: [locked] empieza en `true`,
 /// `create`, `unlock` y `unlockWithKey` lo ponen en `false` al terminar con
@@ -73,12 +80,48 @@ class FakeVaultSession implements VaultSession {
   @override
   bool get isDisposed => _disposed;
 
-  @override
-  Future<String> add({required EntryInput input, required NewSecret secret}) =>
-      throw UnimplementedError();
+  /// Llamadas a `add`, en orden.
+  final List<({EntryInput input, NewSecret secret})> addCalls = [];
+
+  /// Lo que hace `add` después de registrar la llamada. Por omisión,
+  /// devuelve [fakeNewId] enseguida.
+  Future<String> Function(EntryInput input, NewSecret secret) onAdd = (
+    _,
+    _,
+  ) async => fakeNewId;
 
   @override
-  Future<void> delete({required String id}) => throw UnimplementedError();
+  Future<String> add({required EntryInput input, required NewSecret secret}) {
+    addCalls.add((input: input, secret: secret));
+    return onAdd(input, secret);
+  }
+
+  /// Ids recibidos por `delete`, en orden.
+  final List<String> deleteCalls = [];
+
+  /// Lo que hace `delete` después de registrar la llamada.
+  Future<void> Function(String id) onDelete = (_) async {};
+
+  @override
+  Future<void> delete({required String id}) {
+    deleteCalls.add(id);
+    return onDelete(id);
+  }
+
+  /// Llamadas a `edit`, en orden.
+  final List<
+    ({String id, EntryInput input, String? newPassword, String? newNotes})
+  >
+  editCalls = [];
+
+  /// Lo que hace `edit` después de registrar la llamada.
+  Future<void> Function(
+    String id,
+    EntryInput input,
+    String? newPassword,
+    String? newNotes,
+  )
+  onEdit = (_, _, _, _) async {};
 
   @override
   Future<void> edit({
@@ -86,11 +129,29 @@ class FakeVaultSession implements VaultSession {
     required EntryInput input,
     String? newPassword,
     String? newNotes,
-  }) => throw UnimplementedError();
+  }) {
+    editCalls.add((
+      id: id,
+      input: input,
+      newPassword: newPassword,
+      newNotes: newNotes,
+    ));
+    return onEdit(id, input, newPassword, newNotes);
+  }
+
+  /// Ids recibidos por `entry`, en orden.
+  final List<String> entryCalls = [];
+
+  /// Lo que hace `entry` después de registrar la llamada. Por omisión, un
+  /// resumen de "Servicio" con ese id.
+  Future<EntrySummary> Function(String id) onEntry = (id) async =>
+      _summary('Servicio', id: id);
 
   @override
-  Future<EntrySummary> entry({required String id}) =>
-      throw UnimplementedError();
+  Future<EntrySummary> entry({required String id}) {
+    entryCalls.add(id);
+    return onEntry(id);
+  }
 
   @override
   Future<void> exportBackup({required String dest}) =>
@@ -144,13 +205,30 @@ class FakeVaultSession implements VaultSession {
     if (lockError case final error?) throw error;
   }
 
-  @override
-  Future<String?> revealNotes({required String id}) =>
-      throw UnimplementedError();
+  /// Ids recibidos por `revealNotes`, en orden.
+  final List<String> revealNotesCalls = [];
+
+  /// Lo que hace `revealNotes`. Por omisión, [fakeNotes].
+  Future<String?> Function(String id) onRevealNotes = (_) async => fakeNotes;
 
   @override
-  Future<String> revealPassword({required String id}) =>
-      throw UnimplementedError();
+  Future<String?> revealNotes({required String id}) {
+    revealNotesCalls.add(id);
+    return onRevealNotes(id);
+  }
+
+  /// Ids recibidos por `revealPassword`, en orden.
+  final List<String> revealPasswordCalls = [];
+
+  /// Lo que hace `revealPassword`. Por omisión, [fakePassword].
+  Future<String> Function(String id) onRevealPassword = (_) async =>
+      fakePassword;
+
+  @override
+  Future<String> revealPassword({required String id}) {
+    revealPasswordCalls.add(id);
+    return onRevealPassword(id);
+  }
 
   /// Textos recibidos por `search`, en orden.
   final List<String> searchCalls = [];
@@ -173,6 +251,10 @@ class FakeVaultSession implements VaultSession {
     return report;
   }
 }
+
+/// [entry] con otro nombre: dentro de [FakeVaultSession], `entry` es el
+/// método de la sesión y oculta la función.
+const _summary = entry;
 
 /// `EntrySummary` de prueba. Sin [id], uno de 32 caracteres hexadecimales
 /// derivado del servicio: único mientras los servicios de la prueba lo sean.
