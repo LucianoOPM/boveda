@@ -133,7 +133,10 @@ class _SearchScreenState extends State<SearchScreen> {
                 // La tecla "buscar" no quita el foco.
                 onEditingComplete: () {},
                 onChanged: _onChanged,
-                enableSuggestions: false,
+                // Con false, Flutter marca el campo en Android como contraseña
+                // visible (VISIBLE_PASSWORD) y el teclado muestra la fila de
+                // números. Sin aprendizaje del teclado, sus sugerencias no
+                // guardan lo que se busca.
                 autocorrect: false,
                 enableIMEPersonalizedLearning: false,
                 decoration: InputDecoration(

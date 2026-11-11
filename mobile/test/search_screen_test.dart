@@ -276,7 +276,9 @@ void main() {
   testWidgets('configuración del teclado', (tester) async {
     await pumpSearch(tester);
     final field = tester.widget<TextField>(searchField);
-    expect(field.enableSuggestions, isFalse);
+    // En Android, enableSuggestions: false agrega VISIBLE_PASSWORD y Gboard
+    // muestra el teclado de contraseña, con la fila de números.
+    expect(field.enableSuggestions, isTrue);
     expect(field.autocorrect, isFalse);
     expect(field.enableIMEPersonalizedLearning, isFalse);
     expect(field.textInputAction, TextInputAction.search);

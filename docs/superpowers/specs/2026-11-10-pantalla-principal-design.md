@@ -54,7 +54,7 @@ Verificado con Context7 (flutter_rust_bridge v2.13.0, API de Flutter, sitio de F
    - Las etiquetas no se muestran.
    - La lista respeta el orden de `search`: Dart no reordena ni filtra.
    - No se extrae el dominio en Dart: `Uri.tryParse("gmail.com").host` da vacío sin esquema, justo el caso que `domain()` del núcleo resuelve a mano, y duplicaría una regla de la especificación con otro comportamiento. Si el dominio hace falta en la interfaz, se expone desde la fachada en su propia issue.
-3. **Teclado del campo de búsqueda.** `enableSuggestions`, `autocorrect` y `enableIMEPersonalizedLearning` en `false`, para que el teclado no aprenda qué servicios se buscan. Acción "buscar" sin efecto. El ✕ aparece solo con texto, borra el texto y deja el foco en el campo.
+3. **Teclado del campo de búsqueda.** `autocorrect` y `enableIMEPersonalizedLearning` en `false`, para que el teclado no corrija ni aprenda qué servicios se buscan; `enableSuggestions` queda en `true`. **Cambiado tras la prueba en el celular:** al principio también era `false`, pero en Android Flutter traduce `enableSuggestions: false` a `TYPE_TEXT_FLAG_NO_SUGGESTIONS` más `TYPE_TEXT_VARIATION_VISIBLE_PASSWORD` (`TextInputPlugin.java`), y Gboard muestra el teclado de contraseña, con la fila de números. El usuario prefirió el teclado normal: sin aprendizaje, las sugerencias del diccionario general no guardan lo que se busca. Acción "buscar" sin efecto. El ✕ aparece solo con texto, borra el texto y deja el foco en el campo.
 4. **Crear y ajustes.** No se muestran hasta la #41 y la #44; tocar una entrada no hace nada por ahora. El texto del estado vacío no menciona ningún botón.
 5. **Cerrar el teclado** (pendiente de la #41, se resuelve aquí):
    - En la lista, `keyboardDismissBehavior: onDrag`.
@@ -158,7 +158,6 @@ ActivityTextField(
   textInputAction: TextInputAction.search,
   onEditingComplete: () {}, // la tecla "buscar" no quita el foco
   onChanged: _onChanged,
-  enableSuggestions: false,
   autocorrect: false,
   enableIMEPersonalizedLearning: false,
   decoration: InputDecoration(
@@ -260,7 +259,7 @@ La pantalla montada sola, con el doble:
 | Tras `dispose` | Una respuesta que llega con la pantalla desmontada no lanza nada |
 | ✕ | No aparece sin texto; aparece al escribir con la búsqueda pendiente; tocarlo borra, deja el foco y busca `''`; tras perder el foco al desplazar, tocarlo lo devuelve |
 | Tecla "buscar" | `testTextInput.receiveAction(TextInputAction.search)` → el campo sigue con el foco |
-| Teclado | El `TextField` tiene `enableSuggestions`, `autocorrect` y `enableIMEPersonalizedLearning` en `false`, y `TextInputAction.search` |
+| Teclado | El `TextField` tiene `autocorrect` y `enableIMEPersonalizedLearning` en `false`, `enableSuggestions` en `true` y `TextInputAction.search` |
 | Foco | Al montar, el campo no tiene el foco |
 | Cerrar teclado | Desplazar la lista (con entradas suficientes para desplazarla), tocar una entrada y tocar un espacio vacío quitan el foco |
 | Aviso | Con `damagedEntries: 2`, el aviso arriba de la lista; con 0, nada |
