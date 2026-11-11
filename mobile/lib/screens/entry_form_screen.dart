@@ -124,6 +124,25 @@ class _EntryFormScreenState extends State<EntryFormScreen> {
 
   void _pendingTagChanged() => _changed(_FormField.tags);
 
+  /// La ruta de esta pantalla, para saber si sigue en el `Navigator`.
+  ModalRoute<Object?>? _route;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _route = ModalRoute.of(context);
+  }
+
+  /// La ruta de esta pantalla sigue en el `Navigator`. Tras cada `await` se
+  /// comprueba junto con `mounted`.
+  ///
+  /// `mounted` no basta tras un `await`: el bloqueo quita la ruta en el
+  /// acto, pero el `State` sigue montado hasta el siguiente cuadro, y con la
+  /// app oculta no hay cuadros. Una respuesta que llegara en esa ventana
+  /// haría `pop` sobre la ruta de debajo (la raíz) o llamaría a `onCreated`,
+  /// que reemplazaría esa ruta por el detalle.
+  bool get _routeActive => _route?.isActive ?? true;
+
   @override
   void dispose() {
     _pendingTag.removeListener(_pendingTagChanged);
@@ -184,7 +203,7 @@ class _EntryFormScreenState extends State<EntryFormScreen> {
   /// campo desactivado no lo acepta.
   void _focusAfterBuild(_FormField field) {
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) _focus[field]!.requestFocus();
+      if (mounted && _routeActive) _focus[field]!.requestFocus();
     });
   }
 
@@ -223,14 +242,14 @@ class _EntryFormScreenState extends State<EntryFormScreen> {
     });
     try {
       final notes = await widget.session.revealNotes(id: widget.entry!.id);
-      if (!mounted) return;
+      if (!mounted || !_routeActive) return;
       setState(() {
         _notes.text = notes ?? '';
         _notesOpen = true;
         _loadingNotes = false;
       });
     } catch (e) {
-      if (!mounted) return;
+      if (!mounted || !_routeActive) return;
       if (e == VaultError.corruptEntry) {
         _enterRepair();
         return;
@@ -276,11 +295,11 @@ class _EntryFormScreenState extends State<EntryFormScreen> {
           newPassword: _showPassword ? _password.text : null,
           newNotes: _showNotes ? _notes.text : null,
         );
-        if (!mounted) return;
+        if (!mounted || !_routeActive) return;
         Navigator.of(context).pop(true);
       }
     } catch (e) {
-      if (!mounted) return;
+      if (!mounted || !_routeActive) return;
       _onSaveError(e);
     }
   }
@@ -290,17 +309,17 @@ class _EntryFormScreenState extends State<EntryFormScreen> {
       input: input,
       secret: NewSecret(password: _password.text, notes: _notes.text),
     );
-    if (!mounted) return;
+    if (!mounted || !_routeActive) return;
     final EntrySummary created;
     try {
       created = await widget.session.entry(id: id);
     } catch (e) {
       // La entrada ya está guardada: sin su resumen, se vuelve a la lista.
       if (kDebugMode && e is! VaultError) debugPrint('entry: ${e.runtimeType}');
-      if (mounted) Navigator.of(context).pop();
+      if (mounted && _routeActive) Navigator.of(context).pop();
       return;
     }
-    if (!mounted) return;
+    if (!mounted || !_routeActive) return;
     widget.onCreated!(created);
   }
 
@@ -344,7 +363,7 @@ class _EntryFormScreenState extends State<EntryFormScreen> {
         ],
       ),
     );
-    if (discard == true && mounted) Navigator.of(context).pop();
+    if (discard == true && mounted && _routeActive) Navigator.of(context).pop();
   }
 
   @override

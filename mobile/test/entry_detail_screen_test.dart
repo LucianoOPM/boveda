@@ -222,8 +222,9 @@ void main() {
       await tapAndPump(tester, showPassword);
 
       removeDetailRoute(tester);
-      await tester.pump();
+      // Sin cuadro en medio: al bloquear con la app oculta no los hay.
       pending.complete('tardía');
+      await tester.idle();
       await tester.pump();
 
       expect(tester.takeException(), isNull);
@@ -448,12 +449,48 @@ void main() {
       await tester.pumpAndSettle();
 
       removeDetailRoute(tester);
-      await tester.pump();
+      // Sin cuadro en medio: al bloquear con la app oculta no los hay.
       pending.complete();
+      await tester.idle();
       await tester.pumpAndSettle();
 
       expect(tester.takeException(), isNull);
       expect(find.text('abrir'), findsOneWidget);
+    });
+
+    testWidgets('entryNotFound al revelar, tras quitar la ruta, no saca la '
+        'ruta de debajo', (tester) async {
+      final pending = Completer<String>();
+      session.onRevealPassword = (_) => pending.future;
+      await pumpDetail(tester);
+      await tapAndPump(tester, showPassword);
+
+      removeDetailRoute(tester);
+      // Sin cuadro en medio: al bloquear con la app oculta no los hay.
+      pending.completeError(VaultError.entryNotFound);
+      await tester.idle();
+      await tester.pumpAndSettle();
+
+      expect(tester.takeException(), isNull);
+      expect(find.text('abrir'), findsOneWidget);
+    });
+
+    testWidgets('con un servicio de 256 caracteres en una pantalla chica, '
+        'el diálogo no desborda y "Eliminar" se puede tocar', (tester) async {
+      tester.view.physicalSize = const Size(360, 640);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      final long = entry('s' * 256);
+      await pumpDetail(tester, of: long);
+      await tester.tap(deleteAction);
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+
+      await tester.ensureVisible(confirm);
+      await tester.tap(confirm);
+      await tester.pumpAndSettle();
+      expect(session.deleteCalls, [long.id]);
+      expect(detail, findsNothing);
     });
 
     testWidgets('desde el aviso de dañada también se elimina', (tester) async {

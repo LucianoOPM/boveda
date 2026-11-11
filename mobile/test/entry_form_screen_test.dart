@@ -275,13 +275,16 @@ void main() {
       await save(tester);
 
       removeFormRoute(tester);
-      await tester.pump();
+      // Sin cuadro en medio: al bloquear con la app oculta no los hay.
       pending.complete(fakeNewId);
+      await tester.idle();
       await tester.pumpAndSettle();
 
       expect(tester.takeException(), isNull);
       expect(created, isEmpty);
       expect(session.entryCalls, isEmpty);
+      // No sacó la ruta que quedó debajo.
+      expect(find.text('abrir'), findsOneWidget);
     });
   });
 
@@ -453,10 +456,12 @@ void main() {
       await tapVisible(tester, editNotes);
 
       removeFormRoute(tester);
-      await tester.pump();
+      // Sin cuadro en medio: al bloquear con la app oculta no los hay.
       pending.complete('tardías');
+      await tester.idle();
       await tester.pumpAndSettle();
       expect(tester.takeException(), isNull);
+      expect(find.text('abrir'), findsOneWidget);
     });
   });
 
@@ -685,8 +690,9 @@ void main() {
       await save(tester);
 
       removeFormRoute(tester);
-      await tester.pump();
+      // Sin cuadro en medio: al bloquear con la app oculta no los hay.
       pending.complete();
+      await tester.idle();
       await tester.pumpAndSettle();
 
       expect(tester.takeException(), isNull);

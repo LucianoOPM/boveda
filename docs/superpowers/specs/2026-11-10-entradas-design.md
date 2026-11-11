@@ -505,6 +505,8 @@ mobile/integration_test/vault_session_test.dart
 8. **Precedencia en `edit`.** Como el valor nuevo se valida antes de leer la fila, un valor no válido sobre un id inexistente da `InvalidEntry`, no `EntryNotFound`.
 9. **Las pruebas de `TagsField` viven en `test/tags_field_test.dart`**, no en `widgets_test.dart`.
 10. **`entry` en el doble de sesión.** Dentro de `FakeVaultSession`, el método `entry` oculta la función `entry(...)` que arma resúmenes de prueba; el doble la usa con otro nombre (`_summary`).
+11. **`mounted` no basta tras un `await`** (hallazgo de la revisión final). El bloqueo quita la ruta en el acto, pero el `State` sigue montado hasta el siguiente cuadro, y con la app oculta no hay cuadros. Una respuesta de `add`, `edit`, `delete` o de un revelado que llegara en esa ventana hacía `pop` sobre la ruta de debajo (la raíz, con `VaultGate`) y dejaba la app en blanco al volver. El detalle y el formulario guardan su `ModalRoute` y, tras cada `await`, exigen `mounted` y `route.isActive`. Las pruebas de "respuesta tras quitar la ruta" completan la operación sin ningún cuadro en medio.
+12. **El diálogo de eliminar es desplazable** (`scrollable: true`, hallazgo de la revisión final): con un servicio muy largo, o con la fuente del sistema ampliada, el título dejaba "Eliminar" fuera de la pantalla.
 
 ## PR
 

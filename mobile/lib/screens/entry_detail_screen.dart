@@ -96,6 +96,25 @@ class _EntryDetailScreenState extends State<EntryDetailScreen> {
 
   bool _deleting = false;
 
+  /// La ruta de esta pantalla, para saber si sigue en el `Navigator`.
+  ModalRoute<Object?>? _route;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _route = ModalRoute.of(context);
+  }
+
+  /// La ruta de esta pantalla sigue en el `Navigator`. Tras cada `await` se
+  /// comprueba junto con `mounted`.
+  ///
+  /// `mounted` no basta tras un `await`: el bloqueo quita la ruta en el
+  /// acto, pero el `State` sigue montado hasta el siguiente cuadro, y con la
+  /// app oculta no hay cuadros. Una respuesta que llegara en esa ventana
+  /// haría `pop` sobre la ruta de debajo (la raíz) o guardaría un secreto en
+  /// una pantalla que ya salió.
+  bool get _routeActive => _route?.isActive ?? true;
+
   @override
   void dispose() {
     _password = null;
@@ -118,13 +137,15 @@ class _EntryDetailScreenState extends State<EntryDetailScreen> {
     setState(() => _passwordState = _Reveal.loading);
     try {
       final password = await widget.session.revealPassword(id: _entry.id);
-      if (!mounted || generation != _passwordGeneration) return;
+      if (!mounted || !_routeActive) return;
+      if (generation != _passwordGeneration) return;
       setState(() {
         _password = password;
         _passwordState = _Reveal.shown;
       });
     } catch (e) {
-      if (!mounted || generation != _passwordGeneration) return;
+      if (!mounted || !_routeActive) return;
+      if (generation != _passwordGeneration) return;
       _onRevealError(e, () => _passwordState = _Reveal.failed);
     }
   }
@@ -134,13 +155,13 @@ class _EntryDetailScreenState extends State<EntryDetailScreen> {
     setState(() => _notesState = _Reveal.loading);
     try {
       final notes = await widget.session.revealNotes(id: _entry.id);
-      if (!mounted || generation != _notesGeneration) return;
+      if (!mounted || !_routeActive || generation != _notesGeneration) return;
       setState(() {
         _notes = notes;
         _notesState = _Reveal.shown;
       });
     } catch (e) {
-      if (!mounted || generation != _notesGeneration) return;
+      if (!mounted || !_routeActive || generation != _notesGeneration) return;
       _onRevealError(e, () => _notesState = _Reveal.failed);
     }
   }
@@ -196,16 +217,16 @@ class _EntryDetailScreenState extends State<EntryDetailScreen> {
             repair: repair,
             session: widget.session,
           );
-    if (!mounted || saved != true) return;
+    if (!mounted || !_routeActive || saved != true) return;
     // Tras guardar, el secreto ya no está dañado: lo reemplazó el formulario
     // o se pudo descifrar para conservarlo.
     setState(() => _damaged = false);
     try {
       final fresh = await widget.session.entry(id: _entry.id);
-      if (!mounted) return;
+      if (!mounted || !_routeActive) return;
       setState(() => _entry = fresh);
     } on VaultError catch (e) {
-      if (!mounted) return;
+      if (!mounted || !_routeActive) return;
       if (e == VaultError.entryNotFound) Navigator.of(context).pop();
       // Con otro error se conserva lo que se mostraba.
     } catch (e) {
@@ -219,6 +240,8 @@ class _EntryDetailScreenState extends State<EntryDetailScreen> {
       // En el `Navigator` raíz, que el bloqueo vacía.
       useRootNavigator: true,
       builder: (context) => AlertDialog(
+        // Un servicio largo no debe dejar los botones fuera de la pantalla.
+        scrollable: true,
         title: Text('¿Eliminar «${_entry.service}»?'),
         content: const Text('Esta acción no se puede deshacer.'),
         actions: [
@@ -233,13 +256,13 @@ class _EntryDetailScreenState extends State<EntryDetailScreen> {
         ],
       ),
     );
-    if (confirmed != true || !mounted) return;
+    if (confirmed != true || !mounted || !_routeActive) return;
 
     setState(() => _deleting = true);
     try {
       await widget.session.delete(id: _entry.id);
     } catch (e) {
-      if (!mounted) return;
+      if (!mounted || !_routeActive) return;
       // Ya no estaba: para el usuario, quedó eliminada.
       if (e != VaultError.entryNotFound) {
         setState(() => _deleting = false);
@@ -255,7 +278,7 @@ class _EntryDetailScreenState extends State<EntryDetailScreen> {
         return;
       }
     }
-    if (!mounted) return;
+    if (!mounted || !_routeActive) return;
     Navigator.of(context).pop();
   }
 
