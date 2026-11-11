@@ -7,11 +7,11 @@ import 'package:flutter/services.dart';
 import 'screens/biometric_offer_screen.dart';
 import 'screens/first_run_screen.dart';
 import 'screens/placeholder_screen.dart';
+import 'screens/search_screen.dart';
 import 'screens/unlock_screen.dart';
 import 'services/auto_lock.dart';
 import 'services/biometric_service.dart';
 import 'src/rust/api/session.dart';
-import 'widgets/damaged_entries_banner.dart';
 import 'widgets/strength_indicator.dart';
 
 /// La app: un `MaterialApp` cuyo inicio es [VaultGate].
@@ -102,7 +102,8 @@ enum VaultGateState {
 ///   escribe en un `ActivityTextField`.
 /// - Cada bloqueo sube `_epoch`, la `key` de la pantalla: toda pantalla
 ///   montada sale del árbol y sus `await` pendientes encuentran
-///   `mounted == false`.
+///   `mounted == false`. Así, el texto de búsqueda de [SearchScreen] (la
+///   pantalla del estado `unlocked`, #40) no pasa al siguiente desbloqueo.
 ///
 /// Guarda la sesión, que vive mientras vive la app, y el total de entradas
 /// dañadas del último desbloqueo; nunca una contraseña.
@@ -329,9 +330,9 @@ class _VaultGateState extends State<VaultGate> {
         onUnlocked: (damaged) =>
             _enterUnlocked(VaultGateState.unlocked, damagedEntries: damaged),
       ),
-      VaultGateState.unlocked => PlaceholderScreen(
-        text: 'Pantalla principal: #40',
-        banner: DamagedEntriesBanner(count: _damagedEntries),
+      VaultGateState.unlocked => SearchScreen(
+        session: widget.session,
+        damagedEntries: _damagedEntries,
       ),
       VaultGateState.openFailed => const PlaceholderScreen(
         text: 'No se pudo abrir la bóveda.',

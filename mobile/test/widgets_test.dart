@@ -13,6 +13,8 @@ import 'package:boveda/widgets/strength_indicator.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'fakes.dart';
+
 Future<void> pumpInScaffold(WidgetTester tester, Widget child) {
   return tester.pumpWidget(MaterialApp(home: Scaffold(body: child)));
 }
@@ -168,29 +170,13 @@ void main() {
     expect(find.text('2 entradas no se pudieron leer'), findsNothing);
   });
 
-  testWidgets('PlaceholderScreen muestra el banner y el texto', (tester) async {
+  testWidgets('PlaceholderScreen muestra el texto', (tester) async {
     await tester.pumpWidget(
       const MaterialApp(
-        home: PlaceholderScreen(
-          text: 'Pantalla principal: #40',
-          banner: DamagedEntriesBanner(count: 1),
-        ),
+        home: PlaceholderScreen(text: 'No se pudo abrir la bóveda.'),
       ),
     );
-    expect(find.text('1 entrada no se pudo leer'), findsOneWidget);
-    expect(find.text('Pantalla principal: #40'), findsOneWidget);
-  });
-
-  testWidgets('PlaceholderScreen sin banner muestra solo el texto', (
-    tester,
-  ) async {
-    await tester.pumpWidget(
-      const MaterialApp(
-        home: PlaceholderScreen(text: 'Pantalla principal: #40'),
-      ),
-    );
-    expect(find.text('Pantalla principal: #40'), findsOneWidget);
-    expect(find.byType(MaterialBanner), findsNothing);
+    expect(find.text('No se pudo abrir la bóveda.'), findsOneWidget);
   });
 
   group('bloqueo automático', () {
@@ -262,6 +248,129 @@ void main() {
       await tester.enterText(find.byType(TextField), 'a');
       expect(reports[0], 1);
       expect(changes, ['a']);
+    });
+  });
+
+  group('teclado', () {
+    final field = find.byKey(const Key('campo'));
+
+    /// Monta [child] arriba de un espacio vacío de 200 de alto, donde se
+    /// toca "fuera".
+    Future<void> pumpWithSpace(WidgetTester tester, Widget child) {
+      return tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: Column(
+              children: [
+                child,
+                const SizedBox(key: Key('vacío'), height: 200),
+              ],
+            ),
+          ),
+        ),
+      );
+    }
+
+    Future<void> tapEmpty(WidgetTester tester) async {
+      await tester.tapAt(tester.getCenter(find.byKey(const Key('vacío'))));
+      await tester.pump();
+    }
+
+    testWidgets('ActivityTextField: tocar fuera quita el foco', (tester) async {
+      final controller = TextEditingController();
+      addTearDown(controller.dispose);
+      await pumpWithSpace(
+        tester,
+        ActivityTextField(key: const Key('campo'), controller: controller),
+      );
+      await tester.tap(field);
+      await tester.pump();
+      expect(fieldHasFocus(tester, field), isTrue);
+
+      await tapEmpty(tester);
+      expect(fieldHasFocus(tester, field), isFalse);
+    });
+
+    testWidgets(
+      'ActivityTextField: tocar un TextFieldTapRegion vecino no quita el foco',
+      (tester) async {
+        final controller = TextEditingController();
+        addTearDown(controller.dispose);
+        var pressed = 0;
+        await pumpWithSpace(
+          tester,
+          Column(
+            children: [
+              ActivityTextField(
+                key: const Key('campo'),
+                controller: controller,
+              ),
+              TextFieldTapRegion(
+                child: TextButton(
+                  key: const Key('vecino'),
+                  onPressed: () => pressed++,
+                  child: const Text('Vecino'),
+                ),
+              ),
+            ],
+          ),
+        );
+        await tester.tap(field);
+        await tester.pump();
+
+        await tester.tap(find.byKey(const Key('vecino')));
+        await tester.pump();
+        expect(pressed, 1);
+        expect(fieldHasFocus(tester, field), isTrue);
+      },
+    );
+
+    testWidgets('ActivityTextField pasa onEditingComplete', (tester) async {
+      final controller = TextEditingController();
+      addTearDown(controller.dispose);
+      var completed = 0;
+      await pumpWithSpace(
+        tester,
+        ActivityTextField(
+          key: const Key('campo'),
+          controller: controller,
+          textInputAction: TextInputAction.search,
+          onEditingComplete: () => completed++,
+        ),
+      );
+      await tester.tap(field);
+      await tester.pump();
+      expect(fieldHasFocus(tester, field), isTrue);
+
+      await tester.testTextInput.receiveAction(TextInputAction.search);
+      await tester.pump();
+      expect(completed, 1);
+      expect(fieldHasFocus(tester, field), isTrue);
+    });
+
+    testWidgets('PasswordField: el ojo no quita el foco y tocar fuera sí', (
+      tester,
+    ) async {
+      final controller = TextEditingController();
+      addTearDown(controller.dispose);
+      await pumpWithSpace(
+        tester,
+        PasswordField(
+          key: const Key('campo'),
+          controller: controller,
+          label: 'Contraseña',
+        ),
+      );
+      await tester.tap(find.byType(TextField));
+      await tester.pump();
+      expect(fieldHasFocus(tester, field), isTrue);
+
+      await tester.tap(find.byTooltip('Mostrar contraseña'));
+      await tester.pump();
+      expect(fieldHasFocus(tester, field), isTrue);
+
+      await tapEmpty(tester);
+      expect(fieldHasFocus(tester, field), isFalse);
     });
   });
 }

@@ -8,12 +8,14 @@ import 'package:boveda/src/rust/api/error.dart';
 import 'package:boveda/src/rust/api/entries.dart';
 import 'package:boveda/src/rust/api/password.dart';
 import 'package:boveda/src/rust/api/session.dart';
+import 'package:flutter/widgets.dart';
+import 'package:flutter_test/flutter_test.dart';
 
 /// Reporte de desbloqueo sin entradas dañadas.
 const emptyReport = UnlockReport(corrupt: [], unidentifiedCorrupt: 0);
 
 /// Sesión simulada. `create`, `open`, `unlock`, `unlockWithKey`,
-/// `exportVaultKey`, `lock` e `isLocked` hacen algo; el resto lanza
+/// `exportVaultKey`, `lock`, `isLocked` y `search` hacen algo; el resto lanza
 /// `UnimplementedError` para que una llamada inesperada falle la prueba.
 ///
 /// Lleva el estado de bloqueo como la fachada: [locked] empieza en `true`,
@@ -145,9 +147,18 @@ class FakeVaultSession implements VaultSession {
   Future<String> revealPassword({required String id}) =>
       throw UnimplementedError();
 
+  /// Textos recibidos por `search`, en orden.
+  final List<String> searchCalls = [];
+
+  /// Lo que hace `search` después de registrar la llamada. Por omisión,
+  /// ninguna entrada, enseguida.
+  Future<List<EntrySummary>> Function(String query) onSearch = (_) async => [];
+
   @override
-  Future<List<EntrySummary>> search({required String query}) =>
-      throw UnimplementedError();
+  Future<List<EntrySummary>> search({required String query}) {
+    searchCalls.add(query);
+    return onSearch(query);
+  }
 
   @override
   Future<UnlockReport> unlock({required String password}) async {
@@ -156,6 +167,27 @@ class FakeVaultSession implements VaultSession {
     locked = false;
     return report;
   }
+}
+
+/// `EntrySummary` de prueba. Sin [id], uno de 32 caracteres hexadecimales
+/// derivado del servicio: único mientras los servicios de la prueba lo sean.
+EntrySummary entry(
+  String service, {
+  String? id,
+  String? username,
+  String? url,
+  List<String> tags = const [],
+  int? lastUsedAt,
+}) {
+  return EntrySummary(
+    id: id ?? service.hashCode.toRadixString(16).padLeft(32, '0'),
+    service: service,
+    url: url,
+    username: username,
+    tags: tags,
+    modifiedAt: 0,
+    lastUsedAt: lastUsedAt,
+  );
 }
 
 /// La regla del núcleo por longitud. Las pruebas usan solo ASCII, así que
@@ -240,3 +272,11 @@ class FakeBiometricService implements BiometricService {
     enabled = false;
   }
 }
+
+/// Si el campo de texto dentro de [field] tiene el foco.
+bool fieldHasFocus(WidgetTester tester, Finder field) => tester
+    .widget<EditableText>(
+      find.descendant(of: field, matching: find.byType(EditableText)),
+    )
+    .focusNode
+    .hasFocus;

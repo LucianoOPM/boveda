@@ -9,8 +9,15 @@ import '../services/auto_lock.dart';
 /// la bóveda a mitad de la edición. En las pantallas de la bóveda, todo
 /// campo de texto es este o `PasswordField`, que se arma sobre él.
 ///
-/// Los parámetros se pasan tal cual al `TextField`, con sus mismos valores
-/// por omisión. Fuera de un `AutoLockScope`, no reporta nada.
+/// Tocar fuera de cualquier campo cierra el teclado: en Android, Flutter no
+/// quita el foco por omisión con un toque de dedo (#40). Los íconos de la
+/// decoración (el ojo de `PasswordField`, el ✕ de la búsqueda) ya están
+/// dentro de la región del campo; los controles del formulario que no deben
+/// cerrarlo (botón de envío, casillas) se envuelven en `TextFieldTapRegion`,
+/// que comparte el grupo de todos los campos.
+///
+/// Los demás parámetros se pasan tal cual al `TextField`, con sus mismos
+/// valores por omisión. Fuera de un `AutoLockScope`, no reporta nada.
 class ActivityTextField extends StatelessWidget {
   const ActivityTextField({
     super.key,
@@ -19,6 +26,7 @@ class ActivityTextField extends StatelessWidget {
     this.onChanged,
     this.textInputAction,
     this.onSubmitted,
+    this.onEditingComplete,
     this.focusNode,
     this.obscureText = false,
     this.enableSuggestions = true,
@@ -34,6 +42,7 @@ class ActivityTextField extends StatelessWidget {
   final ValueChanged<String>? onChanged;
   final TextInputAction? textInputAction;
   final ValueChanged<String>? onSubmitted;
+  final VoidCallback? onEditingComplete;
   final FocusNode? focusNode;
   final bool obscureText;
   final bool enableSuggestions;
@@ -54,6 +63,9 @@ class ActivityTextField extends StatelessWidget {
       },
       textInputAction: textInputAction,
       onSubmitted: onSubmitted,
+      onEditingComplete: onEditingComplete,
+      // Solo se llama con el campo enfocado: `primaryFocus` es este campo.
+      onTapOutside: (_) => FocusManager.instance.primaryFocus?.unfocus(),
       focusNode: focusNode,
       obscureText: obscureText,
       enableSuggestions: enableSuggestions,

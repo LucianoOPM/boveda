@@ -172,17 +172,20 @@ class _FirstRunScreenState extends State<FirstRunScreen> {
                   onChanged: _onConfirmChanged,
                 ),
                 const SizedBox(height: 16),
-                CheckboxListTile(
-                  key: const Key('first-run-accept'),
-                  value: _accepted,
-                  onChanged: _creating
-                      ? null
-                      : (value) => setState(() => _accepted = value ?? false),
-                  controlAffinity: ListTileControlAffinity.leading,
-                  contentPadding: EdgeInsets.zero,
-                  title: const Text(
-                    'Entiendo que si olvido la contraseña maestra pierdo el '
-                    'acceso a la bóveda. No se puede recuperar.',
+                // En el grupo del campo: tocarlo no cierra el teclado.
+                TextFieldTapRegion(
+                  child: CheckboxListTile(
+                    key: const Key('first-run-accept'),
+                    value: _accepted,
+                    onChanged: _creating
+                        ? null
+                        : (value) => setState(() => _accepted = value ?? false),
+                    controlAffinity: ListTileControlAffinity.leading,
+                    contentPadding: EdgeInsets.zero,
+                    title: const Text(
+                      'Entiendo que si olvido la contraseña maestra pierdo el '
+                      'acceso a la bóveda. No se puede recuperar.',
+                    ),
                   ),
                 ),
                 if (_error case final error?) ...[
@@ -190,22 +193,27 @@ class _FirstRunScreenState extends State<FirstRunScreen> {
                   Text(error, style: TextStyle(color: theme.colorScheme.error)),
                 ],
                 const SizedBox(height: 24),
-                FilledButton(
-                  key: const Key('first-run-create'),
-                  onPressed: _canCreate ? _create : null,
-                  child: _creating
-                      ? const Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            SizedBox.square(
-                              dimension: 16,
-                              child: CircularProgressIndicator(strokeWidth: 2),
-                            ),
-                            SizedBox(width: 12),
-                            Text('Creando la bóveda…'),
-                          ],
-                        )
-                      : const Text('Crear bóveda'),
+                // En el grupo del campo: tocarlo no cierra el teclado.
+                TextFieldTapRegion(
+                  child: FilledButton(
+                    key: const Key('first-run-create'),
+                    onPressed: _canCreate ? _create : null,
+                    child: _creating
+                        ? const Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              SizedBox.square(
+                                dimension: 16,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                ),
+                              ),
+                              SizedBox(width: 12),
+                              Text('Creando la bóveda…'),
+                            ],
+                          )
+                        : const Text('Crear bóveda'),
+                  ),
                 ),
               ],
             ),
