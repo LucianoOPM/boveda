@@ -282,9 +282,11 @@ void main() {
     expect(field.textInputAction, TextInputAction.search);
   });
 
-  testWidgets('el campo tiene el foco al montar', (tester) async {
+  // Sin foco inicial: el teclado sale cuando el usuario toca el campo (#40,
+  // tras la huella Android descartaba la petición del teclado).
+  testWidgets('el campo no tiene el foco al montar', (tester) async {
     await pumpSearch(tester);
-    expect(searchHasFocus(tester), isTrue);
+    expect(searchHasFocus(tester), isFalse);
   });
 
   testWidgets('desplazar la lista, tocar una entrada o un espacio vacío '
@@ -296,6 +298,8 @@ void main() {
       tester.widget<ListView>(list).keyboardDismissBehavior,
       ScrollViewKeyboardDismissBehavior.onDrag,
     );
+    await tester.tap(searchField);
+    await tester.pump();
     expect(searchHasFocus(tester), isTrue);
 
     await tester.drag(list, const Offset(0, -300));

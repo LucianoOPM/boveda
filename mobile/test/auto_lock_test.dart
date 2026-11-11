@@ -574,6 +574,9 @@ void main() {
 
     testWidgets('escribir en la búsqueda reinicia la cuenta', (tester) async {
       await pumpUnlocked(tester);
+      // El campo no se enfoca solo: se toca antes de empezar a contar.
+      await tester.tap(find.byType(TextField));
+      await tester.pump();
 
       await tester.pump(const Duration(minutes: 4));
       // Sin tocar la pantalla: solo lo que llega del teclado en pantalla.
@@ -601,7 +604,7 @@ void main() {
         isEmpty,
       );
       expect(session.searchCalls.last, '');
-      expect(fieldHasFocus(tester, find.byType(SearchScreen)), isTrue);
+      expect(fieldHasFocus(tester, find.byType(SearchScreen)), isFalse);
     });
 
     testWidgets('14 en el desbloqueo no corre', (tester) async {

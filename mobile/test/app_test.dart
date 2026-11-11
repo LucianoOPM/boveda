@@ -305,14 +305,14 @@ void main() {
     expect(biometric.calls, isNot(contains("beginEnable")));
   });
 
-  group('foco al llegar a la pantalla principal', () {
+  group('sin foco al llegar a la pantalla principal', () {
     bool searchHasFocus(WidgetTester tester) =>
         fieldHasFocus(tester, find.byType(SearchScreen));
 
     testWidgets('tras desbloquear con contraseña', (tester) async {
       await unlockFromScreen(tester);
       expect(find.byType(SearchScreen), findsOneWidget);
-      expect(searchHasFocus(tester), isTrue);
+      expect(searchHasFocus(tester), isFalse);
     });
 
     testWidgets('tras desbloquear con huella', (tester) async {
@@ -323,7 +323,7 @@ void main() {
       await tester.pumpAndSettle();
       expect(biometric.calls, contains('unlock'));
       expect(find.byType(SearchScreen), findsOneWidget);
-      expect(searchHasFocus(tester), isTrue);
+      expect(searchHasFocus(tester), isFalse);
     });
 
     testWidgets('tras crear sin huella', (tester) async {
@@ -331,7 +331,7 @@ void main() {
       await tester.pumpAndSettle();
       await createFromFirstRun(tester);
       expect(find.byType(SearchScreen), findsOneWidget);
-      expect(searchHasFocus(tester), isTrue);
+      expect(searchHasFocus(tester), isFalse);
     });
 
     testWidgets('tras la oferta de la huella', (tester) async {
@@ -342,7 +342,7 @@ void main() {
       await tester.tap(find.byKey(const Key('offer-skip')));
       await tester.pumpAndSettle();
       expect(find.byType(SearchScreen), findsOneWidget);
-      expect(searchHasFocus(tester), isTrue);
+      expect(searchHasFocus(tester), isFalse);
     });
   });
 }

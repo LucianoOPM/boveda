@@ -28,7 +28,6 @@ class ActivityTextField extends StatelessWidget {
     this.onSubmitted,
     this.onEditingComplete,
     this.focusNode,
-    this.autofocus = false,
     this.obscureText = false,
     this.enableSuggestions = true,
     this.autocorrect = true,
@@ -45,7 +44,6 @@ class ActivityTextField extends StatelessWidget {
   final ValueChanged<String>? onSubmitted;
   final VoidCallback? onEditingComplete;
   final FocusNode? focusNode;
-  final bool autofocus;
   final bool obscureText;
   final bool enableSuggestions;
   final bool autocorrect;
@@ -69,7 +67,6 @@ class ActivityTextField extends StatelessWidget {
       // Solo se llama con el campo enfocado: `primaryFocus` es este campo.
       onTapOutside: (_) => FocusManager.instance.primaryFocus?.unfocus(),
       focusNode: focusNode,
-      autofocus: autofocus,
       obscureText: obscureText,
       enableSuggestions: enableSuggestions,
       autocorrect: autocorrect,

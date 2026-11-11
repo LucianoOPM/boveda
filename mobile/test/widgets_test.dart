@@ -325,9 +325,7 @@ void main() {
       },
     );
 
-    testWidgets('ActivityTextField pasa autofocus y onEditingComplete', (
-      tester,
-    ) async {
+    testWidgets('ActivityTextField pasa onEditingComplete', (tester) async {
       final controller = TextEditingController();
       addTearDown(controller.dispose);
       var completed = 0;
@@ -336,16 +334,12 @@ void main() {
         ActivityTextField(
           key: const Key('campo'),
           controller: controller,
-          autofocus: true,
           textInputAction: TextInputAction.search,
           onEditingComplete: () => completed++,
         ),
       );
+      await tester.tap(field);
       await tester.pump();
-      expect(
-        tester.widget<TextField>(find.byType(TextField)).autofocus,
-        isTrue,
-      );
       expect(fieldHasFocus(tester, field), isTrue);
 
       await tester.testTextInput.receiveAction(TextInputAction.search);

@@ -7,7 +7,7 @@ import '../src/rust/api/session.dart';
 import '../widgets/activity_text_field.dart';
 import '../widgets/damaged_entries_banner.dart';
 
-/// Pantalla principal: barra de búsqueda enfocada y lista filtrada (#40,
+/// Pantalla principal: barra de búsqueda y lista filtrada (#40,
 /// detalle en `docs/superpowers/specs/2026-11-10-pantalla-principal-design.md`).
 ///
 /// Toda la búsqueda la hace el núcleo: cada cambio del texto llama a
@@ -17,9 +17,10 @@ import '../widgets/damaged_entries_banner.dart';
 /// responder en otro orden, cada una lleva una generación y solo se muestra
 /// la de la última.
 ///
-/// El campo se enfoca con `autofocus`: aquí se llega con la animación de
-/// arranque ya terminada (tras la contraseña, la huella o el primer uso), a
-/// diferencia del desbloqueo en frío de la #37.
+/// El campo no se enfoca al llegar: el teclado sale cuando el usuario lo
+/// toca. Tras desbloquear con huella, Android descartaba la petición del
+/// teclado (la ventana del diálogo todavía tenía el foco) y el campo quedaba
+/// enfocado sin teclado; ver "Sin foco inicial" en el diseño de la #40.
 ///
 /// Las entradas dañadas no aparecen en la lista: nunca llegan a la caché de
 /// búsqueda del núcleo. Solo las cuenta [DamagedEntriesBanner], que va
@@ -128,7 +129,6 @@ class _SearchScreenState extends State<SearchScreen> {
               child: ActivityTextField(
                 controller: _query,
                 focusNode: _focus,
-                autofocus: true,
                 textInputAction: TextInputAction.search,
                 // La tecla "buscar" no quita el foco.
                 onEditingComplete: () {},
