@@ -566,3 +566,24 @@ fn partial_secret_replace_survives_reopen() {
         ("clave-nube".to_owned(), None)
     );
 }
+
+#[test]
+fn entry_by_id_on_fixture() {
+    let (_dir, path) = fixture_copy_of("vault-v2.db");
+    let mut vault = Vault::open(&path).unwrap();
+    let id = EntryId::from_bytes([7; 16]);
+    assert_eq!(vault.entry(id).err(), Some(Error::Locked));
+    vault.unlock(&password(FIXTURE_V2_PASSWORD)).unwrap();
+    assert_eq!(vault.entry(id).err(), Some(Error::EntryNotFound));
+
+    let mail = id_of(&vault, "Correo Electrónico");
+    let entry = vault.entry(mail).unwrap();
+    assert_eq!(entry.id(), mail);
+    assert_eq!(entry.search().username(), Some("ana@example.com"));
+    assert_eq!(entry.last_used_at(), None);
+
+    vault.reveal(mail).unwrap();
+    assert!(vault.entry(mail).unwrap().last_used_at().is_some());
+    vault.delete(mail).unwrap();
+    assert_eq!(vault.entry(mail).err(), Some(Error::EntryNotFound));
+}

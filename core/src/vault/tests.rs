@@ -1629,3 +1629,65 @@ fn unlock_and_import_ignore_the_minimum() {
     let (imported, _report) = Vault::import(&backup, &dest, &password("corta")).unwrap();
     assert!(!imported.is_locked());
 }
+
+// --- entry -------------------------------------------------------------
+
+#[test]
+fn entry_matches_entries() {
+    let (_dir, _path, mut vault) = new_vault();
+    add_sample(&mut vault, "gmail");
+    add_sample(&mut vault, "banco");
+    for expected in vault.entries().unwrap() {
+        let found = vault.entry(expected.id()).unwrap();
+        assert_eq!(found.id(), expected.id());
+        assert!(found.search() == expected.search());
+        assert_eq!(found.modified_at(), expected.modified_at());
+        assert_eq!(found.last_used_at(), expected.last_used_at());
+    }
+}
+
+#[test]
+fn entry_reflects_edit_and_reveal() {
+    let (_dir, _path, mut vault) = new_vault();
+    let id = add_sample(&mut vault, "gmail");
+    assert_eq!(vault.entry(id).unwrap().last_used_at(), None);
+
+    vault
+        .edit(id, search_with_tags("correo", &["x"]), SecretChange::Keep)
+        .unwrap();
+    assert_eq!(vault.entry(id).unwrap().search().service(), "correo");
+
+    vault.reveal(id).unwrap();
+    assert!(vault.entry(id).unwrap().last_used_at().is_some());
+}
+
+#[test]
+fn entry_not_found_cases() {
+    let (_dir, path, mut vault) = new_vault();
+    let deleted = add_sample(&mut vault, "borrada");
+    let damaged = add_sample(&mut vault, "dañada");
+    vault.delete(deleted).unwrap();
+    tamper(&path, damaged, "search");
+    assert_eq!(relock(&mut vault).corrupt, vec![damaged]);
+
+    for id in [EntryId::from_bytes([7; 16]), deleted, damaged] {
+        assert_eq!(vault.entry(id).err(), Some(Error::EntryNotFound));
+    }
+}
+
+#[test]
+fn entry_with_corrupt_secret_is_returned() {
+    let (_dir, path, mut vault) = new_vault();
+    let id = add_sample(&mut vault, "gmail");
+    tamper(&path, id, "secret");
+    relock(&mut vault);
+    assert_eq!(vault.entry(id).unwrap().search().service(), "gmail");
+}
+
+#[test]
+fn entry_locked() {
+    let (_dir, _path, mut vault) = new_vault();
+    let id = add_sample(&mut vault, "gmail");
+    vault.lock();
+    assert_eq!(vault.entry(id).err(), Some(Error::Locked));
+}

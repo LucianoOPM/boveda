@@ -48,7 +48,9 @@ pub enum Error {
     NotAVault,
 
     /// No existe una entrada viva con ese identificador (nunca existió o es
-    /// una lápida).
+    /// una lápida). `Vault::entry`, que solo consulta la caché, también lo
+    /// devuelve para una entrada viva con los datos de búsqueda dañados: no
+    /// puede distinguirla sin leer la fila.
     #[error("entrada no encontrada")]
     EntryNotFound,
 

@@ -274,6 +274,21 @@ impl Vault {
         Ok(&self.unlocked()?.entries)
     }
 
+    /// La entrada con ese id, como en [`Vault::entries`]. Desde la caché: no
+    /// toca el disco ni el secreto.
+    ///
+    /// Un id inexistente, eliminado o con los datos de búsqueda dañados da
+    /// [`Error::EntryNotFound`]: una entrada dañada nunca entra en la caché,
+    /// y distinguirla exigiría leer la fila. Una entrada con solo el secreto
+    /// dañado sí está en la caché y se devuelve.
+    pub fn entry(&self, id: EntryId) -> Result<&EntrySummary> {
+        self.unlocked()?
+            .entries
+            .iter()
+            .find(|e| e.id == id)
+            .ok_or(Error::EntryNotFound)
+    }
+
     /// Entradas que coinciden con `query`, la mejor primero. Sin texto
     /// (vacío o solo espacios), todas: las usadas más recientemente primero.
     ///
