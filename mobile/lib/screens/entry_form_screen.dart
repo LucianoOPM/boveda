@@ -201,9 +201,21 @@ class _EntryFormScreenState extends State<EntryFormScreen> {
 
   /// Lleva el foco a [field] cuando el campo ya volvió a estar activo: un
   /// campo desactivado no lo acepta.
+  ///
+  /// También lo desplaza a la vista: si el campo quedó fuera de la pantalla,
+  /// el usuario solo vería que el botón vuelve a "Guardar".
   void _focusAfterBuild(_FormField field) {
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted && _routeActive) _focus[field]!.requestFocus();
+      if (!mounted || !_routeActive) return;
+      final node = _focus[field]!..requestFocus();
+      final fieldContext = node.context;
+      if (fieldContext != null) {
+        Scrollable.ensureVisible(
+          fieldContext,
+          alignment: 0.2,
+          duration: const Duration(milliseconds: 200),
+        );
+      }
     });
   }
 
@@ -494,9 +506,11 @@ class _EntryFormScreenState extends State<EntryFormScreen> {
     TextInputAction? textInputAction = TextInputAction.next,
     int? minLines,
     int? maxLines = 1,
+    bool copyable = true,
   }) {
     return ActivityTextField(
       key: key,
+      copyable: copyable,
       controller: controller,
       focusNode: _focus[field],
       enabled: enabled,
@@ -582,6 +596,8 @@ class _EntryFormScreenState extends State<EntryFormScreen> {
           textInputAction: TextInputAction.newline,
           minLines: 3,
           maxLines: 8,
+          // Son parte del secreto: no se copian desde el formulario.
+          copyable: false,
         ),
         if (!_secretRequired)
           _cancelButton(

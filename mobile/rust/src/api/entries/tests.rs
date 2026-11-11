@@ -283,7 +283,11 @@ fn edit_converts_secret_before_reading_id() {
 }
 
 // Con una sola parte, la validación del valor nuevo la hace el núcleo
-// dentro de `edit`, después del id y de los datos de búsqueda.
+// dentro de `edit`, después del id y de los datos de búsqueda. Por eso
+// `edit_converts_secret_before_reading_id` solo puede observar el orden con
+// los dos valores: con uno solo, que `secret_from` corra antes del id no
+// cambia ningún resultado (el borrado del `String` no es observable desde
+// una prueba) y lo garantiza la lectura del código.
 #[test]
 fn edit_single_part_reports_invalid_value() {
     let (_dir, session) = unlocked_fixture();

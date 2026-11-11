@@ -1,13 +1,12 @@
 // Dobles escritos a mano para las pruebas de widgets: reemplazan la sesión
 // de Rust y la regla de fortaleza sin cargar la librería nativa.
 
-import 'dart:typed_data';
-
 import 'package:boveda/services/biometric_service.dart';
 import 'package:boveda/src/rust/api/error.dart';
 import 'package:boveda/src/rust/api/entries.dart';
 import 'package:boveda/src/rust/api/password.dart';
 import 'package:boveda/src/rust/api/session.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -367,3 +366,55 @@ bool fieldHasFocus(WidgetTester tester, Finder field) => tester
     )
     .focusNode
     .hasFocus;
+
+/// Simula el portapapeles del sistema y devuelve la lista de textos que la
+/// app copie durante la prueba. Pegar entrega [pasteText].
+List<String> mockClipboard(WidgetTester tester, {String pasteText = 'pegado'}) {
+  final copied = <String>[];
+  tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+    SystemChannels.platform,
+    (call) async {
+      switch (call.method) {
+        case 'Clipboard.setData':
+          copied.add((call.arguments as Map)['text'] as String);
+          return null;
+        case 'Clipboard.getData':
+          return {'text': pasteText};
+        case 'Clipboard.hasStrings':
+          return {'value': true};
+        default:
+          return null;
+      }
+    },
+  );
+  addTearDown(
+    () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+      SystemChannels.platform,
+      null,
+    ),
+  );
+  return copied;
+}
+
+/// Selecciona todo el texto del campo dentro de [field] y envía el atajo
+/// Ctrl+[key] de un teclado físico.
+Future<void> selectAllAndPress(
+  WidgetTester tester,
+  Finder field,
+  LogicalKeyboardKey key,
+) async {
+  final editable = tester.widget<EditableText>(
+    find.descendant(of: field, matching: find.byType(EditableText)),
+  );
+  editable.focusNode.requestFocus();
+  await tester.pump();
+  editable.controller.selection = TextSelection(
+    baseOffset: 0,
+    extentOffset: editable.controller.text.length,
+  );
+  await tester.pump();
+  await tester.sendKeyDownEvent(LogicalKeyboardKey.control);
+  await tester.sendKeyEvent(key);
+  await tester.sendKeyUpEvent(LogicalKeyboardKey.control);
+  await tester.pump();
+}

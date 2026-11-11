@@ -9,6 +9,7 @@ import 'package:boveda/src/rust/api/error.dart';
 import 'package:boveda/widgets/strength_indicator.dart';
 import 'package:boveda/widgets/tags_field.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'fakes.dart';
@@ -447,6 +448,18 @@ void main() {
       expect(textOf(tester, notes), 'ahora sí');
     });
 
+    testWidgets('locked al cargar las notas no muestra nada y deja '
+        'reintentar', (tester) async {
+      session.onRevealNotes = (_) async => throw VaultError.locked;
+      await pumpForm(tester, editing: gmail);
+      await tapVisible(tester, editNotes);
+
+      expect(find.text(notesFailedText), findsNothing);
+      expect(find.text(repairText), findsNothing);
+      expect(notes, findsNothing);
+      expect(tester.widget<TextButton>(editNotes).onPressed, isNotNull);
+    });
+
     testWidgets('revealNotes que termina tras quitar la ruta no lanza', (
       tester,
     ) async {
@@ -815,6 +828,77 @@ void main() {
 
       await tapEmpty(tester);
       expect(fieldHasFocus(tester, service), isFalse);
+    });
+
+    testWidgets('tocar "Guardar" no quita el foco', (tester) async {
+      // Mientras cargan las notas, "Guardar" está desactivado pero los
+      // campos no: es el único momento en que se puede tocar sin que el
+      // campo pierda el foco por desactivarse.
+      final pending = Completer<String?>();
+      session.onRevealNotes = (_) => pending.future;
+      await pumpForm(tester, editing: gmail);
+      await tester.tap(service);
+      await tester.pump();
+      await tester.tap(editNotes);
+      await tester.pump();
+      expect(saveEnabled(tester), isFalse);
+      expect(fieldHasFocus(tester, service), isTrue);
+
+      await tester.tap(saveButton);
+      await tester.pump();
+      expect(fieldHasFocus(tester, service), isTrue);
+      expect(session.editCalls, isEmpty);
+
+      pending.complete(null);
+      await tester.pump();
+    });
+
+    testWidgets('las notas cargadas y la contraseña nueva no se pueden '
+        'copiar ni cortar', (tester) async {
+      final copied = mockClipboard(tester);
+      await pumpForm(tester, editing: gmail);
+      await tapVisible(tester, editNotes);
+      expect(textOf(tester, notes), fakeNotes);
+
+      await selectAllAndPress(tester, notes, LogicalKeyboardKey.keyC);
+      await selectAllAndPress(tester, notes, LogicalKeyboardKey.keyX);
+      expect(copied, isEmpty);
+      expect(textOf(tester, notes), fakeNotes);
+
+      await tapVisible(tester, changePassword);
+      await enter(tester, password, 'nueva-clave');
+      await tester.tap(find.byTooltip('Mostrar contraseña'));
+      await tester.pump();
+      await selectAllAndPress(tester, password, LogicalKeyboardKey.keyC);
+      expect(copied, isEmpty);
+
+      // Los datos de búsqueda no son secretos: sí se copian.
+      await selectAllAndPress(tester, username, LogicalKeyboardKey.keyC);
+      expect(copied, ['ana@example.com']);
+    });
+
+    testWidgets('el campo con error queda a la vista aunque estuviera '
+        'fuera de la pantalla', (tester) async {
+      tester.view.physicalSize = const Size(360, 420);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      session.onAdd = (_, _) async => throw VaultError.invalidEntryServiceEmpty;
+      await pumpForm(tester);
+      await save(tester);
+      await tester.pumpAndSettle();
+
+      final view = tester.getRect(find.byType(SingleChildScrollView));
+      // El texto escrito y el mensaje de error quedan dentro de la vista (la
+      // etiqueta flotante puede asomar unos píxeles por arriba).
+      final field = tester.getRect(
+        find.descendant(of: service, matching: find.byType(EditableText)),
+      );
+      expect(field.top, greaterThanOrEqualTo(view.top));
+      expect(field.bottom, lessThanOrEqualTo(view.bottom));
+      expect(
+        find.text('El servicio es obligatorio').hitTestable(),
+        findsOneWidget,
+      );
     });
 
     testWidgets('"Guardar" está en el grupo de los campos', (tester) async {

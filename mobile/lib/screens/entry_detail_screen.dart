@@ -176,7 +176,9 @@ class _EntryDetailScreenState extends State<EntryDetailScreen> {
           _damaged = true;
         });
       case VaultError.locked:
-        // Carrera con el bloqueo: la pantalla ya está saliendo.
+        // Carrera con el bloqueo: la pantalla ya está saliendo. Sin mensaje,
+        // y se descarta también lo que estuviera visible: el núcleo ya no
+        // tiene la llave.
         setState(_discardSecrets);
       case VaultError.entryNotFound:
         Navigator.of(context).pop();

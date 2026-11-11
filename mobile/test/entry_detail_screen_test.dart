@@ -335,6 +335,21 @@ void main() {
       expect(detail, findsOneWidget);
     });
 
+    testWidgets('locked descarta también lo que ya estaba visible: el '
+        'núcleo ya no tiene la llave', (tester) async {
+      session.onRevealNotes = (_) async => throw VaultError.locked;
+      await pumpDetail(tester);
+      await tapAndPump(tester, showPassword);
+      expect(find.text(fakePassword), findsOneWidget);
+
+      await tapAndPump(tester, showNotes);
+      expect(find.text(fakePassword), findsNothing);
+      expect(find.text(revealFailedText), findsNothing);
+      expect(find.text(damagedText), findsNothing);
+      expect(showPassword, findsOneWidget);
+      expect(showNotes, findsOneWidget);
+    });
+
     testWidgets('entryNotFound vuelve a la lista', (tester) async {
       session.onRevealNotes = (_) async => throw VaultError.entryNotFound;
       await pumpDetail(tester);
@@ -414,6 +429,21 @@ void main() {
       );
       expect(detail, findsOneWidget);
       expect(enabled(tester, showPassword), isTrue);
+    });
+
+    testWidgets('locked al eliminar no avisa y se queda en el detalle', (
+      tester,
+    ) async {
+      session.onDelete = (_) async => throw VaultError.locked;
+      await pumpDetail(tester);
+      await tester.tap(deleteAction);
+      await tester.pumpAndSettle();
+      await tester.tap(confirm);
+      await tester.pumpAndSettle();
+
+      expect(find.text('No se pudo eliminar. Intenta de nuevo.'), findsNothing);
+      expect(detail, findsOneWidget);
+      expect(tester.widget<IconButton>(deleteButton).onPressed, isNotNull);
     });
 
     testWidgets('mientras elimina, las acciones están desactivadas', (
@@ -619,6 +649,17 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(detail, findsNothing);
+    });
+
+    testWidgets('locked al refrescar no hace nada', (tester) async {
+      session.onEntry = (_) async => throw VaultError.locked;
+      await pumpDetail(tester);
+      await tapAndPump(tester, editAction);
+      await tester.pumpAndSettle();
+
+      expect(tester.takeException(), isNull);
+      expect(detail, findsOneWidget);
+      expect(find.widgetWithText(AppBar, 'Gmail'), findsOneWidget);
     });
 
     testWidgets('si refrescar falla, conserva lo que mostraba', (tester) async {
