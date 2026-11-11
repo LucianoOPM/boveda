@@ -20,7 +20,7 @@ De paso se resuelve el pendiente registrado en la #41 desde la #37: cerrar el te
 
 ### Criterios de aceptación (de la issue)
 
-- Al desbloquear, el teclado aparece con el cursor en la búsqueda.
+- Al desbloquear, el teclado aparece con el cursor en la búsqueda. **Cambiado por decisión del usuario tras la prueba a mano:** la búsqueda no se enfoca al llegar (ver "Sin foco inicial").
 - Escribir "gm" encuentra "Gmail"; un error de una letra también la encuentra.
 - Sin texto, las usadas recientemente aparecen primero.
 - La interfaz no se traba al escribir con unos cientos de entradas (probado en el emulador).
@@ -155,7 +155,6 @@ Mientras llega una búsqueda nueva se siguen viendo los resultados anteriores, s
 ActivityTextField(
   controller: _query,
   focusNode: _focus,
-  autofocus: true,
   textInputAction: TextInputAction.search,
   onEditingComplete: () {}, // la tecla "buscar" no quita el foco
   onChanged: _onChanged,
@@ -180,7 +179,16 @@ ActivityTextField(
 - `_clear()`: `_query.clear()`, `setState(() {})`, `_focus.requestFocus()` y `_search('')`. `clear()` no dispara `onChanged`, por eso se busca directo. `requestFocus` cubre el caso en que el teclado se cerró al desplazar y el usuario toca ✕: el foco vuelve al campo. Tocar ✕ cuenta como actividad por el `Listener` global de `BovedaApp`.
 - Escribir cuenta como actividad por `ActivityTextField`.
 
-**Foco al llegar.** `autofocus: true`. Al desbloquear, la pantalla anterior sale del árbol en el mismo cambio de estado de `VaultGate`, así que su nodo ya no cuenta como enfocado. Los caminos de llegada son: tras la contraseña (el teclado ya estaba abierto), tras la huella (el diálogo ya cerró) y tras crear la bóveda, directo o por la oferta de la huella. En ninguno corre la animación de arranque en frío que en la #37 impidió abrir el teclado. Si en el emulador `autofocus` no abre el teclado en alguno de estos caminos, se detiene el trabajo con la evidencia antes de probar otra vía (lección de la #37).
+**Sin foco inicial.** La búsqueda no se enfoca al llegar: el teclado sale cuando el usuario toca el campo. Decisión del usuario tras la prueba a mano, que reemplaza el `autofocus: true` diseñado al principio.
+
+El diseño original usaba `autofocus`, porque en ningún camino de llegada corre la animación de arranque en frío que en la #37 impidió abrir el teclado. En el emulador (Pixel 10, Android 17, API 37) funcionó tras la contraseña y tras el primer uso con la oferta de la huella, pero **no tras desbloquear con huella**, ni en frío ni al volver a la app (tres repeticiones): el campo quedaba enfocado y sin teclado. Logcat, en el momento de montar la pantalla:
+
+```
+W InputMethodManager: Ignoring showSoftInput() as view=...FlutterView... is not served.
+I ImeTracker: onRequestHide at ORIGIN_SERVER reason HIDE_UNSPECIFIED_WINDOW
+```
+
+El desbloqueo termina mientras la ventana del `BiometricPrompt` todavía tiene el foco (la app está en `inactive`): Android descarta la petición del teclado y, cuando la app recupera la ventana, lo oculta. Se propuso volver a pedir el teclado al llegar `resumed`; el usuario prefirió quitar el foco inicial en todos los caminos, para que la app se comporte igual con contraseña y con huella, como el desbloqueo de la #37. El `autofocus` de `ActivityTextField` se quitó con él, porque nada más lo usaba.
 
 ### `VaultGate` (`lib/app.dart`)
 
@@ -188,7 +196,7 @@ El estado `unlocked` muestra `SearchScreen(session: widget.session, damagedEntri
 
 ### `ActivityTextField` (`lib/widgets/activity_text_field.dart`)
 
-- Parámetros nuevos, pasados tal cual al `TextField`: `autofocus` (por omisión `false`) y `onEditingComplete`.
+- Parámetro nuevo, pasado tal cual al `TextField`: `onEditingComplete`. (Llevó también `autofocus` hasta que se quitó el foco inicial.)
 - `onTapOutside` fijo, no configurable: `(_) => FocusManager.instance.primaryFocus?.unfocus()`. Solo se llama con el campo enfocado, así que `primaryFocus` es ese campo; no depende de que quien lo use pase un `focusNode`.
 - El comentario de la clase explica la regla: tocar fuera de cualquier campo cierra el teclado (en Android, Flutter no lo hace por omisión con el dedo); los controles del formulario que no deben cerrarlo se envuelven en `TextFieldTapRegion`.
 
@@ -253,7 +261,7 @@ La pantalla montada sola, con el doble:
 | ✕ | No aparece sin texto; aparece al escribir con la búsqueda pendiente; tocarlo borra, deja el foco y busca `''`; tras perder el foco al desplazar, tocarlo lo devuelve |
 | Tecla "buscar" | `testTextInput.receiveAction(TextInputAction.search)` → el campo sigue con el foco |
 | Teclado | El `TextField` tiene `enableSuggestions`, `autocorrect` y `enableIMEPersonalizedLearning` en `false`, y `TextInputAction.search` |
-| Foco | Al montar, el campo tiene el foco |
+| Foco | Al montar, el campo no tiene el foco |
 | Cerrar teclado | Desplazar la lista (con entradas suficientes para desplazarla), tocar una entrada y tocar un espacio vacío quitan el foco |
 | Aviso | Con `damagedEntries: 2`, el aviso arriba de la lista; con 0, nada |
 
@@ -269,7 +277,7 @@ La pantalla montada sola, con el doble:
 
 ### Widgets: flujo de la app (`test/app_test.dart`, `test/auto_lock_test.dart`)
 
-- Al llegar a la pantalla principal, el campo de búsqueda tiene el foco por los tres caminos: contraseña, huella y crear (directo y por la oferta de la huella).
+- Al llegar a la pantalla principal, el campo de búsqueda no tiene el foco por los tres caminos: contraseña, huella y crear (directo y por la oferta de la huella).
 - Escribir, bloquear (`hidden`) y desbloquear deja el campo vacío y vuelve a buscar `''`.
 - Escribir en la búsqueda reinicia el temporizador de inactividad.
 
@@ -298,14 +306,14 @@ Si la prueba muestra trabas, se agrega un retardo a la búsqueda y se documenta 
 
 ### A mano, en el emulador
 
-1. Desbloqueo con contraseña → teclado abierto con el cursor en la búsqueda.
+1. Desbloqueo con contraseña → la búsqueda sin foco y el teclado cerrado; tocar el campo lo abre.
 2. Arranque en frío con huella → lo mismo.
 3. Instalación limpia → primer uso → oferta de la huella → lo mismo.
 4. Bóveda vacía: "Todavía no hay contraseñas guardadas".
 5. Teclado: tocar fuera lo cierra; la tecla "buscar" no; el ✕ borra y lo deja abierto; en el desbloqueo y el primer uso, las casillas no lo cierran y un espacio vacío sí.
 6. Inicio → volver → desbloquear: el campo de búsqueda vacío.
 7. Mirar el emulador mientras corre la prueba de rendimiento: la lista se filtra sin trabas a cada letra (sin el teclado real: la prueba usa el simulado, ver "Hallazgos"). (La app real todavía no puede agregar entradas, #41.)
-8. Con el teclado abierto y texto en la búsqueda, esperar la inactividad sin tocar nada: se bloquea, y al desbloquear el campo está vacío y con el foco. Para no esperar 5 minutos se baja `defaultAutoLockTimeout` solo en la copia local, sin commit, y se restaura después.
+8. Con el teclado abierto y texto en la búsqueda, esperar la inactividad sin tocar nada: se bloquea, y al desbloquear el campo está vacío y sin foco. Para no esperar 5 minutos se baja `defaultAutoLockTimeout` solo en la copia local, sin commit, y se restaura después.
 
 ### Antes de dar la issue por terminada
 
@@ -316,7 +324,7 @@ Si la prueba muestra trabas, se agrega un retardo a la búsqueda y se documenta 
 ```
 mobile/lib/screens/search_screen.dart          # nuevo
 mobile/lib/app.dart                            # unlocked → SearchScreen
-mobile/lib/widgets/activity_text_field.dart    # onTapOutside, autofocus, onEditingComplete
+mobile/lib/widgets/activity_text_field.dart    # onTapOutside, onEditingComplete
 mobile/lib/screens/first_run_screen.dart       # TextFieldTapRegion en casilla y botón
 mobile/lib/screens/unlock_screen.dart          # TextFieldTapRegion en casilla y botón
 mobile/test/fakes.dart                         # search en el doble
@@ -333,7 +341,7 @@ mobile/integration_test/search_performance_test.dart  # nuevo
 
 - `docs/especificacion.md`, "Pantalla principal": párrafo "Decidido el 2026-11-10 (#40, detalle en `docs/superpowers/specs/2026-11-10-pantalla-principal-design.md`)": búsqueda en cada cambio, sin retardo, descartando respuestas viejas; cada elemento muestra el servicio y el usuario (o la URL), en el orden del núcleo; las dañadas no aparecen en la lista, solo en el aviso con el total; en toda la app, tocar fuera de un campo o desplazar una lista cierra el teclado, salvo los controles del mismo formulario.
 - `ARCHITECTURE.md`:
-  - `screens/`: agrega `search_screen.dart` (pantalla principal: búsqueda enfocada y lista filtrada) y quita "búsqueda" de "futuro"; `placeholder_screen.dart` queda solo para el error al abrir.
+  - `screens/`: agrega `search_screen.dart` (pantalla principal: barra de búsqueda y lista filtrada) y quita "búsqueda" de "futuro"; `placeholder_screen.dart` queda solo para el error al abrir.
   - `app.dart` (mapa y sección `mobile/`): en el estado desbloqueado muestra `SearchScreen` con el total de dañadas; al bloquear, el remontaje por `_epoch` descarta el texto de búsqueda.
   - `widgets/`: `activity_text_field.dart` cierra el teclado al tocar fuera; los controles del formulario van en `TextFieldTapRegion`.
 - `mobile/CLAUDE.md`: se amplía la regla de `ActivityTextField`: tocar fuera de un campo cierra el teclado; los controles del formulario (botón de envío, casillas, íconos fuera del campo) se envuelven en `TextFieldTapRegion` para no cerrarlo; toda lista desplazable de las pantallas de la bóveda usa `keyboardDismissBehavior: onDrag`.
@@ -346,6 +354,8 @@ mobile/integration_test/search_performance_test.dart  # nuevo
 3. **`PlaceholderScreen` pierde `banner`**, que solo usaba el marcador de la pantalla principal; queda para los mensajes de error.
 4. **Prueba de rendimiento sin ejecutar en la implementación.** La escribe la implementación y la ejecuta el usuario en el emulador y en el celular, junto con la prueba a mano. Espera cada respuesta contando las búsquedas respondidas (una sesión que delega en la real), no un elemento visible, que podría venir del prefijo anterior.
 5. **`enterText` en profile necesita el teclado simulado** (hallazgo de la revisión final). `IntegrationTestWidgetsFlutterBinding` no lo registra (`registerTestTextInput` es `false`), así que `enterText` manda el texto con el cliente `-1`, que `TextInput` solo acepta dentro de un `assert`: en profile lo escrito se descarta. La prueba registra `binding.testTextInput` antes de montar la pantalla. Consecuencia para el caso 7 de la prueba a mano: el teclado real no aparece durante la medición; lo que se mira es la lista filtrándose.
+
+6. **Rendimiento: el celular es la medición válida** (decisión del usuario). En el emulador (GPU emulada, `ro.hardware.egl=emulation`) pasó 1 de 3 corridas; las otras dos fallaron por un pico aislado de unos 60 ms en una de 27 búsquedas (mediana de unos 3 ms) y por el percentil 90 de rasterizado en 16.3 y 17.2 ms. En el celular (Xiaomi 2511FPC34G, Android 16, API 36, arm64) pasaron las 3: ida y vuelta con mediana de 1.07 a 1.67 ms y máximo de 3.35 a 9.93 ms; percentil 90 de construcción de 4.8 a 5.3 ms y de rasterizado de 3.4 a 3.6 ms. No se agregó retardo: no acelera una llamada aislada ni el costo de cada cuadro. El emulador queda como prueba de humo.
 
 ## PR
 
