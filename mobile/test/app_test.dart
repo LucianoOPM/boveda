@@ -5,10 +5,13 @@ import 'dart:io';
 
 import 'package:boveda/app.dart';
 import 'package:boveda/screens/biometric_offer_screen.dart';
+import 'package:boveda/screens/entry_detail_screen.dart';
+import 'package:boveda/screens/entry_form_screen.dart';
 import 'package:boveda/screens/first_run_screen.dart';
 import 'package:boveda/screens/search_screen.dart';
 import 'package:boveda/screens/unlock_screen.dart';
 import 'package:boveda/services/biometric_service.dart';
+import 'package:boveda/src/rust/api/entries.dart';
 import 'package:boveda/src/rust/api/error.dart';
 import 'package:boveda/src/rust/api/session.dart';
 import 'package:flutter/material.dart';
@@ -344,5 +347,84 @@ void main() {
       expect(find.byType(SearchScreen), findsOneWidget);
       expect(searchHasFocus(tester), isFalse);
     });
+  });
+
+  testWidgets('entradas de punta a punta: crear, ver, editar y eliminar '
+      '(#41)', (tester) async {
+    // Una bóveda simulada mínima: lo guardado es lo que devuelven la
+    // búsqueda y `entry`.
+    final stored = <String, EntrySummary>{};
+    session.onSearch = (_) async => stored.values.toList();
+    session.onAdd = (input, _) async {
+      stored[fakeNewId] = entry(input.service.trim(), id: fakeNewId);
+      return fakeNewId;
+    };
+    session.onEdit = (id, input, _, _) async {
+      stored[id] = entry(
+        input.service.trim(),
+        id: id,
+        username: input.username,
+      );
+    };
+    session.onEntry = (id) async => stored[id]!;
+    session.onDelete = (id) async => stored.remove(id);
+
+    await unlockFromScreen(tester);
+    expect(find.textContaining('Toca + para agregar'), findsOneWidget);
+
+    // Crear: el detalle de la nueva ocupa el lugar del formulario.
+    await tester.tap(find.byTooltip('Agregar contraseña'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byKey(const Key('service')), ' Gmail ');
+    await tester.enterText(find.byKey(const Key('password')), '1234');
+    await tester.ensureVisible(find.byKey(const Key('save')));
+    await tester.tap(find.byKey(const Key('save')));
+    await tester.pumpAndSettle();
+    expect(find.byType(EntryFormScreen), findsNothing);
+    expect(find.byType(EntryDetailScreen), findsOneWidget);
+    expect(find.widgetWithText(AppBar, 'Gmail'), findsOneWidget);
+
+    // Ver: la contraseña solo cruza al tocar "Mostrar".
+    expect(session.revealPasswordCalls, isEmpty);
+    await tester.tap(find.widgetWithText(TextButton, 'Mostrar'));
+    await tester.pumpAndSettle();
+    expect(find.text(fakePassword), findsOneWidget);
+
+    // Editar: sin tocar el secreto, no cruza nada.
+    await tester.tap(find.byTooltip('Editar'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byKey(const Key('username')), 'ana');
+    await tester.ensureVisible(find.byKey(const Key('save')));
+    await tester.tap(find.byKey(const Key('save')));
+    await tester.pumpAndSettle();
+    expect(find.byType(EntryFormScreen), findsNothing);
+    expect(find.text('ana'), findsOneWidget);
+    expect(find.text(fakePassword), findsNothing);
+    expect(session.editCalls.single.newPassword, isNull);
+    expect(session.editCalls.single.newNotes, isNull);
+    expect(session.revealPasswordCalls, hasLength(1));
+
+    // Atrás: la lista muestra la entrada.
+    await tester.pageBack();
+    await tester.pumpAndSettle();
+    expect(find.byType(SearchScreen), findsOneWidget);
+    expect(find.widgetWithText(ListTile, 'Gmail'), findsOneWidget);
+
+    // Eliminar: con confirmación, y desaparece de la lista.
+    await tester.tap(find.widgetWithText(ListTile, 'Gmail'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('Eliminar'));
+    await tester.pumpAndSettle();
+    await tester.tap(
+      find.descendant(
+        of: find.byType(AlertDialog),
+        matching: find.widgetWithText(TextButton, 'Eliminar'),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(session.deleteCalls, [fakeNewId]);
+    expect(find.byType(EntryDetailScreen), findsNothing);
+    expect(find.widgetWithText(ListTile, 'Gmail'), findsNothing);
+    expect(find.textContaining('Toca + para agregar'), findsOneWidget);
   });
 }

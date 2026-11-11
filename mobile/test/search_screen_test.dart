@@ -3,6 +3,8 @@
 
 import 'dart:async';
 
+import 'package:boveda/screens/entry_detail_screen.dart';
+import 'package:boveda/screens/entry_form_screen.dart';
 import 'package:boveda/screens/search_screen.dart';
 import 'package:boveda/src/rust/api/entries.dart';
 import 'package:boveda/src/rust/api/error.dart';
@@ -15,6 +17,12 @@ late FakeVaultSession session;
 
 final searchField = find.byType(TextField);
 final clearButton = find.byTooltip('Borrar búsqueda');
+final addButton = find.byTooltip('Agregar contraseña');
+final detail = find.byType(EntryDetailScreen);
+final form = find.byType(EntryFormScreen);
+
+const emptyVaultText =
+    'Todavía no hay contraseñas guardadas. Toca + para agregar la primera.';
 
 Future<void> pumpSearch(WidgetTester tester, {int damaged = 0}) async {
   await tester.pumpWidget(
@@ -176,10 +184,10 @@ void main() {
 
   testWidgets('bóveda vacía', (tester) async {
     await pumpSearch(tester);
-    expect(find.text('Todavía no hay contraseñas guardadas'), findsOneWidget);
+    expect(find.text(emptyVaultText), findsOneWidget);
 
     await type(tester, '   ');
-    expect(find.text('Todavía no hay contraseñas guardadas'), findsOneWidget);
+    expect(find.text(emptyVaultText), findsOneWidget);
   });
 
   testWidgets('sin resultados', (tester) async {
@@ -311,9 +319,15 @@ void main() {
     await tester.tap(searchField);
     await tester.pump();
     expect(searchHasFocus(tester), isTrue);
-    await tester.tap(find.byType(ListTile).first);
+    // Una entrada a la vista: tras desplazar, las primeras quedan detrás
+    // del campo de búsqueda.
+    await tester.tap(find.text('Servicio 8'));
     await tester.pump();
     expect(searchHasFocus(tester), isFalse);
+    // La entrada tocada abre su detalle: se vuelve antes de seguir.
+    await tester.pumpAndSettle();
+    await tester.pageBack();
+    await tester.pumpAndSettle();
 
     await tester.tap(searchField);
     await tester.pump();
@@ -365,5 +379,168 @@ void main() {
 
     await pumpSearch(tester, damaged: 3);
     expect(tester.takeException(), isNull);
+  });
+
+  group('entradas (#41)', () {
+    testWidgets('tocar una entrada abre su detalle, sin llamar a Rust', (
+      tester,
+    ) async {
+      session.onSearch = (_) async => [
+        entry('Gmail', username: 'ana@example.com'),
+        entry('Banco'),
+      ];
+      await pumpSearch(tester);
+      await tester.tap(find.text('Banco'));
+      await tester.pumpAndSettle();
+
+      expect(detail, findsOneWidget);
+      expect(find.widgetWithText(AppBar, 'Banco'), findsOneWidget);
+      expect(session.entryCalls, isEmpty);
+      expect(session.revealPasswordCalls, isEmpty);
+    });
+
+    testWidgets('al volver del detalle repite la búsqueda con el texto '
+        'actual y la lista no salta', (tester) async {
+      session.onSearch = (_) async => many(40);
+      await pumpSearch(tester);
+      await type(tester, 'serv');
+      final list = find.byType(ListView);
+      await tester.drag(list, const Offset(0, -300));
+      await tester.pump();
+      final scrollable = tester.state<ScrollableState>(
+        find.descendant(of: list, matching: find.byType(Scrollable)),
+      );
+      final before = scrollable.position.pixels;
+      expect(before, greaterThan(0));
+      final searches = session.searchCalls.length;
+
+      await tester.tap(find.text('Servicio 8'));
+      await tester.pumpAndSettle();
+      expect(detail, findsOneWidget);
+      // Con el detalle encima no se busca.
+      expect(session.searchCalls, hasLength(searches));
+
+      await tester.pageBack();
+      await tester.pumpAndSettle();
+      expect(detail, findsNothing);
+      expect(session.searchCalls, hasLength(searches + 1));
+      expect(session.searchCalls.last, 'serv');
+      expect(scrollable.position.pixels, before);
+    });
+
+    testWidgets('al volver se ve el orden nuevo que da el núcleo', (
+      tester,
+    ) async {
+      var results = [entry('Gmail'), entry('Banco')];
+      session.onSearch = (_) async => results;
+      await pumpSearch(tester);
+      await tester.tap(find.text('Banco'));
+      await tester.pumpAndSettle();
+
+      // Revelar en el detalle cambia el orden de recientes.
+      results = [entry('Banco'), entry('Gmail')];
+      await tester.pageBack();
+      await tester.pumpAndSettle();
+
+      expect(
+        tester.getTopLeft(find.text('Banco')).dy,
+        lessThan(tester.getTopLeft(find.text('Gmail')).dy),
+      );
+    });
+
+    testWidgets('"+" abre el formulario de crear', (tester) async {
+      await pumpSearch(tester);
+      expect(find.text(emptyVaultText), findsOneWidget);
+      await tester.tap(addButton);
+      await tester.pumpAndSettle();
+
+      expect(form, findsOneWidget);
+      expect(find.widgetWithText(AppBar, 'Nueva entrada'), findsOneWidget);
+    });
+
+    testWidgets('salir del formulario sin crear repite la búsqueda', (
+      tester,
+    ) async {
+      await pumpSearch(tester);
+      final searches = session.searchCalls.length;
+      await tester.tap(addButton);
+      await tester.pumpAndSettle();
+      await tester.pageBack();
+      await tester.pumpAndSettle();
+
+      expect(form, findsNothing);
+      expect(session.searchCalls, hasLength(searches + 1));
+    });
+
+    testWidgets('tras crear se ve el detalle de la nueva; la búsqueda se '
+        'repite solo al volver a la lista', (tester) async {
+      session.onEntry = (id) async =>
+          entry('Foro', id: id, username: 'normalizado');
+      await pumpSearch(tester);
+      await type(tester, 'gm');
+      final searches = session.searchCalls.length;
+
+      await tester.tap(addButton);
+      await tester.pumpAndSettle();
+      await tester.enterText(find.byKey(const Key('service')), '  Foro ');
+      await tester.enterText(find.byKey(const Key('password')), '1234');
+      await tester.ensureVisible(find.byKey(const Key('save')));
+      await tester.tap(find.byKey(const Key('save')));
+      await tester.pumpAndSettle();
+
+      // El detalle reemplazó al formulario y muestra lo que guardó el núcleo.
+      expect(form, findsNothing);
+      expect(detail, findsOneWidget);
+      expect(find.widgetWithText(AppBar, 'Foro'), findsOneWidget);
+      expect(find.text('normalizado'), findsOneWidget);
+      expect(session.addCalls, hasLength(1));
+      // El futuro del formulario se completó en el reemplazo: todavía no
+      // se busca.
+      expect(session.searchCalls, hasLength(searches));
+
+      await tester.pageBack();
+      await tester.pumpAndSettle();
+      expect(detail, findsNothing);
+      expect(find.byType(SearchScreen), findsOneWidget);
+      expect(session.searchCalls, hasLength(searches + 1));
+      expect(session.searchCalls.last, 'gm');
+    });
+
+    testWidgets('eliminar desde el detalle vuelve a la lista, que ya no la '
+        'muestra', (tester) async {
+      var results = [entry('Gmail'), entry('Banco')];
+      session.onSearch = (_) async => results;
+      session.onDelete = (_) async => results = [entry('Gmail')];
+      await pumpSearch(tester);
+      await tester.tap(find.text('Banco'));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byTooltip('Eliminar'));
+      await tester.pumpAndSettle();
+      await tester.tap(
+        find.descendant(
+          of: find.byType(AlertDialog),
+          matching: find.widgetWithText(TextButton, 'Eliminar'),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(detail, findsNothing);
+      expect(find.text('Banco'), findsNothing);
+      expect(find.text('Gmail'), findsOneWidget);
+    });
+
+    testWidgets('el botón "+" no tapa la última entrada de la lista', (
+      tester,
+    ) async {
+      session.onSearch = (_) async => many(40);
+      await pumpSearch(tester);
+      await tester.drag(find.byType(ListView), const Offset(0, -5000));
+      await tester.pumpAndSettle();
+
+      final last = tester.getRect(find.text('Servicio 39'));
+      final fab = tester.getRect(find.byType(FloatingActionButton));
+      expect(last.bottom, lessThanOrEqualTo(fab.top));
+    });
   });
 }

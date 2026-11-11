@@ -5,12 +5,15 @@ import 'dart:async';
 
 import 'package:boveda/app.dart';
 import 'package:boveda/screens/biometric_offer_screen.dart';
+import 'package:boveda/screens/entry_detail_screen.dart';
+import 'package:boveda/screens/entry_form_screen.dart';
 import 'package:boveda/screens/first_run_screen.dart';
 import 'package:boveda/screens/search_screen.dart';
 import 'package:boveda/screens/unlock_screen.dart';
 import 'package:boveda/services/biometric_service.dart';
 import 'package:boveda/src/rust/api/error.dart';
 import 'package:boveda/src/rust/api/session.dart';
+import 'package:boveda/widgets/tags_field.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -667,6 +670,184 @@ void main() {
       await tester.sendKeyEvent(LogicalKeyboardKey.keyA);
 
       expect(tester.takeException(), isNull);
+    });
+  });
+
+  group('entradas (#41)', () {
+    /// Deja terminar una transición de ruta.
+    Future<void> settleRoute(WidgetTester tester) async {
+      await tester.pump();
+      await tester.pump(const Duration(seconds: 1));
+    }
+
+    /// Desbloquea con una entrada en la lista y abre su detalle.
+    Future<void> pumpDetail(WidgetTester tester) async {
+      session.onSearch = (_) async => [entry('Gmail', username: 'ana')];
+      await pumpUnlocked(tester);
+      await tester.tap(find.text('Gmail'));
+      await settleRoute(tester);
+      expect(find.byType(EntryDetailScreen), findsOneWidget);
+    }
+
+    /// Desbloquea y abre el formulario de crear.
+    Future<void> pumpCreateForm(WidgetTester tester) async {
+      await pumpUnlocked(tester);
+      await tester.tap(find.byTooltip('Agregar contraseña'));
+      await settleRoute(tester);
+      expect(find.byType(EntryFormScreen), findsOneWidget);
+    }
+
+    Future<void> hideApp(WidgetTester tester) async {
+      await setLifecycle(tester, AppLifecycleState.hidden);
+      await drain(tester);
+    }
+
+    testWidgets('hidden con la contraseña visible en el detalle: solo queda '
+        'el desbloqueo', (tester) async {
+      await pumpDetail(tester);
+      await tester.tap(find.widgetWithText(TextButton, 'Mostrar'));
+      await drain(tester);
+      await tester.tap(find.widgetWithText(TextButton, 'Mostrar notas'));
+      await drain(tester);
+      expect(find.text(fakePassword), findsOneWidget);
+      expect(find.text(fakeNotes), findsOneWidget);
+
+      await hideApp(tester);
+      await expectLocked(tester);
+      expect(find.byType(EntryDetailScreen), findsNothing);
+      expect(find.text(fakePassword), findsNothing);
+      expect(find.text(fakeNotes), findsNothing);
+
+      // Tras desbloquear se llega a la lista, sin restos del detalle.
+      await submitPassword(tester);
+      await drain(tester);
+      expect(find.byType(SearchScreen), findsOneWidget);
+      expect(find.byType(EntryDetailScreen), findsNothing);
+    });
+
+    testWidgets('hidden con el formulario a medias descarta los cambios sin '
+        'preguntar', (tester) async {
+      await pumpCreateForm(tester);
+      await tester.enterText(find.byKey(const Key('service')), 'A medias');
+      await tester.enterText(find.byKey(const Key('password')), 'sin-guardar');
+      await tester.pump();
+
+      await hideApp(tester);
+      await expectLocked(tester);
+      expect(find.byType(EntryFormScreen), findsNothing);
+      expect(find.text('¿Descartar cambios?'), findsNothing);
+      expect(find.text('A medias'), findsNothing);
+      expect(session.addCalls, isEmpty);
+
+      await submitPassword(tester);
+      await drain(tester);
+      expect(find.byType(SearchScreen), findsOneWidget);
+      expect(find.byType(EntryFormScreen), findsNothing);
+    });
+
+    testWidgets('hidden con el diálogo de eliminar abierto lo cierra sin '
+        'eliminar', (tester) async {
+      await pumpDetail(tester);
+      await tester.tap(find.byTooltip('Eliminar'));
+      await settleRoute(tester);
+      expect(find.text('¿Eliminar «Gmail»?'), findsOneWidget);
+
+      await hideApp(tester);
+      await expectLocked(tester);
+      expect(find.text('¿Eliminar «Gmail»?'), findsNothing);
+      expect(find.byType(EntryDetailScreen), findsNothing);
+      expect(session.deleteCalls, isEmpty);
+    });
+
+    testWidgets('hidden con el diálogo de descartar abierto lo cierra junto '
+        'con el formulario', (tester) async {
+      await pumpCreateForm(tester);
+      await tester.enterText(find.byKey(const Key('service')), 'A medias');
+      await tester.pump();
+      await tester.binding.handlePopRoute();
+      await settleRoute(tester);
+      expect(find.text('¿Descartar cambios?'), findsOneWidget);
+
+      await hideApp(tester);
+      await expectLocked(tester);
+      expect(find.text('¿Descartar cambios?'), findsNothing);
+      expect(find.byType(EntryFormScreen), findsNothing);
+    });
+
+    testWidgets('add que termina después de bloquear no muestra el detalle '
+        'sobre el desbloqueo', (tester) async {
+      final pending = Completer<String>();
+      session.onAdd = (_, _) => pending.future;
+      await pumpCreateForm(tester);
+      await tester.enterText(find.byKey(const Key('service')), 'Gmail');
+      await tester.enterText(find.byKey(const Key('password')), '1234');
+      await tester.ensureVisible(find.byKey(const Key('save')));
+      await tester.tap(find.byKey(const Key('save')));
+      await tester.pump();
+      expect(session.addCalls, hasLength(1));
+
+      await hideApp(tester);
+      pending.complete(fakeNewId);
+      await drain(tester);
+
+      await expectLocked(tester);
+      expect(find.byType(EntryDetailScreen), findsNothing);
+      expect(find.byType(EntryFormScreen), findsNothing);
+      expect(session.entryCalls, isEmpty);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('bloqueo con el detalle de una entrada recién creada: no '
+        'queda nada apilado', (tester) async {
+      await pumpCreateForm(tester);
+      await tester.enterText(find.byKey(const Key('service')), 'Gmail');
+      await tester.enterText(find.byKey(const Key('password')), '1234');
+      await tester.ensureVisible(find.byKey(const Key('save')));
+      await tester.tap(find.byKey(const Key('save')));
+      await settleRoute(tester);
+      expect(find.byType(EntryDetailScreen), findsOneWidget);
+
+      // Al quitar el detalle, su futuro se completa y la principal, que con
+      // la app oculta sigue montada hasta el siguiente cuadro, repite la
+      // búsqueda: el núcleo ya bloqueado responde `locked` y se ignora.
+      session.onSearch = (_) async => throw VaultError.locked;
+      await hideApp(tester);
+      await expectLocked(tester);
+      expect(find.byType(EntryDetailScreen), findsNothing);
+      expect(find.text('No se pudo buscar'), findsNothing);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('escribir en los campos del formulario reinicia la cuenta', (
+      tester,
+    ) async {
+      await pumpCreateForm(tester);
+      for (final key in ['service', 'username', 'url', 'password', 'notes']) {
+        await tester.ensureVisible(find.byKey(Key(key)));
+        await tester.tap(find.byKey(Key(key)));
+        await tester.pump();
+        await tester.pump(const Duration(minutes: 4));
+        // Sin tocar la pantalla: solo lo que llega del teclado en pantalla.
+        tester.testTextInput.enterText('texto en $key');
+        await tester.pump(const Duration(minutes: 4));
+        expect(session.lockCalls, 0, reason: key);
+      }
+      // El campo de etiquetas, también.
+      await tester.ensureVisible(find.byType(TagsField));
+      await tester.tap(
+        find.descendant(
+          of: find.byType(TagsField),
+          matching: find.byType(TextField),
+        ),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(minutes: 4));
+      tester.testTextInput.enterText('etiqueta');
+      await tester.pump(const Duration(minutes: 4));
+      expect(session.lockCalls, 0);
+
+      await tester.pump(const Duration(minutes: 1));
+      expect(session.lockCalls, 1);
     });
   });
 }
