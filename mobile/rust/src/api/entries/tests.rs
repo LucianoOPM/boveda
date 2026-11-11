@@ -99,19 +99,95 @@ fn add_with_empty_service_fails() {
 fn edit_keep_preserves_password() {
     let (_dir, session) = unlocked_fixture();
     let id = id_of(&session, "Banco");
-    session.edit(id.clone(), input("Banco 2"), None).unwrap();
+    session
+        .edit(id.clone(), input("Banco 2"), None, None)
+        .unwrap();
     assert_eq!(session.reveal_password(id), Ok("clave-minima".into()));
 }
 
+/// Notas de "Correo Electrónico" en la bóveda de ejemplo.
+const MAIL_NOTES: &str = "Línea uno\nLínea dos";
+
 #[test]
-fn edit_replace_changes_password() {
+fn edit_new_password_only_keeps_notes() {
     let (_dir, session) = unlocked_fixture();
     let id = id_of(&session, "Correo Electrónico");
     session
-        .edit(id.clone(), input("Correo"), Some(secret("nueva")))
+        .edit(id.clone(), input("Correo"), Some("nueva".into()), None)
         .unwrap();
     assert_eq!(session.reveal_password(id.clone()), Ok("nueva".into()));
+    assert_eq!(session.reveal_notes(id), Ok(Some(MAIL_NOTES.into())));
+}
+
+#[test]
+fn edit_new_notes_only_keeps_password() {
+    let (_dir, session) = unlocked_fixture();
+    let id = id_of(&session, "Banco");
+    session
+        .edit(id.clone(), input("Banco"), None, Some("PIN aparte".into()))
+        .unwrap();
+    assert_eq!(
+        session.reveal_password(id.clone()),
+        Ok("clave-minima".into())
+    );
+    assert_eq!(session.reveal_notes(id), Ok(Some("PIN aparte".into())));
+}
+
+#[test]
+fn edit_empty_notes_removes_them() {
+    let (_dir, session) = unlocked_fixture();
+    let id = id_of(&session, "Correo Electrónico");
+    session
+        .edit(id.clone(), input("Correo"), None, Some(String::new()))
+        .unwrap();
+    assert_eq!(
+        session.reveal_password(id.clone()),
+        Ok("clave-completa-ñ".into())
+    );
     assert_eq!(session.reveal_notes(id), Ok(None));
+}
+
+#[test]
+fn edit_both_replaces_secret() {
+    let (_dir, session) = unlocked_fixture();
+    let id = id_of(&session, "Correo Electrónico");
+    session
+        .edit(
+            id.clone(),
+            input("Correo"),
+            Some("nueva".into()),
+            Some("otras".into()),
+        )
+        .unwrap();
+    assert_eq!(session.reveal_password(id.clone()), Ok("nueva".into()));
+    assert_eq!(session.reveal_notes(id), Ok(Some("otras".into())));
+}
+
+#[test]
+fn entry_follows_add_edit_delete() {
+    let (_dir, session) = unlocked_fixture();
+    let mut new = input("  Foro  ");
+    new.tags = vec!["a".into(), "A".into(), " b ".into()];
+    let id = session.add(new, secret("clave")).unwrap();
+
+    let added = session.entry(id.clone()).unwrap();
+    assert_eq!(added.id, id);
+    assert_eq!(added.service, "Foro");
+    assert_eq!(added.tags, ["a", "b"]);
+    assert_eq!(added.last_used_at, None);
+
+    session
+        .edit(id.clone(), input("Foro 2"), None, None)
+        .unwrap();
+    let edited = session.entry(id.clone()).unwrap();
+    assert_eq!(edited.service, "Foro 2");
+    assert!(edited.tags.is_empty());
+
+    session.reveal_password(id.clone()).unwrap();
+    assert!(session.entry(id.clone()).unwrap().last_used_at.is_some());
+
+    session.delete(id.clone()).unwrap();
+    assert_eq!(session.entry(id), Err(VaultError::EntryNotFound));
 }
 
 #[test]
@@ -163,7 +239,11 @@ fn invalid_ids_are_rejected() {
         );
         assert_eq!(session.delete(id.clone()), Err(VaultError::InvalidEntryId));
         assert_eq!(
-            session.edit(id, input("X"), None),
+            session.entry(id.clone()).map(drop),
+            Err(VaultError::InvalidEntryId)
+        );
+        assert_eq!(
+            session.edit(id, input("X"), None, None),
             Err(VaultError::InvalidEntryId)
         );
     }
@@ -192,8 +272,33 @@ fn add_converts_secret_before_validating_search_data() {
 fn edit_converts_secret_before_reading_id() {
     let (_dir, session) = unlocked_fixture();
     assert_eq!(
-        session.edit("no-es-un-id".into(), input("   "), Some(secret(""))),
+        session.edit(
+            "no-es-un-id".into(),
+            input("   "),
+            Some(String::new()),
+            Some(String::new())
+        ),
         Err(VaultError::InvalidEntryPasswordEmpty)
+    );
+}
+
+// Con una sola parte, la validación del valor nuevo la hace el núcleo
+// dentro de `edit`, después del id y de los datos de búsqueda. Por eso
+// `edit_converts_secret_before_reading_id` solo puede observar el orden con
+// los dos valores: con uno solo, que `secret_from` corra antes del id no
+// cambia ningún resultado (el borrado del `String` no es observable desde
+// una prueba) y lo garantiza la lectura del código.
+#[test]
+fn edit_single_part_reports_invalid_value() {
+    let (_dir, session) = unlocked_fixture();
+    let id = id_of(&session, "Banco");
+    assert_eq!(
+        session.edit(id.clone(), input("Banco"), Some(String::new()), None),
+        Err(VaultError::InvalidEntryPasswordEmpty)
+    );
+    assert_eq!(
+        session.edit(id, input("Banco"), None, Some("n".repeat(16385))),
+        Err(VaultError::InvalidEntryNotesTooLong)
     );
 }
 
@@ -207,7 +312,8 @@ fn every_operation(
     vec![
         ("search", session.search(String::new()).map(drop)),
         ("add", session.add(input("X"), secret("clave")).map(drop)),
-        ("edit", session.edit(id.into(), input("X"), None)),
+        ("edit", session.edit(id.into(), input("X"), None, None)),
+        ("entry", session.entry(id.into()).map(drop)),
         ("delete", session.delete(id.into())),
         (
             "reveal_password",

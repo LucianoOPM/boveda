@@ -1,6 +1,6 @@
 # Roadmap al MVP: gestor de contraseñas
 
-Actualizado: 2026-11-08
+Actualizado: 2026-11-10
 
 Cuatro etapas llevan del repositorio vacío al MVP; cada una termina en algo que ya funciona y tiene un criterio claro para darla por cerrada.
 
@@ -46,7 +46,7 @@ Resultado: un gestor de contraseñas usable en tu celular, con búsqueda y respa
 - [ ] Desbloqueo con contraseña maestra y con huella, guardando la copia cifrada de la llave de bóveda en el Keystore.
 - [ ] Bloqueo automático por inactividad y al pasar la app a segundo plano.
 - [x] Pantalla principal con la barra de búsqueda y la lista filtrándose al escribir (#40; sin foco inicial: el teclado sale al tocar el campo).
-- [ ] Detalle, creación, edición y eliminación de entradas; mostrar u ocultar la contraseña.
+- [x] Detalle, creación, edición y eliminación de entradas; mostrar u ocultar la contraseña (#41).
 - [ ] Copiar localmente con el contenido marcado como sensible.
 - [ ] Bloqueo de capturas de pantalla y contenido oculto en apps recientes.
 - [ ] Exportar e importar el respaldo usando el selector de archivos del sistema.

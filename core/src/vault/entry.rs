@@ -318,6 +318,33 @@ impl Secret {
         }
     }
 
+    /// Comprueba una contraseña nueva con las reglas actuales, sin tener
+    /// todavía el resto del secreto. Con [`Secret::normalize_notes`], deja
+    /// validar el valor nuevo antes de descifrar el secreto vigente.
+    pub(crate) fn check_password(password: &SecretString) -> Result<()> {
+        check_password_v1(password).map_err(Error::InvalidEntry)
+    }
+
+    /// Normaliza y comprueba unas notas nuevas con las reglas actuales: en
+    /// blanco cuentan como ausentes.
+    pub(crate) fn normalize_notes(notes: Option<SecretString>) -> Result<Option<SecretString>> {
+        normalize_notes_v1(notes).map_err(Error::InvalidEntry)
+    }
+
+    /// Este secreto con otra contraseña. Consume el secreto: las notas se
+    /// mueven sin copiarse y la contraseña anterior se suelta aquí, con lo
+    /// que `SecretString` la borra.
+    pub(crate) fn with_password(self, password: SecretString) -> Result<Self> {
+        Self::new(password, self.notes)
+    }
+
+    /// Este secreto con otras notas (`None` o en blanco las quita). Consume
+    /// el secreto: la contraseña se mueve sin copiarse y las notas
+    /// anteriores se sueltan aquí, con lo que `SecretString` las borra.
+    pub(crate) fn with_notes(self, notes: Option<SecretString>) -> Result<Self> {
+        Self::new(self.password, notes)
+    }
+
     pub fn password(&self) -> &SecretString {
         &self.password
     }
@@ -345,6 +372,15 @@ fn build_secret_v1(
     password: SecretString,
     notes: Option<SecretString>,
 ) -> std::result::Result<Secret, InvalidEntryField> {
+    check_password_v1(&password)?;
+    let notes = normalize_notes_v1(notes)?;
+    Ok(Secret { password, notes })
+}
+
+/// Regla de la contraseña en la versión de estructura 1: ni vacía ni más
+/// larga que el límite. Separada de [`build_secret_v1`] para validar una
+/// contraseña nueva antes de descifrar el secreto vigente.
+fn check_password_v1(password: &SecretString) -> std::result::Result<(), InvalidEntryField> {
     let len = password.expose_secret().len();
     if len == 0 {
         return Err(InvalidEntryField::PasswordEmpty);
@@ -352,6 +388,15 @@ fn build_secret_v1(
     if len > MAX_PASSWORD_LEN {
         return Err(InvalidEntryField::PasswordTooLong);
     }
+    Ok(())
+}
+
+/// Regla de las notas en la versión de estructura 1: en blanco cuentan como
+/// ausentes y no pueden superar el límite. Separada como
+/// [`check_password_v1`].
+fn normalize_notes_v1(
+    notes: Option<SecretString>,
+) -> std::result::Result<Option<SecretString>, InvalidEntryField> {
     let notes = notes.filter(|n| !n.expose_secret().trim().is_empty());
     if notes
         .as_ref()
@@ -359,7 +404,7 @@ fn build_secret_v1(
     {
         return Err(InvalidEntryField::NotesTooLong);
     }
-    Ok(Secret { password, notes })
+    Ok(notes)
 }
 
 #[cfg(test)]

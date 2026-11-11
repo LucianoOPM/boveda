@@ -118,8 +118,13 @@ pub struct UnlockReport {
 pub enum SecretChange {
     /// Conservar el secreto actual. No sale del núcleo.
     Keep,
-    /// Reemplazar contraseña y notas juntas.
+    /// Reemplazar contraseña y notas juntas. Repara una entrada dañada.
     Replace(Secret),
+    /// Contraseña nueva; las notas actuales no salen del núcleo.
+    ReplacePassword(SecretString),
+    /// Notas nuevas (`None` o en blanco las quita); la contraseña actual no
+    /// sale del núcleo.
+    ReplaceNotes(Option<SecretString>),
 }
 
 impl Vault {
@@ -269,6 +274,21 @@ impl Vault {
         Ok(&self.unlocked()?.entries)
     }
 
+    /// La entrada con ese id, como en [`Vault::entries`]. Desde la caché: no
+    /// toca el disco ni el secreto.
+    ///
+    /// Un id inexistente, eliminado o con los datos de búsqueda dañados da
+    /// [`Error::EntryNotFound`]: una entrada dañada nunca entra en la caché,
+    /// y distinguirla exigiría leer la fila. Una entrada con solo el secreto
+    /// dañado sí está en la caché y se devuelve.
+    pub fn entry(&self, id: EntryId) -> Result<&EntrySummary> {
+        self.unlocked()?
+            .entries
+            .iter()
+            .find(|e| e.id == id)
+            .ok_or(Error::EntryNotFound)
+    }
+
     /// Entradas que coinciden con `query`, la mejor primero. Sin texto
     /// (vacío o solo espacios), todas: las usadas más recientemente primero.
     ///
@@ -304,9 +324,30 @@ impl Vault {
     /// de rango), y conserva su `last_used_at`. Con
     /// [`SecretChange::Keep`] y el secreto dañado devuelve
     /// [`Error::CorruptEntry`] sin tocar el archivo.
+    ///
+    /// [`SecretChange::ReplacePassword`] y [`SecretChange::ReplaceNotes`]
+    /// cambian una sola parte: la otra se descifra y se vuelve a cifrar sin
+    /// salir del núcleo. El valor nuevo se valida antes de descifrar el
+    /// secreto vigente, así que un valor no válido da
+    /// [`Error::InvalidEntry`] aunque el secreto esté dañado o el id no
+    /// exista. Con un valor válido, un secreto dañado o una fila ilegible
+    /// dan [`Error::CorruptEntry`] sin tocar el archivo: solo `Replace`
+    /// repara.
     pub fn edit(&mut self, id: EntryId, search: SearchData, change: SecretChange) -> Result<()> {
         let unlocked = self.unlocked.as_mut().ok_or(Error::Locked)?;
         let now = now_millis()?;
+        // Antes de leer la fila: un valor no válido no pone en memoria la
+        // contraseña ni las notas vigentes.
+        let change = match change {
+            SecretChange::ReplacePassword(password) => {
+                Secret::check_password(&password)?;
+                SecretChange::ReplacePassword(password)
+            }
+            SecretChange::ReplaceNotes(notes) => {
+                SecretChange::ReplaceNotes(Secret::normalize_notes(notes)?)
+            }
+            other => other,
+        };
         // Los metadatos vienen de la fila, no de la caché: así funciona igual
         // para una entrada que estaba dañada.
         let (secret, last_used_at) = match (self.storage.get_entry(id), change) {
@@ -315,6 +356,22 @@ impl Vault {
                 stored.last_used_at,
             ),
             (Ok(stored), SecretChange::Replace(secret)) => (secret, stored.last_used_at),
+            // El secreto vigente se consume: la parte reemplazada se suelta
+            // (y se borra) al armar el nuevo.
+            (Ok(stored), SecretChange::ReplacePassword(password)) => (
+                stored
+                    .sealed
+                    .open_secret(&unlocked.key)?
+                    .with_password(password)?,
+                stored.last_used_at,
+            ),
+            (Ok(stored), SecretChange::ReplaceNotes(notes)) => (
+                stored
+                    .sealed
+                    .open_secret(&unlocked.key)?
+                    .with_notes(notes)?,
+                stored.last_used_at,
+            ),
             // Una fila viva que no se pudo leer (p. ej. con la versión de
             // estructura fuera de rango) se reescribe completa y conserva su
             // último uso, que se lee aparte. Un id inexistente o una lápida

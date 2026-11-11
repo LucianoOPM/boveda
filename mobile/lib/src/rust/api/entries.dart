@@ -87,7 +87,8 @@ class EntrySummary {
           lastUsedAt == other.lastUsedAt;
 }
 
-/// Contraseña y notas nuevas. No deriva `Debug`: lleva el secreto.
+/// Contraseña y notas de una entrada nueva (`add`). No deriva `Debug`:
+/// lleva el secreto.
 class NewSecret {
   final String password;
   final String? notes;

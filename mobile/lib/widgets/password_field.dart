@@ -2,9 +2,14 @@ import 'package:flutter/material.dart';
 
 import 'activity_text_field.dart';
 
-/// Campo para escribir una contraseña maestra.
+/// Campo para escribir una contraseña: la maestra o la de una entrada.
 ///
-/// Oculta el texto por omisión, con un botón para mostrarlo. El teclado no
+/// No aplica ninguna regla sobre lo escrito: el mínimo y el indicador de
+/// fortaleza son solo de la contraseña maestra y los pone la pantalla que
+/// los necesita.
+///
+/// Oculta el texto por omisión, con un botón para mostrarlo. Lo escrito no
+/// se puede copiar ni cortar, tampoco cuando está a la vista; pegar sí. El teclado no
 /// sugiere, no corrige ni aprende lo escrito, y el campo no declara pistas de
 /// autocompletado para que el gestor de contraseñas del sistema no ofrezca
 /// guardarla.
@@ -62,6 +67,8 @@ class _PasswordFieldState extends State<PasswordField> {
       enableIMEPersonalizedLearning: false,
       keyboardType: TextInputType.visiblePassword,
       maxLines: 1,
+      // Con el ojo, la contraseña queda a la vista: no se copia desde aquí.
+      copyable: false,
       decoration: InputDecoration(
         labelText: widget.label,
         errorText: widget.errorText,

@@ -72,7 +72,7 @@ class RustLib extends BaseEntrypoint<RustLibApi, RustLibApiImpl, RustLibWire> {
   String get codegenVersion => '2.13.0';
 
   @override
-  int get rustContentHash => -2061894107;
+  int get rustContentHash => 405530507;
 
   static const kDefaultExternalLibraryLoaderConfig =
       ExternalLibraryLoaderConfig(
@@ -104,7 +104,13 @@ abstract class RustLibApi extends BaseApi {
     required VaultSession that,
     required String id,
     required EntryInput input,
-    NewSecret? newSecret,
+    String? newPassword,
+    String? newNotes,
+  });
+
+  Future<EntrySummary> crateApiSessionVaultSessionEntry({
+    required VaultSession that,
+    required String id,
   });
 
   Future<void> crateApiSessionVaultSessionExportBackup({
@@ -299,7 +305,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     required VaultSession that,
     required String id,
     required EntryInput input,
-    NewSecret? newSecret,
+    String? newPassword,
+    String? newNotes,
   }) {
     return handler.executeNormal(
       NormalTask(
@@ -311,7 +318,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           );
           sse_encode_String(id, serializer);
           sse_encode_box_autoadd_entry_input(input, serializer);
-          sse_encode_opt_box_autoadd_new_secret(newSecret, serializer);
+          sse_encode_opt_String(newPassword, serializer);
+          sse_encode_opt_String(newNotes, serializer);
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
@@ -324,7 +332,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           decodeErrorData: sse_decode_vault_error,
         ),
         constMeta: kCrateApiSessionVaultSessionEditConstMeta,
-        argValues: [that, id, input, newSecret],
+        argValues: [that, id, input, newPassword, newNotes],
         apiImpl: this,
       ),
     );
@@ -333,7 +341,45 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   TaskConstMeta get kCrateApiSessionVaultSessionEditConstMeta =>
       const TaskConstMeta(
         debugName: "VaultSession_edit",
-        argNames: ["that", "id", "input", "newSecret"],
+        argNames: ["that", "id", "input", "newPassword", "newNotes"],
+      );
+
+  @override
+  Future<EntrySummary> crateApiSessionVaultSessionEntry({
+    required VaultSession that,
+    required String id,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerVaultSession(
+            that,
+            serializer,
+          );
+          sse_encode_String(id, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 5,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_entry_summary,
+          decodeErrorData: sse_decode_vault_error,
+        ),
+        constMeta: kCrateApiSessionVaultSessionEntryConstMeta,
+        argValues: [that, id],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiSessionVaultSessionEntryConstMeta =>
+      const TaskConstMeta(
+        debugName: "VaultSession_entry",
+        argNames: ["that", "id"],
       );
 
   @override
@@ -353,7 +399,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 5,
+            funcId: 6,
             port: port_,
           );
         },
@@ -389,7 +435,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 6,
+            funcId: 7,
             port: port_,
           );
         },
@@ -429,7 +475,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 7,
+            funcId: 8,
             port: port_,
           );
         },
@@ -465,7 +511,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 8,
+            funcId: 9,
             port: port_,
           );
         },
@@ -499,7 +545,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 9,
+            funcId: 10,
             port: port_,
           );
         },
@@ -524,7 +570,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         callFfi: () {
           final serializer = SseSerializer(generalizedFrbRustBinding);
           sse_encode_String(path, serializer);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 10)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 11)!;
         },
         codec: SseCodec(
           decodeSuccessData:
@@ -554,7 +600,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 11,
+            funcId: 12,
             port: port_,
           );
         },
@@ -589,7 +635,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 12,
+            funcId: 13,
             port: port_,
           );
         },
@@ -627,7 +673,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 13,
+            funcId: 14,
             port: port_,
           );
         },
@@ -665,7 +711,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 14,
+            funcId: 15,
             port: port_,
           );
         },
@@ -703,7 +749,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 15,
+            funcId: 16,
             port: port_,
           );
         },
@@ -741,7 +787,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 16,
+            funcId: 17,
             port: port_,
           );
         },
@@ -771,7 +817,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 17,
+            funcId: 18,
             port: port_,
           );
         },
@@ -798,7 +844,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         callFfi: () {
           final serializer = SseSerializer(generalizedFrbRustBinding);
           sse_encode_String(password, serializer);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 18)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 19)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_password_strength,
@@ -971,12 +1017,6 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   PlatformInt64? dco_decode_opt_box_autoadd_i_64(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return raw == null ? null : dco_decode_box_autoadd_i_64(raw);
-  }
-
-  @protected
-  NewSecret? dco_decode_opt_box_autoadd_new_secret(dynamic raw) {
-    // Codec=Dco (DartCObject based), see doc to use other codecs
-    return raw == null ? null : dco_decode_box_autoadd_new_secret(raw);
   }
 
   @protected
@@ -1207,19 +1247,6 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
 
     if (sse_decode_bool(deserializer)) {
       return (sse_decode_box_autoadd_i_64(deserializer));
-    } else {
-      return null;
-    }
-  }
-
-  @protected
-  NewSecret? sse_decode_opt_box_autoadd_new_secret(
-    SseDeserializer deserializer,
-  ) {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-
-    if (sse_decode_bool(deserializer)) {
-      return (sse_decode_box_autoadd_new_secret(deserializer));
     } else {
       return null;
     }
@@ -1458,19 +1485,6 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
-  void sse_encode_opt_box_autoadd_new_secret(
-    NewSecret? self,
-    SseSerializer serializer,
-  ) {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-
-    sse_encode_bool(self != null, serializer);
-    if (self != null) {
-      sse_encode_box_autoadd_new_secret(self, serializer);
-    }
-  }
-
-  @protected
   void sse_encode_password_strength(
     PasswordStrength self,
     SseSerializer serializer,
@@ -1550,18 +1564,29 @@ class VaultSessionImpl extends RustOpaque implements VaultSession {
   Future<void> delete({required String id}) => RustLib.instance.api
       .crateApiSessionVaultSessionDelete(that: this, id: id);
 
-  /// Reemplaza los datos de búsqueda. Con `new_secret` en `None` conserva
-  /// el secreto (no sale del núcleo); con `Some`, lo reemplaza.
+  /// Reemplaza los datos de búsqueda. Con `new_password` y `new_notes` en
+  /// `None` conserva el secreto, que no sale del núcleo. Con uno solo,
+  /// reemplaza esa parte y la otra no sale del núcleo. Con los dos,
+  /// reemplaza el secreto completo (repara una entrada dañada). Unas notas
+  /// en blanco las quitan.
   Future<void> edit({
     required String id,
     required EntryInput input,
-    NewSecret? newSecret,
+    String? newPassword,
+    String? newNotes,
   }) => RustLib.instance.api.crateApiSessionVaultSessionEdit(
     that: this,
     id: id,
     input: input,
-    newSecret: newSecret,
+    newPassword: newPassword,
+    newNotes: newNotes,
   );
+
+  /// Datos de búsqueda y fechas de una entrada, desde la caché del núcleo:
+  /// no toca el disco ni el secreto. Un id que no está en la lista da
+  /// `EntryNotFound`.
+  Future<EntrySummary> entry({required String id}) =>
+      RustLib.instance.api.crateApiSessionVaultSessionEntry(that: this, id: id);
 
   /// Exporta un respaldo a `dest`, que debe ser absoluta y no existir.
   /// Exige la bóveda desbloqueada.

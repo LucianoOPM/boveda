@@ -6,6 +6,8 @@ import '../src/rust/api/error.dart';
 import '../src/rust/api/session.dart';
 import '../widgets/activity_text_field.dart';
 import '../widgets/damaged_entries_banner.dart';
+import 'entry_detail_screen.dart';
+import 'entry_form_screen.dart';
 
 /// Pantalla principal: barra de búsqueda y lista filtrada (#40,
 /// detalle en `docs/superpowers/specs/2026-11-10-pantalla-principal-design.md`).
@@ -24,9 +26,12 @@ import '../widgets/damaged_entries_banner.dart';
 ///
 /// Las entradas dañadas no aparecen en la lista: nunca llegan a la caché de
 /// búsqueda del núcleo. Solo las cuenta [DamagedEntriesBanner], que va
-/// dentro de esta pantalla para salir del árbol al bloquear. Tocar una
-/// entrada todavía no hace nada (el detalle es de la #41), salvo cerrar el
-/// teclado.
+/// dentro de esta pantalla para salir del árbol al bloquear.
+///
+/// Tocar una entrada abre su detalle y el botón "+" abre el formulario de
+/// crear (#41), apilados en el `Navigator` raíz. Al volver de cualquiera de
+/// los dos se repite la búsqueda con el texto actual: la entrada pudo
+/// cambiar, eliminarse o subir en el orden de recientes.
 class SearchScreen extends StatefulWidget {
   const SearchScreen({
     super.key,
@@ -116,9 +121,59 @@ class _SearchScreenState extends State<SearchScreen> {
     _search('');
   }
 
+  /// Al volver de otra ruta: la entrada pudo cambiar, eliminarse o usarse
+  /// (revelar cambia el orden de recientes). Como el texto es el mismo, la
+  /// lista no vuelve al principio.
+  void _refresh() {
+    if (mounted) _search(_query.text);
+  }
+
+  /// Las rutas van en el `Navigator` raíz, que el bloqueo vacía.
+  MaterialPageRoute<void> _detailRoute(EntrySummary entry) {
+    return MaterialPageRoute<void>(
+      builder: (_) => EntryDetailScreen(session: widget.session, entry: entry),
+    );
+  }
+
+  Future<void> _openDetail(EntrySummary entry) async {
+    await Navigator.of(context, rootNavigator: true).push(_detailRoute(entry));
+    _refresh();
+  }
+
+  Future<void> _openCreate() async {
+    final navigator = Navigator.of(context, rootNavigator: true);
+    var created = false;
+    await navigator.push<void>(
+      MaterialPageRoute(
+        builder: (_) => EntryFormScreen.create(
+          session: widget.session,
+          onCreated: (entry) async {
+            created = true;
+            // El detalle de la entrada nueva ocupa el lugar del formulario:
+            // muestra lo que el núcleo guardó, aunque el texto de búsqueda
+            // no coincida con ella. Este futuro es el del detalle y se
+            // completa al volver a la lista.
+            await navigator.pushReplacement<void, void>(_detailRoute(entry));
+            _refresh();
+          },
+        ),
+      ),
+    );
+    // Con `pushReplacement`, el futuro del formulario se completa en el
+    // reemplazo, con el detalle todavía encima (`navigator.dart`, Flutter
+    // 3.47.9: la ruta reemplazada recibe `didComplete`). Solo cuenta si el
+    // formulario salió sin crear.
+    if (!created) _refresh();
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      floatingActionButton: FloatingActionButton(
+        tooltip: 'Agregar contraseña',
+        onPressed: _openCreate,
+        child: const Icon(Icons.add),
+      ),
       body: SafeArea(
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -186,7 +241,8 @@ class _SearchScreenState extends State<SearchScreen> {
           padding: const EdgeInsets.all(16),
           child: Text(
             text.isEmpty
-                ? 'Todavía no hay contraseñas guardadas'
+                ? 'Todavía no hay contraseñas guardadas. '
+                      'Toca + para agregar la primera.'
                 : 'Sin resultados para «$text»',
             textAlign: TextAlign.center,
           ),
@@ -196,17 +252,24 @@ class _SearchScreenState extends State<SearchScreen> {
     return ListView.builder(
       controller: _scroll,
       keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+      // Espacio para que el botón "+" no tape la última entrada.
+      padding: const EdgeInsets.only(bottom: 88),
       itemCount: results.length,
-      itemBuilder: (context, index) => _EntryTile(entry: results[index]),
+      itemBuilder: (context, index) {
+        final entry = results[index];
+        return _EntryTile(entry: entry, onTap: () => _openDetail(entry));
+      },
     );
   }
 }
 
 /// Un elemento de la lista: inicial, servicio y usuario (o la URL).
 class _EntryTile extends StatelessWidget {
-  _EntryTile({required this.entry}) : super(key: ValueKey(entry.id));
+  _EntryTile({required this.entry, required this.onTap})
+    : super(key: ValueKey(entry.id));
 
   final EntrySummary entry;
+  final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
@@ -218,6 +281,7 @@ class _EntryTile extends StatelessWidget {
         : service.characters.first.toUpperCase();
     final detail = entry.username ?? entry.url;
     return ListTile(
+      onTap: onTap,
       // El lector de pantalla no lee la letra antes del servicio.
       leading: ExcludeSemantics(child: CircleAvatar(child: Text(initial))),
       title: Text(service),

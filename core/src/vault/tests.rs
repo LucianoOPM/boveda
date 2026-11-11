@@ -709,6 +709,237 @@ fn replace_on_missing_entry_is_not_found() {
     );
 }
 
+// --- Reemplazo de una sola parte del secreto ---------------------------
+
+fn replace_password(text: &str) -> SecretChange {
+    SecretChange::ReplacePassword(password(text))
+}
+
+fn replace_notes(text: Option<&str>) -> SecretChange {
+    SecretChange::ReplaceNotes(text.map(password))
+}
+
+#[test]
+fn replace_password_keeps_notes() {
+    let (_dir, _path, mut vault) = new_vault();
+    let id = add_sample(&mut vault, "gmail");
+    vault
+        .edit(
+            id,
+            search_with_tags("gmail", &[]),
+            replace_password("nueva"),
+        )
+        .unwrap();
+    let revealed = vault.reveal(id).unwrap();
+    assert_eq!(revealed.password().expose_secret(), "nueva");
+    assert_eq!(revealed.notes().unwrap().expose_secret(), "notas de prueba");
+
+    // También sobre una entrada sin notas.
+    let search = search_with_tags("sin-notas", &[]);
+    let secret = Secret::new(password("vieja"), None).unwrap();
+    let bare = vault.add(search, secret).unwrap();
+    vault
+        .edit(
+            bare,
+            search_with_tags("sin-notas", &[]),
+            replace_password("otra"),
+        )
+        .unwrap();
+    let revealed = vault.reveal(bare).unwrap();
+    assert_eq!(revealed.password().expose_secret(), "otra");
+    assert!(revealed.notes().is_none());
+}
+
+#[test]
+fn replace_notes_keeps_password() {
+    let (_dir, _path, mut vault) = new_vault();
+    let id = add_sample(&mut vault, "gmail");
+    vault
+        .edit(
+            id,
+            search_with_tags("gmail", &[]),
+            replace_notes(Some("notas nuevas")),
+        )
+        .unwrap();
+    let revealed = vault.reveal(id).unwrap();
+    assert_eq!(revealed.password().expose_secret(), "clave-gmail");
+    assert_eq!(revealed.notes().unwrap().expose_secret(), "notas nuevas");
+
+    vault
+        .edit(
+            id,
+            search_with_tags("gmail", &[]),
+            replace_notes(Some("  ")),
+        )
+        .unwrap();
+    let revealed = vault.reveal(id).unwrap();
+    assert_eq!(revealed.password().expose_secret(), "clave-gmail");
+    assert!(revealed.notes().is_none());
+
+    vault
+        .edit(id, search_with_tags("gmail", &[]), replace_notes(Some("x")))
+        .unwrap();
+    vault
+        .edit(id, search_with_tags("gmail", &[]), replace_notes(None))
+        .unwrap();
+    assert!(vault.reveal(id).unwrap().notes().is_none());
+}
+
+#[test]
+fn partial_replace_updates_modified_not_last_used() {
+    for change in [replace_password("nueva"), replace_notes(Some("otras"))] {
+        let (_dir, path, mut vault) = new_vault();
+        let id = add_sample(&mut vault, "gmail");
+        vault.reveal(id).unwrap();
+        let before = row_bytes(&path, id);
+
+        vault
+            .edit(id, search_with_tags("gmail", &["personal"]), change)
+            .unwrap();
+
+        let after = row_bytes(&path, id);
+        assert_ne!(after.0, before.0);
+        assert_ne!(after.1, before.1);
+        assert!(after.2 >= before.2);
+        assert_eq!(after.3, before.3);
+        let summary = find(&vault, id);
+        assert_eq!(summary.search().tags(), ["personal"]);
+        assert_eq!(summary.modified_at(), after.2);
+        assert_eq!(summary.last_used_at(), before.3);
+    }
+}
+
+#[test]
+fn partial_replace_on_corrupt_secret_is_corrupt_and_unchanged() {
+    for change in [replace_password("nueva"), replace_notes(Some("otras"))] {
+        let (_dir, path, mut vault) = new_vault();
+        let id = add_sample(&mut vault, "gmail");
+        tamper(&path, id, "secret");
+        let before = fs::read(&path).unwrap();
+        assert_eq!(
+            vault.edit(id, search_with_tags("gmail", &[]), change).err(),
+            Some(Error::CorruptEntry)
+        );
+        assert_eq!(fs::read(&path).unwrap(), before);
+    }
+}
+
+#[test]
+fn partial_replace_on_unreadable_row_is_corrupt_and_unchanged() {
+    for change in [replace_password("nueva"), replace_notes(Some("otras"))] {
+        let (_dir, path, mut vault) = new_vault();
+        let id = add_sample(&mut vault, "b");
+        set_column(&path, id, "entry_schema_version", 70_000);
+        relock(&mut vault);
+        let before = fs::read(&path).unwrap();
+        assert_eq!(
+            vault.edit(id, search_with_tags("b", &[]), change).err(),
+            Some(Error::CorruptEntry)
+        );
+        assert_eq!(fs::read(&path).unwrap(), before);
+    }
+}
+
+#[test]
+fn partial_replace_with_invalid_value_is_invalid_and_unchanged() {
+    use crate::error::InvalidEntryField::{NotesTooLong, PasswordEmpty, PasswordTooLong};
+    let cases = [
+        (replace_password(""), PasswordEmpty),
+        (replace_password(&"a".repeat(1025)), PasswordTooLong),
+        (replace_notes(Some(&"n".repeat(16385))), NotesTooLong),
+    ];
+    for (change, field) in cases {
+        let (_dir, path, mut vault) = new_vault();
+        let id = add_sample(&mut vault, "gmail");
+        let before = fs::read(&path).unwrap();
+        assert_eq!(
+            vault.edit(id, search_with_tags("gmail", &[]), change).err(),
+            Some(Error::InvalidEntry(field))
+        );
+        assert_eq!(fs::read(&path).unwrap(), before);
+    }
+}
+
+#[test]
+fn invalid_value_wins_over_corrupt_secret() {
+    use crate::error::InvalidEntryField::{NotesTooLong, PasswordEmpty};
+    let cases = [
+        (replace_password(""), PasswordEmpty),
+        (replace_notes(Some(&"n".repeat(16385))), NotesTooLong),
+    ];
+    for (change, field) in cases {
+        let (_dir, path, mut vault) = new_vault();
+        let id = add_sample(&mut vault, "gmail");
+        tamper(&path, id, "secret");
+        assert_eq!(
+            vault.edit(id, search_with_tags("gmail", &[]), change).err(),
+            Some(Error::InvalidEntry(field))
+        );
+    }
+}
+
+#[test]
+fn partial_replace_locked_and_missing() {
+    let (_dir, _path, mut vault) = new_vault();
+    let id = add_sample(&mut vault, "gmail");
+    let deleted = add_sample(&mut vault, "borrada");
+    vault.delete(deleted).unwrap();
+    let missing = EntryId::from_bytes([7; 16]);
+    for target in [missing, deleted] {
+        assert_eq!(
+            vault
+                .edit(target, search_with_tags("x", &[]), replace_password("n"))
+                .err(),
+            Some(Error::EntryNotFound)
+        );
+        assert_eq!(
+            vault
+                .edit(target, search_with_tags("x", &[]), replace_notes(None))
+                .err(),
+            Some(Error::EntryNotFound)
+        );
+    }
+    vault.lock();
+    assert_eq!(
+        vault
+            .edit(id, search_with_tags("x", &[]), replace_password("n"))
+            .err(),
+        Some(Error::Locked)
+    );
+    assert_eq!(
+        vault
+            .edit(id, search_with_tags("x", &[]), replace_notes(None))
+            .err(),
+        Some(Error::Locked)
+    );
+}
+
+#[test]
+fn partial_replace_does_not_leak_in_debug_or_errors() {
+    let texts = [
+        format!("{:?}", replace_password("clave-Zk9-secreta")),
+        format!("{:?}", replace_notes(Some("notas-Zk9-secretas"))),
+    ];
+    for text in texts {
+        assert!(!text.contains("Zk9"), "{text}");
+    }
+
+    let (_dir, path, mut vault) = new_vault();
+    let id = add_sample(&mut vault, "gmail");
+    tamper(&path, id, "secret");
+    for change in [
+        replace_password("clave-Zk9-secreta"),
+        replace_notes(Some("notas-Zk9-secretas")),
+    ] {
+        let e = vault
+            .edit(id, search_with_tags("gmail", &[]), change)
+            .err()
+            .unwrap();
+        let text = format!("{e} {e:?}");
+        assert!(!text.contains("Zk9"), "{text}");
+    }
+}
+
 // --- change_master_password --------------------------------------------
 
 /// La fila de `header` completa: sal, nonce y llave cifrada.
@@ -1397,4 +1628,66 @@ fn unlock_and_import_ignore_the_minimum() {
     let dest = dir.path().join("importada.db");
     let (imported, _report) = Vault::import(&backup, &dest, &password("corta")).unwrap();
     assert!(!imported.is_locked());
+}
+
+// --- entry -------------------------------------------------------------
+
+#[test]
+fn entry_matches_entries() {
+    let (_dir, _path, mut vault) = new_vault();
+    add_sample(&mut vault, "gmail");
+    add_sample(&mut vault, "banco");
+    for expected in vault.entries().unwrap() {
+        let found = vault.entry(expected.id()).unwrap();
+        assert_eq!(found.id(), expected.id());
+        assert!(found.search() == expected.search());
+        assert_eq!(found.modified_at(), expected.modified_at());
+        assert_eq!(found.last_used_at(), expected.last_used_at());
+    }
+}
+
+#[test]
+fn entry_reflects_edit_and_reveal() {
+    let (_dir, _path, mut vault) = new_vault();
+    let id = add_sample(&mut vault, "gmail");
+    assert_eq!(vault.entry(id).unwrap().last_used_at(), None);
+
+    vault
+        .edit(id, search_with_tags("correo", &["x"]), SecretChange::Keep)
+        .unwrap();
+    assert_eq!(vault.entry(id).unwrap().search().service(), "correo");
+
+    vault.reveal(id).unwrap();
+    assert!(vault.entry(id).unwrap().last_used_at().is_some());
+}
+
+#[test]
+fn entry_not_found_cases() {
+    let (_dir, path, mut vault) = new_vault();
+    let deleted = add_sample(&mut vault, "borrada");
+    let damaged = add_sample(&mut vault, "dañada");
+    vault.delete(deleted).unwrap();
+    tamper(&path, damaged, "search");
+    assert_eq!(relock(&mut vault).corrupt, vec![damaged]);
+
+    for id in [EntryId::from_bytes([7; 16]), deleted, damaged] {
+        assert_eq!(vault.entry(id).err(), Some(Error::EntryNotFound));
+    }
+}
+
+#[test]
+fn entry_with_corrupt_secret_is_returned() {
+    let (_dir, path, mut vault) = new_vault();
+    let id = add_sample(&mut vault, "gmail");
+    tamper(&path, id, "secret");
+    relock(&mut vault);
+    assert_eq!(vault.entry(id).unwrap().search().service(), "gmail");
+}
+
+#[test]
+fn entry_locked() {
+    let (_dir, _path, mut vault) = new_vault();
+    let id = add_sample(&mut vault, "gmail");
+    vault.lock();
+    assert_eq!(vault.entry(id).err(), Some(Error::Locked));
 }

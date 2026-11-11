@@ -33,8 +33,11 @@ class ActivityTextField extends StatelessWidget {
     this.autocorrect = true,
     this.enableIMEPersonalizedLearning = true,
     this.keyboardType,
+    this.textCapitalization = TextCapitalization.none,
+    this.minLines,
     this.maxLines = 1,
     this.decoration = const InputDecoration(),
+    this.copyable = true,
   });
 
   final TextEditingController controller;
@@ -49,13 +52,42 @@ class ActivityTextField extends StatelessWidget {
   final bool autocorrect;
   final bool enableIMEPersonalizedLearning;
   final TextInputType? keyboardType;
+  final TextCapitalization textCapitalization;
+  final int? minLines;
   final int? maxLines;
   final InputDecoration? decoration;
 
+  /// Con `false`, lo escrito no se puede copiar ni cortar: ni con el menú
+  /// de selección, que solo ofrece pegar y seleccionar todo (tampoco
+  /// compartir ni las acciones de otras apps), ni con el atajo de un teclado
+  /// físico. Es para los campos que muestran un secreto: copiarlo es una
+  /// acción aparte, que marca el contenido como sensible. Pegar sigue
+  /// funcionando.
+  final bool copyable;
+
+  /// Menú de selección sin ninguna acción que saque el texto del campo.
+  static Widget _pasteOnlyMenu(BuildContext context, EditableTextState state) {
+    return AdaptiveTextSelectionToolbar.buttonItems(
+      anchors: state.contextMenuAnchors,
+      buttonItems: [
+        for (final item in state.contextMenuButtonItems)
+          if (item.type == ContextMenuButtonType.paste ||
+              item.type == ContextMenuButtonType.selectAll)
+            item,
+      ],
+    );
+  }
+
+  /// El menú por omisión de `TextField`.
+  static Widget _defaultMenu(BuildContext context, EditableTextState state) {
+    return AdaptiveTextSelectionToolbar.editableText(editableTextState: state);
+  }
+
   @override
   Widget build(BuildContext context) {
-    return TextField(
+    final field = TextField(
       controller: controller,
+      contextMenuBuilder: copyable ? _defaultMenu : _pasteOnlyMenu,
       enabled: enabled,
       onChanged: (value) {
         AutoLockScope.maybeOf(context)?.reportActivity();
@@ -72,8 +104,17 @@ class ActivityTextField extends StatelessWidget {
       autocorrect: autocorrect,
       enableIMEPersonalizedLearning: enableIMEPersonalizedLearning,
       keyboardType: keyboardType,
+      textCapitalization: textCapitalization,
+      minLines: minLines,
       maxLines: maxLines,
       decoration: decoration,
+    );
+    if (copyable) return field;
+    // Copiar y cortar comparten esta intención: sin ella, Ctrl+C y Ctrl+X
+    // de un teclado físico no hacen nada.
+    return Actions(
+      actions: {CopySelectionTextIntent: DoNothingAction(consumesKey: false)},
+      child: field,
     );
   }
 }

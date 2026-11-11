@@ -8,7 +8,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use secrecy::{ExposeSecret, SecretBox, SecretString};
-use vault_core::vault::{EntryId, Error, SearchData, Secret, UnlockReport, Vault};
+use vault_core::vault::{EntryId, Error, SearchData, Secret, SecretChange, UnlockReport, Vault};
 
 fn password(text: &str) -> SecretString {
     SecretString::from(text)
@@ -512,4 +512,78 @@ fn migrated_vault_key_survives_password_change_with_calibration() {
     vault.lock();
     assert_eq!(vault.unlock_with_key(key).unwrap(), clean_report());
     assert_eq!(vault.entries().unwrap().len(), 3);
+}
+
+#[test]
+fn partial_secret_replace_survives_reopen() {
+    let (_dir, path) = fixture_copy_of("vault-v2.db");
+    let mut vault = Vault::open(&path).unwrap();
+    vault.unlock(&password(FIXTURE_V2_PASSWORD)).unwrap();
+    let mail = id_of(&vault, "Correo Electrónico");
+    let bank = id_of(&vault, "Banco");
+
+    // Solo la contraseña: las notas no salen del núcleo y se conservan.
+    let search = SearchData::new("Correo Electrónico", None, None, &[]).unwrap();
+    vault
+        .edit(
+            mail,
+            search,
+            SecretChange::ReplacePassword(password("clave-nueva")),
+        )
+        .unwrap();
+    // Solo las notas: la contraseña se conserva.
+    let search = SearchData::new("Banco", None, None, &[]).unwrap();
+    vault
+        .edit(
+            bank,
+            search,
+            SecretChange::ReplaceNotes(Some(password("PIN en la libreta"))),
+        )
+        .unwrap();
+
+    drop(vault);
+    let mut vault = Vault::open(&path).unwrap();
+    assert_eq!(
+        vault.unlock(&password(FIXTURE_V2_PASSWORD)).unwrap(),
+        clean_report()
+    );
+    assert_eq!(
+        revealed(&mut vault, "Correo Electrónico"),
+        (
+            "clave-nueva".to_owned(),
+            Some("Línea uno\nLínea dos".to_owned())
+        )
+    );
+    assert_eq!(
+        revealed(&mut vault, "Banco"),
+        (
+            "clave-minima".to_owned(),
+            Some("PIN en la libreta".to_owned())
+        )
+    );
+    assert_eq!(
+        revealed(&mut vault, "Nube"),
+        ("clave-nube".to_owned(), None)
+    );
+}
+
+#[test]
+fn entry_by_id_on_fixture() {
+    let (_dir, path) = fixture_copy_of("vault-v2.db");
+    let mut vault = Vault::open(&path).unwrap();
+    let id = EntryId::from_bytes([7; 16]);
+    assert_eq!(vault.entry(id).err(), Some(Error::Locked));
+    vault.unlock(&password(FIXTURE_V2_PASSWORD)).unwrap();
+    assert_eq!(vault.entry(id).err(), Some(Error::EntryNotFound));
+
+    let mail = id_of(&vault, "Correo Electrónico");
+    let entry = vault.entry(mail).unwrap();
+    assert_eq!(entry.id(), mail);
+    assert_eq!(entry.search().username(), Some("ana@example.com"));
+    assert_eq!(entry.last_used_at(), None);
+
+    vault.reveal(mail).unwrap();
+    assert!(vault.entry(mail).unwrap().last_used_at().is_some());
+    vault.delete(mail).unwrap();
+    assert_eq!(vault.entry(mail).err(), Some(Error::EntryNotFound));
 }
