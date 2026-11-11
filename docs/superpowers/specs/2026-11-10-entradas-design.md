@@ -493,6 +493,19 @@ mobile/integration_test/vault_session_test.dart
 - `mobile/CLAUDE.md`: la regla de la contraseña se extiende a las notas; los textos revelados no son seleccionables; el formulario no valida ni recorta, lo hace el núcleo.
 - `docs/roadmap.md`: marcar el punto en un commit propio, **solo después** de la prueba a mano.
 
+## Hallazgos de la implementación
+
+1. **El formulario no es un `ListView`.** Es un `SingleChildScrollView` con una `Column`, también con `keyboardDismissBehavior: onDrag`. Un `ListView` no construye los campos que quedan fuera de la pantalla, y tras un error de validación no se le podría dar el foco al campo señalado.
+2. **`Semantics` necesita `container: true`.** Sin él, "Contraseña oculta" no forma un nodo propio y el lector de pantalla no lo expone.
+3. **El texto pendiente de etiquetas no pasa por `onChanged` de `TagsField`**, que avisa de los chips. El formulario escucha su controlador para contarlo como cambio (para "¿Descartar cambios?") y para borrar el error de las etiquetas.
+4. **"Guardar" también se desactiva mientras cargan las notas**, para no guardar con la sección a medio abrir.
+5. **El campo de etiquetas lleva la ayuda "Enter o coma para agregar"**: sin ella no hay forma de descubrir el gesto.
+6. **La lista de la pantalla principal lleva un margen inferior** para que el botón "+" no tape la última entrada.
+7. **Búsqueda al bloquear con una ruta apilada.** Al quitar el detalle o el formulario, su futuro se completa y la pantalla principal, que con la app oculta sigue montada hasta el siguiente cuadro, repite la búsqueda. El núcleo ya está bloqueado, responde `locked` y la pantalla lo ignora, como en la carrera que ya cubría la #40. No cruza ningún dato y no se evita.
+8. **Precedencia en `edit`.** Como el valor nuevo se valida antes de leer la fila, un valor no válido sobre un id inexistente da `InvalidEntry`, no `EntryNotFound`.
+9. **Las pruebas de `TagsField` viven en `test/tags_field_test.dart`**, no en `widgets_test.dart`.
+10. **`entry` en el doble de sesión.** Dentro de `FakeVaultSession`, el método `entry` oculta la función `entry(...)` que arma resúmenes de prueba; el doble la usa con otro nombre (`_summary`).
+
 ## PR
 
 Con el formato habitual (Resumen, Decisiones de implementación, Criterios de aceptación con casillas, Verificación local, `Closes #41`), e incluye los doce casos de la prueba a mano marcados, el emulador y la versión de Android.
