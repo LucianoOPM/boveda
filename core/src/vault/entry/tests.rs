@@ -604,3 +604,81 @@ fn same_tag_ignoring_case_handles_length_changes() {
     assert!(!same_tag_ignoring_case("ab", "abc"));
     assert_eq!(tags_of(&["Ⱥx", "ⱥX"]).unwrap(), ["Ⱥx"]);
 }
+
+// --- Reemplazo de una sola parte del secreto ---
+
+fn secret_text(text: &str) -> SecretString {
+    SecretString::from(text)
+}
+
+#[test]
+fn check_password_applies_secret_rules() {
+    assert_eq!(
+        Secret::check_password(&secret_text("")),
+        Err(Error::InvalidEntry(InvalidEntryField::PasswordEmpty))
+    );
+    assert_eq!(
+        Secret::check_password(&secret_text(&"a".repeat(MAX_PASSWORD_LEN))),
+        Ok(())
+    );
+    assert_eq!(
+        Secret::check_password(&secret_text(&"a".repeat(MAX_PASSWORD_LEN + 1))),
+        Err(Error::InvalidEntry(InvalidEntryField::PasswordTooLong))
+    );
+}
+
+#[test]
+fn normalize_notes_applies_secret_rules() {
+    assert!(Secret::normalize_notes(None).unwrap().is_none());
+    assert!(
+        Secret::normalize_notes(Some(secret_text("  \n")))
+            .unwrap()
+            .is_none()
+    );
+    let kept = Secret::normalize_notes(Some(secret_text(&"n".repeat(MAX_NOTES_LEN)))).unwrap();
+    assert_eq!(kept.unwrap().expose_secret().len(), MAX_NOTES_LEN);
+    assert_eq!(
+        Secret::normalize_notes(Some(secret_text(&"n".repeat(MAX_NOTES_LEN + 1)))).err(),
+        Some(Error::InvalidEntry(InvalidEntryField::NotesTooLong))
+    );
+}
+
+#[test]
+fn with_password_keeps_notes() {
+    let old = secret("vieja", Some(" notas ")).unwrap();
+    let new = old.with_password(secret_text("nueva")).unwrap();
+    assert_eq!(new.password().expose_secret(), "nueva");
+    assert_eq!(new.notes().unwrap().expose_secret(), " notas ");
+
+    let without = secret("vieja", None).unwrap();
+    let new = without.with_password(secret_text("nueva")).unwrap();
+    assert!(new.notes().is_none());
+
+    let old = secret("vieja", None).unwrap();
+    assert_eq!(
+        old.with_password(secret_text("")).err(),
+        Some(Error::InvalidEntry(InvalidEntryField::PasswordEmpty))
+    );
+}
+
+#[test]
+fn with_notes_keeps_password() {
+    let old = secret(" vieja ", Some("antes")).unwrap();
+    let new = old.with_notes(Some(secret_text("después"))).unwrap();
+    assert_eq!(new.password().expose_secret(), " vieja ");
+    assert_eq!(new.notes().unwrap().expose_secret(), "después");
+
+    let old = secret("vieja", Some("antes")).unwrap();
+    assert!(old.with_notes(None).unwrap().notes().is_none());
+    let old = secret("vieja", Some("antes")).unwrap();
+    let blank = old.with_notes(Some(secret_text("  "))).unwrap();
+    assert!(blank.notes().is_none());
+    assert_eq!(blank.password().expose_secret(), "vieja");
+
+    let old = secret("vieja", None).unwrap();
+    assert_eq!(
+        old.with_notes(Some(secret_text(&"n".repeat(MAX_NOTES_LEN + 1))))
+            .err(),
+        Some(Error::InvalidEntry(InvalidEntryField::NotesTooLong))
+    );
+}
