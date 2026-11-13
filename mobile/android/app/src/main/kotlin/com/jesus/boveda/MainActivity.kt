@@ -6,6 +6,7 @@ import io.flutter.plugin.common.MethodChannel
 
 class MainActivity : FlutterActivity() {
     private val biometric = BiometricVault(this)
+    private val localClipboard = LocalClipboard(this)
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
@@ -23,6 +24,16 @@ class MainActivity : FlutterActivity() {
         // Huella y copia de la llave de bóveda en el Keystore.
         MethodChannel(messenger, "boveda/biometric")
             .setMethodCallHandler(biometric::handle)
+        // Copia local: contraseñas marcadas como sensibles y usuario normal.
+        MethodChannel(messenger, "boveda/clipboard")
+            .setMethodCallHandler(localClipboard::handle)
+    }
+
+    override fun onResume() {
+        super.onResume()
+        // Si el plazo venció sin foco, ahora se puede comprobar el token sin
+        // borrar un clip que otra aplicación haya puesto después.
+        localClipboard.onResume()
     }
 
     // La actividad deja de verse: el diálogo de la huella se cancela y Dart
