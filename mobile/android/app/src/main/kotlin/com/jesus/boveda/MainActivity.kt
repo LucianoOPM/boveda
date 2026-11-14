@@ -1,5 +1,7 @@
 package com.jesus.boveda
 
+import android.os.Bundle
+import android.view.WindowManager
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
@@ -7,6 +9,16 @@ import io.flutter.plugin.common.MethodChannel
 class MainActivity : FlutterActivity() {
     private val biometric = BiometricVault(this)
     private val localClipboard = LocalClipboard(this)
+
+    // Protección de pantalla (#43): la ventana se marca como segura antes de
+    // que Flutter pinte el primer cuadro. Sin capturas ni grabación de
+    // pantalla, y la miniatura de apps recientes sale sin contenido, también
+    // cuando Android la toma antes de que se pinte el desbloqueo. Vale para
+    // todas las variantes, incluida debug.
+    override fun onCreate(savedInstanceState: Bundle?) {
+        window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
+        super.onCreate(savedInstanceState)
+    }
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
