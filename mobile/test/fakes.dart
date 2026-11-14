@@ -2,6 +2,7 @@
 // de Rust y la regla de fortaleza sin cargar la librería nativa.
 
 import 'package:boveda/services/biometric_service.dart';
+import 'package:boveda/services/local_clipboard.dart';
 import 'package:boveda/src/rust/api/error.dart';
 import 'package:boveda/src/rust/api/entries.dart';
 import 'package:boveda/src/rust/api/password.dart';
@@ -19,6 +20,30 @@ const fakeNewId = '000000000000000000000000000000aa';
 /// Contraseña y notas de prueba que revela la sesión simulada por omisión.
 const fakePassword = 'secreta-de-prueba';
 const fakeNotes = 'notas de prueba';
+
+/// Una escritura al portapapeles simulado.
+typedef ClipboardCall = ({String text, bool sensitive});
+
+/// Portapapeles local simulado. Registra el texto solo dentro de las pruebas;
+/// la implementación real nunca lo guarda en estado.
+class FakeLocalClipboard implements LocalClipboard {
+  final List<ClipboardCall> calls = [];
+
+  Future<bool> Function(String text, bool sensitive) onCopy = (_, _) async =>
+      true;
+
+  @override
+  Future<bool> copyPlain(String text) {
+    calls.add((text: text, sensitive: false));
+    return onCopy(text, false);
+  }
+
+  @override
+  Future<bool> copySensitive(String text) {
+    calls.add((text: text, sensitive: true));
+    return onCopy(text, true);
+  }
+}
 
 /// Sesión simulada. Los respaldos (`exportBackup`, `importBackup`) lanzan
 /// `UnimplementedError` para que una llamada inesperada falle la prueba; el

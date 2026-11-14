@@ -311,6 +311,8 @@ Decidido el 2026-11-10 (#41, detalle en `docs/superpowers/specs/2026-11-10-entra
 - **Navegación.** Un botón "+" en la pantalla principal abre el formulario; tras crear se muestra el detalle de la entrada nueva, con lo que el núcleo guardó. Tras editar se vuelve al detalle, refrescado. Eliminar pide confirmación, no se puede deshacer y vuelve a la lista. Salir del formulario con cambios pregunta "¿Descartar cambios?". Al volver a la pantalla principal se repite la búsqueda.
 - **Bloqueo.** El bloqueo automático con un formulario a medias descarta los cambios sin preguntar: seguridad antes que comodidad.
 
+Decidido el 2026-11-12 (#42, detalle en `docs/superpowers/specs/2026-11-12-copiar-localmente-design.md`): "Copiar" pide la contraseña al núcleo por su cuenta, aunque ya esté visible, y la mantiene solo en una variable local mientras cruza el canal de Kotlin. El clip lleva `android.content.extra.IS_SENSITIVE`; el usuario se copia sin esa marca. Hasta Android 12L la app muestra el aviso de copia y desde Android 13 usa el del sistema. Una contraseña vence a los 30 segundos y solo se borra si el token de su clip sigue en el portapapeles; desde Android 10, si la app no tiene foco y no puede comprobarlo, espera a recuperar el foco en vez de borrar a ciegas. En Android 13 o posterior también aplica el borrado automático del sistema.
+
 **Ajustes.** Dispositivos emparejados, tiempo de bloqueo automático, exportar e importar respaldos y cambiar la contraseña maestra.
 
 **Protección de pantalla.** La app bloquea capturas y oculta su contenido en la vista de apps recientes.
