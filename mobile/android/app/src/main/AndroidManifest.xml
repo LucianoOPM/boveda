@@ -1,7 +1,15 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <!-- Huella para la copia de la llave de bóveda (permiso normal). -->
     <uses-permission android:name="android.permission.USE_BIOMETRIC"/>
+    <!-- Respaldo automático desactivado (#43): los respaldos van solo por el
+         flujo propio de exportar e importar. `allowBackup="false"` no siempre
+         desactiva la transferencia entre dispositivos con target 31 o mayor,
+         así que las reglas además excluyen todos los datos: `dataExtractionRules`
+         en Android 12 o posterior y `fullBackupContent` en los anteriores. -->
     <application
+        android:allowBackup="false"
+        android:dataExtractionRules="@xml/data_extraction_rules"
+        android:fullBackupContent="@xml/backup_rules"
         android:label="Bóveda"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
