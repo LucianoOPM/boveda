@@ -48,7 +48,7 @@ Resultado: un gestor de contraseñas usable en tu celular, con búsqueda y respa
 - [x] Pantalla principal con la barra de búsqueda y la lista filtrándose al escribir (#40; sin foco inicial: el teclado sale al tocar el campo).
 - [x] Detalle, creación, edición y eliminación de entradas; mostrar u ocultar la contraseña (#41).
 - [ ] Copiar localmente con el contenido marcado como sensible (#42; falta la prueba manual en emulador).
-- [ ] Bloqueo de capturas de pantalla y contenido oculto en apps recientes, y respaldo automático de Android desactivado (#43; falta la prueba manual en emulador y en el celular).
+- [ ] Bloqueo de capturas de pantalla y contenido oculto en apps recientes, y respaldo automático de Android desactivado (#43; probado a mano en el celular, falta la captura en el emulador).
 - [ ] Exportar e importar el respaldo usando el selector de archivos del sistema.
 
 **Se cierra cuando** ya guardas en ella tus contraseñas reales y restauraste un respaldo con éxito en un emulador limpio.
