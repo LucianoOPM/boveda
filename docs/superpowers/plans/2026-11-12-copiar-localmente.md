@@ -28,7 +28,8 @@ contraseña justo antes de copiarla y recibe el servicio por inyección.
 - [x] Probar `copySensitive`, `copyPlain`, feedback y errores genéricos.
 - [x] Implementar los dos métodos del canal.
 - [x] Marcar solo el clip sensible y programar el borrado condicional.
-- [x] Reintentar un borrado vencido en `MainActivity.onResume`.
+- [x] Reintentar un borrado vencido en `MainActivity.onWindowFocusChanged`
+  (en `onResume` la ventana aún no tiene el foco y la lectura falla).
 
 ### Task 2: detalle y pruebas de widgets
 

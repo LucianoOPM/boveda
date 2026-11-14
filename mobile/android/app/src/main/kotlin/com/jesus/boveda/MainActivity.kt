@@ -29,11 +29,13 @@ class MainActivity : FlutterActivity() {
             .setMethodCallHandler(localClipboard::handle)
     }
 
-    override fun onResume() {
-        super.onResume()
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
         // Si el plazo venció sin foco, ahora se puede comprobar el token sin
-        // borrar un clip que otra aplicación haya puesto después.
-        localClipboard.onResume()
+        // borrar un clip que otra aplicación haya puesto después. No sirve
+        // `onResume`: llega antes que el foco y el portapapeles aún no se
+        // puede leer.
+        if (hasFocus) localClipboard.onWindowFocusGained()
     }
 
     // La actividad deja de verse: el diálogo de la huella se cancela y Dart

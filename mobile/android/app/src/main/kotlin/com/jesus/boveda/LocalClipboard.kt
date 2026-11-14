@@ -78,8 +78,12 @@ class LocalClipboard(private val context: Context) {
         }
     }
 
-    /** Vuelve a intentar un borrado vencido al recuperar el foco. */
-    fun onResume() {
+    /**
+     * Vuelve a intentar un borrado vencido cuando la ventana recupera el
+     * foco. En `onResume` todavía no lo tiene y, desde Android 10, leer el
+     * portapapeles devuelve `null`: el reintento no borraría nada.
+     */
+    fun onWindowFocusGained() {
         clearIfExpired()
     }
 
@@ -109,8 +113,8 @@ class LocalClipboard(private val context: Context) {
             activeToken = null
             expired = false
         } catch (_: Exception) {
-            // Mejor esfuerzo: sin foco no se borra a ciegas. Se reintenta en
-            // onResume mientras el proceso conserve el token.
+            // Mejor esfuerzo: sin foco no se borra a ciegas. Se reintenta al
+            // recuperarlo mientras el proceso conserve el token.
         }
     }
 
