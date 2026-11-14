@@ -4,6 +4,7 @@ import 'dart:async';
 
 import 'package:boveda/screens/entry_detail_screen.dart';
 import 'package:boveda/screens/entry_form_screen.dart';
+import 'package:boveda/services/local_clipboard.dart';
 import 'package:boveda/src/rust/api/entries.dart';
 import 'package:boveda/src/rust/api/error.dart';
 import 'package:flutter/material.dart';
@@ -12,6 +13,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'fakes.dart';
 
 late FakeVaultSession session;
+late FakeLocalClipboard clipboard;
 
 final detail = find.byType(EntryDetailScreen);
 final showPassword = find.widgetWithText(TextButton, 'Mostrar');
@@ -22,6 +24,8 @@ final editAction = find.byTooltip('Editar');
 final deleteAction = find.byTooltip('Eliminar');
 final editButton = find.widgetWithIcon(IconButton, Icons.edit);
 final deleteButton = find.widgetWithIcon(IconButton, Icons.delete);
+final copyPassword = find.byKey(const Key('copy-password'));
+final copyUsername = find.byKey(const Key('copy-username'));
 
 const damagedText = 'La contraseña y las notas de esta entrada están dañadas';
 const revealFailedText = 'No se pudo mostrar. Intenta de nuevo.';
@@ -67,6 +71,7 @@ Future<void> pumpDetail(
                     session: session,
                     entry: of ?? gmail,
                     openForm: openForm,
+                    clipboard: clipboard,
                   ),
                 ),
               ),
@@ -104,6 +109,7 @@ void removeDetailRoute(WidgetTester tester) {
 void main() {
   setUp(() {
     session = FakeVaultSession();
+    clipboard = FakeLocalClipboard();
     formCalls.clear();
     onForm = () async => true;
   });
@@ -179,6 +185,159 @@ void main() {
   });
 
   group('contraseña', () {
+    testWidgets('"Copiar" revela por su cuenta y usa el canal sensible', (
+      tester,
+    ) async {
+      await pumpDetail(tester);
+      await tapAndPump(tester, copyPassword);
+
+      expect(session.revealPasswordCalls, [gmail.id]);
+      expect(clipboard.calls, [(text: fakePassword, sensitive: true)]);
+      expect(find.text(fakePassword), findsNothing);
+      expect(find.text('Contraseña copiada'), findsOneWidget);
+    });
+
+    testWidgets('copia con otra revelación aunque ya esté visible', (
+      tester,
+    ) async {
+      await pumpDetail(tester);
+      await tapAndPump(tester, showPassword);
+      await tapAndPump(tester, copyPassword);
+
+      expect(session.revealPasswordCalls, [gmail.id, gmail.id]);
+      expect(clipboard.calls.single.sensitive, isTrue);
+      expect(find.text(fakePassword), findsOneWidget);
+    });
+
+    testWidgets('Android 13 avisa por su cuenta y no duplica el aviso', (
+      tester,
+    ) async {
+      clipboard.onCopy = (_, _) async => false;
+      await pumpDetail(tester);
+      await tapAndPump(tester, copyPassword);
+
+      expect(clipboard.calls, hasLength(1));
+      expect(find.text('Contraseña copiada'), findsNothing);
+    });
+
+    testWidgets('durante la copia no permite una segunda ni mostrar', (
+      tester,
+    ) async {
+      final pending = Completer<String>();
+      session.onRevealPassword = (_) => pending.future;
+      await pumpDetail(tester);
+      await tapAndPump(tester, copyPassword);
+
+      expect(enabled(tester, copyPassword), isFalse);
+      expect(enabled(tester, showPassword), isFalse);
+      await tester.tap(copyPassword, warnIfMissed: false);
+      expect(session.revealPasswordCalls, hasLength(1));
+
+      pending.complete(fakePassword);
+      await tester.pump();
+      await tester.pump();
+      expect(clipboard.calls, hasLength(1));
+    });
+
+    testWidgets('una respuesta tras quitar la ruta no llega al portapapeles', (
+      tester,
+    ) async {
+      final pending = Completer<String>();
+      session.onRevealPassword = (_) => pending.future;
+      await pumpDetail(tester);
+      await tapAndPump(tester, copyPassword);
+
+      removeDetailRoute(tester);
+      pending.complete(fakePassword);
+      await tester.idle();
+      await tester.pump();
+
+      expect(clipboard.calls, isEmpty);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('un fallo del canal muestra un error genérico', (tester) async {
+      clipboard.onCopy = (_, _) async => throw const LocalClipboardException();
+      await pumpDetail(tester);
+      await tapAndPump(tester, copyPassword);
+
+      expect(find.text('No se pudo copiar. Intenta de nuevo.'), findsOneWidget);
+      expect(find.textContaining(fakePassword), findsNothing);
+      expect(enabled(tester, copyPassword), isTrue);
+    });
+
+    testWidgets('corruptEntry al copiar muestra el aviso de dañada', (
+      tester,
+    ) async {
+      session.onRevealPassword = (_) async => throw VaultError.corruptEntry;
+      await pumpDetail(tester);
+      await tapAndPump(tester, copyPassword);
+
+      expect(clipboard.calls, isEmpty);
+      expect(find.text(damagedText), findsOneWidget);
+      expect(copyPassword, findsNothing);
+    });
+
+    testWidgets('una copia invalidada por las notas dañadas no deja el aviso '
+        'sin botones', (tester) async {
+      final notes = Completer<String?>();
+      final password = Completer<String>();
+      session.onRevealNotes = (_) => notes.future;
+      session.onRevealPassword = (_) => password.future;
+      await pumpDetail(tester);
+      await tapAndPump(tester, showNotes);
+      await tapAndPump(tester, copyPassword);
+
+      // Las notas fallan primero y descartan la copia pendiente.
+      notes.completeError(VaultError.corruptEntry);
+      await tester.pump();
+      await tester.pump();
+      password.complete(fakePassword);
+      await tester.pump();
+      await tester.pump();
+
+      expect(clipboard.calls, isEmpty);
+      expect(find.text(damagedText), findsOneWidget);
+      expect(
+        enabled(tester, find.widgetWithText(FilledButton, 'Reparar')),
+        isTrue,
+      );
+      expect(tester.widget<IconButton>(editButton).onPressed, isNotNull);
+      expect(tester.widget<IconButton>(deleteButton).onPressed, isNotNull);
+    });
+
+    testWidgets('locked al copiar no avisa ni escribe', (tester) async {
+      session.onRevealPassword = (_) async => throw VaultError.locked;
+      await pumpDetail(tester);
+      await tapAndPump(tester, copyPassword);
+
+      expect(clipboard.calls, isEmpty);
+      expect(find.text('No se pudo copiar. Intenta de nuevo.'), findsNothing);
+      expect(copyPassword, findsOneWidget);
+    });
+
+    testWidgets('entryNotFound al copiar vuelve a la lista', (tester) async {
+      session.onRevealPassword = (_) async => throw VaultError.entryNotFound;
+      await pumpDetail(tester);
+      await tester.tap(copyPassword);
+      await tester.pumpAndSettle();
+
+      expect(clipboard.calls, isEmpty);
+      expect(detail, findsNothing);
+    });
+
+    testWidgets('un error de Rust al copiar muestra el error genérico', (
+      tester,
+    ) async {
+      session.onRevealPassword = (_) async => throw VaultError.storageIo;
+      await pumpDetail(tester);
+      await tapAndPump(tester, copyPassword);
+
+      expect(clipboard.calls, isEmpty);
+      expect(find.text('No se pudo copiar. Intenta de nuevo.'), findsOneWidget);
+      expect(enabled(tester, copyPassword), isTrue);
+    });
+
     testWidgets('"Mostrar" la revela una vez; "Ocultar" la quita del árbol', (
       tester,
     ) async {
@@ -229,6 +388,23 @@ void main() {
 
       expect(tester.takeException(), isNull);
       expect(find.text('tardía'), findsNothing);
+    });
+  });
+
+  group('usuario', () {
+    testWidgets('se copia como texto normal sin llamar a Rust', (tester) async {
+      await pumpDetail(tester);
+      await tapAndPump(tester, copyUsername);
+
+      expect(clipboard.calls, [(text: 'ana@example.com', sensitive: false)]);
+      expect(session.revealPasswordCalls, isEmpty);
+      expect(find.text('Usuario copiado'), findsOneWidget);
+    });
+
+    testWidgets('sin usuario no aparece el botón de copia', (tester) async {
+      await pumpDetail(tester, of: entry('Banco'));
+
+      expect(copyUsername, findsNothing);
     });
   });
 

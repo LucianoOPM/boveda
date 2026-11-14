@@ -1,6 +1,7 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
+import '../services/local_clipboard.dart';
 import '../src/rust/api/entries.dart';
 import '../src/rust/api/error.dart';
 import '../src/rust/api/session.dart';
@@ -26,8 +27,9 @@ typedef OpenEntryForm = Future<bool?> Function(
 /// Los textos revelados viven solo en el `State` de esta pantalla. Se
 /// descartan al ocultarlos, al abrir el formulario (la pantalla cubierta no
 /// retiene nada) y al salir; el bloqueo quita la ruta, así que también pasa
-/// por `dispose`. No son seleccionables: copiar es otra acción (#42), que
-/// marca el contenido como sensible.
+/// por `dispose`. No son seleccionables: "Copiar" pide la contraseña por su
+/// cuenta y la manda al canal que marca el clip como sensible (#42), sin
+/// guardarla en el estado de la pantalla.
 ///
 /// El secreto es un solo bloque cifrado: si está dañado, lo están la
 /// contraseña y las notas, y la pantalla ofrece reparar (escribirlas de
@@ -38,6 +40,7 @@ class EntryDetailScreen extends StatefulWidget {
     required this.session,
     required this.entry,
     this.openForm,
+    this.clipboard = const PlatformLocalClipboard(),
   });
 
   final VaultSession session;
@@ -45,6 +48,10 @@ class EntryDetailScreen extends StatefulWidget {
   /// El resumen que ya tiene quien la abre: la lista, o `entry(id)` tras
   /// crear.
   final EntrySummary entry;
+
+  /// Portapapeles local. Las pruebas inyectan un doble; en Android usa el
+  /// canal que marca las contraseñas como sensibles.
+  final LocalClipboard clipboard;
 
   /// Cómo abrir el formulario. Por omisión, [EntryFormScreen] en el
   /// `Navigator` raíz; las pruebas lo reemplazan.
@@ -91,10 +98,15 @@ class _EntryDetailScreenState extends State<EntryDetailScreen> {
   int _passwordGeneration = 0;
   int _notesGeneration = 0;
 
+  /// Invalida una copia cuyo revelado todavía no terminó.
+  int _copyGeneration = 0;
+
   /// El secreto no se pudo descifrar.
   bool _damaged = false;
 
   bool _deleting = false;
+  bool _copyingPassword = false;
+  bool _copyingUsername = false;
 
   /// La ruta de esta pantalla, para saber si sigue en el `Navigator`.
   ModalRoute<Object?>? _route;
@@ -126,6 +138,7 @@ class _EntryDetailScreenState extends State<EntryDetailScreen> {
   void _discardSecrets() {
     _passwordGeneration++;
     _notesGeneration++;
+    _copyGeneration++;
     _password = null;
     _notes = null;
     _passwordState = _Reveal.hidden;
@@ -164,6 +177,91 @@ class _EntryDetailScreenState extends State<EntryDetailScreen> {
       if (!mounted || !_routeActive || generation != _notesGeneration) return;
       _onRevealError(e, () => _notesState = _Reveal.failed);
     }
+  }
+
+  Future<void> _copyPassword() async {
+    final generation = ++_copyGeneration;
+    setState(() => _copyingPassword = true);
+    try {
+      // Se revela por separado aunque ya esté visible: copiar cuenta como
+      // uso y la copia nunca se toma del estado de la pantalla.
+      final password = await widget.session.revealPassword(id: _entry.id);
+      if (!_copyStillCurrent(generation)) return;
+      final showFeedback = await widget.clipboard.copySensitive(password);
+      if (!_copyStillCurrent(generation)) return;
+      setState(() => _copyingPassword = false);
+      if (showFeedback) _showCopied('Contraseña copiada');
+    } catch (error) {
+      if (!_copyStillCurrent(generation)) return;
+      _onCopyPasswordError(error);
+    }
+  }
+
+  /// La copia de [generation] sigue vigente tras un `await`.
+  ///
+  /// Si la pantalla sigue activa pero otra operación la invalidó (unas notas
+  /// dañadas o una carrera con el bloqueo descartan los secretos), la copia
+  /// termina sin avisar y libera los botones: no hay una segunda copia en
+  /// curso, porque "Copiar" queda deshabilitado mientras dura la primera.
+  bool _copyStillCurrent(int generation) {
+    if (!mounted || !_routeActive) return false;
+    if (generation == _copyGeneration) return true;
+    setState(() => _copyingPassword = false);
+    return false;
+  }
+
+  Future<void> _copyUsername(String username) async {
+    setState(() => _copyingUsername = true);
+    try {
+      final showFeedback = await widget.clipboard.copyPlain(username);
+      if (!mounted || !_routeActive) return;
+      setState(() => _copyingUsername = false);
+      if (showFeedback) _showCopied('Usuario copiado');
+    } catch (error) {
+      if (!mounted || !_routeActive) return;
+      setState(() => _copyingUsername = false);
+      if (kDebugMode && error is! LocalClipboardException) {
+        debugPrint('copy username: ${error.runtimeType}');
+      }
+      _showCopyFailed();
+    }
+  }
+
+  void _onCopyPasswordError(Object error) {
+    switch (error) {
+      case VaultError.corruptEntry:
+        setState(() {
+          _copyingPassword = false;
+          _discardSecrets();
+          _damaged = true;
+        });
+      case VaultError.locked:
+        setState(() {
+          _copyingPassword = false;
+          _discardSecrets();
+        });
+      case VaultError.entryNotFound:
+        Navigator.of(context).pop();
+      default:
+        setState(() => _copyingPassword = false);
+        if (kDebugMode &&
+            error is! VaultError &&
+            error is! LocalClipboardException) {
+          debugPrint('copy password: ${error.runtimeType}');
+        }
+        _showCopyFailed();
+    }
+  }
+
+  void _showCopied(String message) {
+    ScaffoldMessenger.of(context)
+        .showSnackBar(SnackBar(content: Text(message)));
+  }
+
+  void _showCopyFailed() {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('No se pudo copiar. Intenta de nuevo.')),
+    );
   }
 
   /// [markFailed] deja la fila que falló con el mensaje y el botón
@@ -286,7 +384,7 @@ class _EntryDetailScreenState extends State<EntryDetailScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final canEdit = !_deleting;
+    final canEdit = !_deleting && !_copyingPassword && !_copyingUsername;
     return Scaffold(
       appBar: AppBar(
         title: Text(_entry.service, overflow: TextOverflow.ellipsis),
@@ -299,7 +397,7 @@ class _EntryDetailScreenState extends State<EntryDetailScreen> {
           IconButton(
             tooltip: 'Eliminar',
             icon: const Icon(Icons.delete),
-            onPressed: _deleting ? null : _confirmDelete,
+            onPressed: canEdit ? _confirmDelete : null,
           ),
         ],
       ),
@@ -309,7 +407,15 @@ class _EntryDetailScreenState extends State<EntryDetailScreen> {
           padding: const EdgeInsets.all(16),
           children: [
             if (_entry.username case final username?)
-              _Field(label: 'Usuario', child: Text(username)),
+              _Field(
+                label: 'Usuario',
+                action: TextButton(
+                  key: const Key('copy-username'),
+                  onPressed: canEdit ? () => _copyUsername(username) : null,
+                  child: const Text('Copiar'),
+                ),
+                child: Text(username),
+              ),
             if (_entry.url case final url?)
               _Field(label: 'URL', child: Text(url)),
             if (_entry.tags.isNotEmpty)
@@ -357,7 +463,7 @@ class _EntryDetailScreenState extends State<EntryDetailScreen> {
               ),
               const SizedBox(width: 8),
               TextButton(
-                onPressed: _deleting ? null : _confirmDelete,
+                onPressed: canEdit ? _confirmDelete : null,
                 child: const Text('Eliminar'),
               ),
             ],
@@ -370,20 +476,31 @@ class _EntryDetailScreenState extends State<EntryDetailScreen> {
   List<Widget> _secretRows() {
     final password = _password;
     final notes = _notes;
+    final passwordBusy =
+        _passwordState == _Reveal.loading || _copyingPassword || _deleting;
     return [
       _Field(
         label: 'Contraseña',
-        action: _passwordState == _Reveal.shown
-            ? TextButton(
-                onPressed: _deleting ? null : _hidePassword,
+        action: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextButton(
+              key: const Key('copy-password'),
+              onPressed: passwordBusy ? null : _copyPassword,
+              child: const Text('Copiar'),
+            ),
+            if (_passwordState == _Reveal.shown)
+              TextButton(
+                onPressed: passwordBusy ? null : _hidePassword,
                 child: const Text('Ocultar'),
               )
-            : TextButton(
-                onPressed: _passwordState == _Reveal.loading || _deleting
-                    ? null
-                    : _revealPassword,
+            else
+              TextButton(
+                onPressed: passwordBusy ? null : _revealPassword,
                 child: const Text('Mostrar'),
               ),
+          ],
+        ),
         child: switch (_passwordState) {
           _Reveal.shown when password != null => Text(
             password,
