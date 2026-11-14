@@ -57,7 +57,8 @@ desktop/src-tauri/gen/schemas/
 # --- Claude Code -----------------------------------------------------
 # .claude/ se versiona (settings, skills, rules); lo local, no.
 .claude/settings.local.json
-
+.claude/skills/*
+.agents/skills/*
 # --- Editores y sistema ----------------------------------------------
 .idea/
 .vscode/
