@@ -278,6 +278,34 @@ void main() {
       expect(copyPassword, findsNothing);
     });
 
+    testWidgets('una copia invalidada por las notas dañadas no deja el aviso '
+        'sin botones', (tester) async {
+      final notes = Completer<String?>();
+      final password = Completer<String>();
+      session.onRevealNotes = (_) => notes.future;
+      session.onRevealPassword = (_) => password.future;
+      await pumpDetail(tester);
+      await tapAndPump(tester, showNotes);
+      await tapAndPump(tester, copyPassword);
+
+      // Las notas fallan primero y descartan la copia pendiente.
+      notes.completeError(VaultError.corruptEntry);
+      await tester.pump();
+      await tester.pump();
+      password.complete(fakePassword);
+      await tester.pump();
+      await tester.pump();
+
+      expect(clipboard.calls, isEmpty);
+      expect(find.text(damagedText), findsOneWidget);
+      expect(
+        enabled(tester, find.widgetWithText(FilledButton, 'Reparar')),
+        isTrue,
+      );
+      expect(tester.widget<IconButton>(editButton).onPressed, isNotNull);
+      expect(tester.widget<IconButton>(deleteButton).onPressed, isNotNull);
+    });
+
     testWidgets('locked al copiar no avisa ni escribe', (tester) async {
       session.onRevealPassword = (_) async => throw VaultError.locked;
       await pumpDetail(tester);

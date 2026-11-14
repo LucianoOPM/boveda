@@ -186,15 +186,28 @@ class _EntryDetailScreenState extends State<EntryDetailScreen> {
       // Se revela por separado aunque ya esté visible: copiar cuenta como
       // uso y la copia nunca se toma del estado de la pantalla.
       final password = await widget.session.revealPassword(id: _entry.id);
-      if (!mounted || !_routeActive || generation != _copyGeneration) return;
+      if (!_copyStillCurrent(generation)) return;
       final showFeedback = await widget.clipboard.copySensitive(password);
-      if (!mounted || !_routeActive || generation != _copyGeneration) return;
+      if (!_copyStillCurrent(generation)) return;
       setState(() => _copyingPassword = false);
       if (showFeedback) _showCopied('Contraseña copiada');
     } catch (error) {
-      if (!mounted || !_routeActive || generation != _copyGeneration) return;
+      if (!_copyStillCurrent(generation)) return;
       _onCopyPasswordError(error);
     }
+  }
+
+  /// La copia de [generation] sigue vigente tras un `await`.
+  ///
+  /// Si la pantalla sigue activa pero otra operación la invalidó (unas notas
+  /// dañadas o una carrera con el bloqueo descartan los secretos), la copia
+  /// termina sin avisar y libera los botones: no hay una segunda copia en
+  /// curso, porque "Copiar" queda deshabilitado mientras dura la primera.
+  bool _copyStillCurrent(int generation) {
+    if (!mounted || !_routeActive) return false;
+    if (generation == _copyGeneration) return true;
+    setState(() => _copyingPassword = false);
+    return false;
   }
 
   Future<void> _copyUsername(String username) async {
