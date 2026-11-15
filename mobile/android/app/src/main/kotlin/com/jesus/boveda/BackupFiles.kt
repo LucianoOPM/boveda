@@ -49,6 +49,14 @@ class BackupFiles(private val activity: Activity) {
         }
     }
 
+    /**
+     * La actividad se destruye: el hilo de la copia no sobrevive a ella. No
+     * interrumpe una copia en curso (`shutdown`, no `shutdownNow`).
+     */
+    fun onDestroy() {
+        executor.shutdown()
+    }
+
     /** Vacía `backup-tmp/`. Se llama al arrancar, cuando no puede haber nada en curso. */
     fun cleanTempDir() {
         dir.listFiles()?.forEach { if (it.isFile) it.delete() }
@@ -171,6 +179,12 @@ class BackupFiles(private val activity: Activity) {
             FileOutputStream(pfd.fileDescriptor).use { output ->
                 from.inputStream().use { it.copyTo(output) }
                 output.flush()
+                // Durabilidad como en `copyUriToFile`; algunos proveedores no
+                // admiten `sync`, y eso no es un fallo de la copia.
+                try {
+                    output.fd.sync()
+                } catch (_: IOException) {
+                }
             }
         }
     }

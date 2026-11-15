@@ -3,7 +3,8 @@ package com.jesus.boveda
 import java.io.File
 
 /**
- * `true` solo si [path] es un archivo que cuelga directamente de [dir].
+ * `true` solo si [path] es un archivo (no un directorio) que cuelga
+ * directamente de [dir].
  *
  * Compara rutas canónicas y no texto: así `..`, un enlace simbólico que
  * apunta fuera, el propio [dir] y un directorio hermano de nombre parecido
@@ -12,6 +13,8 @@ import java.io.File
  * probarse en la JVM (#44).
  */
 fun isInsideTempDir(dir: File, path: File): Boolean {
-    val parent = path.canonicalFile.parentFile ?: return false
+    val canonical = path.canonicalFile
+    if (canonical.isDirectory) return false
+    val parent = canonical.parentFile ?: return false
     return parent == dir.canonicalFile
 }

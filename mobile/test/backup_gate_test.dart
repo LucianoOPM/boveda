@@ -112,7 +112,35 @@ void main() {
       expect(find.byType(UnlockScreen), findsOneWidget);
       expect(find.text('Respaldo guardado'), findsNothing);
     });
+
+    testWidgets('si un bloqueo ocurre durante exportBackup, no se abre el '
+        'selector, se borra el temporal y el desbloqueo avisa', (tester) async {
+      final exporting = Completer<void>();
+      session.onExportBackup = (_) => exporting.future;
+      await pumpUnlocked(tester);
+      await openSettings(tester);
+      await tester.tap(find.byKey(const Key('settings-export')));
+      await tester.pump();
+
+      await setLifecycle(tester, AppLifecycleState.hidden);
+      await setLifecycle(tester, AppLifecycleState.resumed);
+      await drain(tester);
+      expect(find.byType(UnlockScreen), findsOneWidget);
+
+      exporting.complete();
+      await drain(tester);
+
+      expect(files.calls, ['newTempPath', 'deleteTemp']);
+      expect(
+        find.text(
+          'La bóveda se bloqueó antes de guardar el respaldo. '
+          'Vuelve a exportarlo.',
+        ),
+        findsOneWidget,
+      );
+    });
   });
+
   group('importar desde Ajustes', () {
     const backupPassword = 'clave del respaldo';
 

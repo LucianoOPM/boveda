@@ -61,13 +61,21 @@ class _SettingsScreenState extends State<SettingsScreen> {
     try {
       temp = await widget.files.newTempPath();
       await widget.session.exportBackup(dest: temp);
-      final path = temp;
-      final name = backupFileName(DateTime.now());
-      Future<bool> save() => widget.files.saveTo(path, name);
-      final saved = await (scope == null
-          ? save()
-          : scope.runWithoutAutoLock(save));
-      if (saved) notice = 'Respaldo guardado';
+      if (!_visible) {
+        // Un bloqueo quitó esta pantalla durante la exportación: no se abre
+        // el selector sobre el desbloqueo. El temporal se borra en `finally`.
+        notice =
+            'La bóveda se bloqueó antes de guardar el respaldo. '
+            'Vuelve a exportarlo.';
+      } else {
+        final path = temp;
+        final name = backupFileName(DateTime.now());
+        Future<bool> save() => widget.files.saveTo(path, name);
+        final saved = await (scope == null
+            ? save()
+            : scope.runWithoutAutoLock(save));
+        if (saved) notice = 'Respaldo guardado';
+      }
     } catch (_) {
       // Sin detalles: el error puede traer rutas o datos internos.
       notice = 'No se pudo guardar el respaldo';
@@ -106,7 +114,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     // Si un bloqueo quitó esta pantalla mientras importaba, la bóveda ya
     // está bloqueada: nunca se monta la principal sobre ella. Se avisa en el
     // desbloqueo, con la contraseña que vale ahora.
-    final visible = mounted && (ModalRoute.of(context)?.isActive ?? true);
+    final visible = _visible;
     switch (result) {
       case RestoreImported(:final damagedEntries) when visible:
         widget.onImported(damagedEntries);
@@ -126,12 +134,15 @@ class _SettingsScreenState extends State<SettingsScreen> {
     }
   }
 
+  /// La pantalla sigue a la vista. `mounted` no basta: la ruta quitada con
+  /// `removeRoute` sigue montada hasta el siguiente cuadro.
+  bool get _visible => mounted && (ModalRoute.of(context)?.isActive ?? true);
+
   /// Con la pantalla a la vista, un `SnackBar`; si un bloqueo ya la quitó,
   /// el aviso va a `VaultGate`. `mounted` no basta: la ruta quitada con
   /// `removeRoute` sigue montada hasta el siguiente cuadro.
   void _announce(String text, bool isError) {
-    final visible = mounted && (ModalRoute.of(context)?.isActive ?? true);
-    if (visible) {
+    if (_visible) {
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(text)));
     } else {
       widget.onNotice(text, isError: isError);

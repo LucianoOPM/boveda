@@ -61,6 +61,12 @@ class BackupPathsTest {
     }
 
     @Test
+    fun subdirectoryOfDirIsRejected() {
+        val sub = File(dir, "sub").apply { mkdir() }
+        assertFalse(isInsideTempDir(dir, sub))
+    }
+
+    @Test
     fun siblingWithSimilarPrefixIsRejected() {
         val sibling = folder.newFolder("backup-tmp2")
         val file = File(sibling, "a.bak").apply { writeText("x") }

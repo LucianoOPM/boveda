@@ -78,6 +78,7 @@ class MainActivity : FlutterActivity() {
     }
 
     override fun onDestroy() {
+        backup.onDestroy()
         biometric.onDestroy()
         super.onDestroy()
     }
