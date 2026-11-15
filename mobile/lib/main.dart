@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 
 import 'app.dart';
+import 'services/backup_files.dart';
 import 'services/biometric_service.dart';
 import 'services/vault_location.dart';
 import 'src/rust/api/password.dart';
@@ -22,6 +23,7 @@ Future<void> main() async {
         vaultExists: () => File(path).exists(),
         strengthOf: (password) => passwordStrength(password: password),
         biometric: const PlatformBiometricService(),
+        files: const PlatformBackupFiles(),
       ),
     ),
   );

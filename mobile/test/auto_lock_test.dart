@@ -39,6 +39,7 @@ Future<void> pumpApp(
       vaultExists: () async => vaultExists,
       strengthOf: fakeStrength,
       biometric: biometric,
+      files: FakeBackupFiles(),
       autoLockTimeout: autoLockTimeout ?? defaultAutoLockTimeout,
       now: now ?? DateTime.now,
     ),

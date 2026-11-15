@@ -1,6 +1,7 @@
 // Dobles escritos a mano para las pruebas de widgets: reemplazan la sesión
 // de Rust y la regla de fortaleza sin cargar la librería nativa.
 
+import 'package:boveda/services/backup_files.dart';
 import 'package:boveda/services/biometric_service.dart';
 import 'package:boveda/services/local_clipboard.dart';
 import 'package:boveda/src/rust/api/error.dart';
@@ -177,15 +178,42 @@ class FakeVaultSession implements VaultSession {
     return onEntry(id);
   }
 
+  /// Destinos recibidos por `exportBackup`, en orden.
+  final List<String> exportCalls = [];
+
+  /// Lo que hace `exportBackup` después de registrar la llamada.
+  Future<void> Function(String dest) onExportBackup = (_) async {};
+
   @override
-  Future<void> exportBackup({required String dest}) =>
-      throw UnimplementedError();
+  Future<void> exportBackup({required String dest}) {
+    exportCalls.add(dest);
+    return onExportBackup(dest);
+  }
+
+  /// Llamadas a `importBackup`, en orden.
+  final List<({String backup, String password})> importCalls = [];
+
+  /// Lo que hace `importBackup` después de registrar la llamada. Por
+  /// omisión, un reporte vacío. Con éxito deja la bóveda desbloqueada; con
+  /// error, bloqueada, como la fachada.
+  Future<UnlockReport> Function(String backup, String password)
+  onImportBackup = (_, _) async => emptyReport;
 
   @override
   Future<UnlockReport> importBackup({
     required String backup,
     required String password,
-  }) => throw UnimplementedError();
+  }) async {
+    importCalls.add((backup: backup, password: password));
+    try {
+      final report = await onImportBackup(backup, password);
+      locked = false;
+      return report;
+    } catch (_) {
+      locked = true;
+      rethrow;
+    }
+  }
 
   /// Llaves entregadas por `exportVaultKey` (la misma referencia), para
   /// comprobar que quien las recibe las pone en ceros.
@@ -381,6 +409,52 @@ class FakeBiometricService implements BiometricService {
     calls.add('disable');
     await onDisable();
     enabled = false;
+  }
+}
+
+/// Archivos de respaldo simulados. Registra cada llamada en [calls], en
+/// orden; por omisión todo tiene éxito.
+class FakeBackupFiles implements BackupFiles {
+  /// Nombre de cada método llamado, en orden.
+  final List<String> calls = [];
+
+  /// Temporales borrados con `deleteTemp`, en orden.
+  final List<String> deleted = [];
+
+  /// Lo que devuelve `newTempPath`.
+  String tempPath = '/tmp/backup-1.bak';
+
+  /// Nombre recibido por `saveTo`.
+  String? savedName;
+
+  Future<bool> Function() onSaveTo = () async => true;
+  Future<String?> Function() onPickToTemp = () async => '/tmp/backup-1.bak';
+  Future<void> Function(String path) onDeleteTemp = (_) async {};
+
+  @override
+  Future<String> newTempPath() async {
+    calls.add('newTempPath');
+    return tempPath;
+  }
+
+  @override
+  Future<bool> saveTo(String tempPath, String name) {
+    calls.add('saveTo');
+    savedName = name;
+    return onSaveTo();
+  }
+
+  @override
+  Future<String?> pickToTemp() {
+    calls.add('pickToTemp');
+    return onPickToTemp();
+  }
+
+  @override
+  Future<void> deleteTemp(String tempPath) {
+    calls.add('deleteTemp');
+    deleted.add(tempPath);
+    return onDeleteTemp(tempPath);
   }
 }
 

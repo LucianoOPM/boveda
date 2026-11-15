@@ -10,6 +10,7 @@ import 'screens/placeholder_screen.dart';
 import 'screens/search_screen.dart';
 import 'screens/unlock_screen.dart';
 import 'services/auto_lock.dart';
+import 'services/backup_files.dart';
 import 'services/biometric_service.dart';
 import 'src/rust/api/session.dart';
 import 'widgets/strength_indicator.dart';
@@ -27,6 +28,7 @@ class BovedaApp extends StatefulWidget {
     required this.vaultExists,
     required this.strengthOf,
     required this.biometric,
+    required this.files,
     this.autoLockTimeout = defaultAutoLockTimeout,
     this.now = DateTime.now,
   });
@@ -35,6 +37,9 @@ class BovedaApp extends StatefulWidget {
   final Future<bool> Function() vaultExists;
   final StrengthOf strengthOf;
   final BiometricService biometric;
+
+  /// Archivos de respaldo y selector del sistema (#44).
+  final BackupFiles files;
 
   /// Inactividad tras la que la bóveda se bloquea sola.
   final Duration autoLockTimeout;
@@ -68,6 +73,7 @@ class _BovedaAppState extends State<BovedaApp> {
         vaultExists: widget.vaultExists,
         strengthOf: widget.strengthOf,
         biometric: widget.biometric,
+        files: widget.files,
         autoLock: _autoLock,
         autoLockTimeout: widget.autoLockTimeout,
       ),
@@ -118,6 +124,7 @@ class VaultGate extends StatefulWidget {
     required this.vaultExists,
     required this.strengthOf,
     required this.biometric,
+    required this.files,
     required this.autoLock,
     required this.autoLockTimeout,
   });
@@ -126,6 +133,7 @@ class VaultGate extends StatefulWidget {
   final Future<bool> Function() vaultExists;
   final StrengthOf strengthOf;
   final BiometricService biometric;
+  final BackupFiles files;
   final AutoLockController autoLock;
   final Duration autoLockTimeout;
 
