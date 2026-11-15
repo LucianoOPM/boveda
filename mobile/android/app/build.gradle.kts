@@ -47,3 +47,8 @@ kotlin {
 flutter {
     source = "../.."
 }
+
+dependencies {
+    // Solo para la prueba JVM de isInsideTempDir (#44); sin Robolectric ni mocks.
+    testImplementation("junit:junit:4.13.2")
+}
