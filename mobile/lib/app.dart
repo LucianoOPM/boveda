@@ -242,7 +242,7 @@ class _VaultGateState extends State<VaultGate> {
 
   /// Después de crear la bóveda: ofrecer la huella si el dispositivo la
   /// admite y no está activa. Si la comprobación falla, no se ofrece.
-  Future<void> _afterCreate() async {
+  Future<void> _afterCreate({int damaged = 0}) async {
     bool offer;
     try {
       offer =
@@ -254,6 +254,7 @@ class _VaultGateState extends State<VaultGate> {
     if (!mounted) return;
     _enterUnlocked(
       offer ? VaultGateState.offerBiometric : VaultGateState.unlocked,
+      damagedEntries: damaged,
     );
   }
 
@@ -299,6 +300,24 @@ class _VaultGateState extends State<VaultGate> {
     if (mounted && _notice != null) setState(() => _notice = null);
   }
 
+  /// Una importación terminó bien: la bóveda es la del respaldo y está
+  /// desbloqueada. Quita Ajustes y lo apilado, monta pantallas nuevas y sigue
+  /// el camino de crear (oferta de la huella o pantalla principal), con el
+  /// total de dañadas para el aviso.
+  void _onImported(int damaged) {
+    if (!mounted) return;
+    _removeStackedRoutes(Navigator.of(context));
+    setState(() {
+      _epoch++;
+      _state = VaultGateState.checking;
+    });
+    _afterCreate(damaged: damaged);
+  }
+
+  /// La importación falló desde Ajustes: la fachada dejó la bóveda bloqueada
+  /// en Rust, así que la interfaz se bloquea y muestra el motivo.
+  void _onImportFailed(String message) => _lock(notice: UnlockNotice(message));
+
   /// Ajustes (#44), apilados en el `Navigator` raíz, que el bloqueo vacía.
   void _openSettings() {
     Navigator.of(context).push(
@@ -306,6 +325,9 @@ class _VaultGateState extends State<VaultGate> {
         builder: (_) => SettingsScreen(
           session: widget.session,
           files: widget.files,
+          biometric: widget.biometric,
+          onImported: _onImported,
+          onImportFailed: _onImportFailed,
           onNotice: _showNotice,
         ),
       ),
@@ -419,7 +441,10 @@ class _VaultGateState extends State<VaultGate> {
       VaultGateState.offerBiometric => BiometricOfferScreen(
         session: widget.session,
         biometric: widget.biometric,
-        onDone: () => _enterUnlocked(VaultGateState.unlocked),
+        onDone: () => _enterUnlocked(
+          VaultGateState.unlocked,
+          damagedEntries: _damagedEntries,
+        ),
       ),
       VaultGateState.locked => UnlockScreen(
         session: widget.session,

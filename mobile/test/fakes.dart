@@ -196,8 +196,8 @@ class FakeVaultSession implements VaultSession {
   /// Lo que hace `importBackup` después de registrar la llamada. Por
   /// omisión, un reporte vacío. Con éxito deja la bóveda desbloqueada; con
   /// error, bloqueada, como la fachada.
-  Future<UnlockReport> Function(String backup, String password)
-  onImportBackup = (_, _) async => emptyReport;
+  Future<UnlockReport> Function(String backup, String password) onImportBackup =
+      (_, _) async => emptyReport;
 
   @override
   Future<UnlockReport> importBackup({

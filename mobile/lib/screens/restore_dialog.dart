@@ -1,0 +1,246 @@
+import 'package:flutter/material.dart';
+
+import '../services/auto_lock.dart';
+import '../services/backup_files.dart';
+import '../services/biometric_service.dart';
+import '../src/rust/api/error.dart';
+import '../src/rust/api/session.dart';
+import '../widgets/password_field.dart';
+
+/// Resultado del flujo de importar un respaldo (#44).
+sealed class RestoreResult {
+  const RestoreResult();
+}
+
+/// La bóveda quedó reemplazada y desbloqueada, con el total de entradas
+/// dañadas (con y sin id) del `UnlockReport`.
+class RestoreImported extends RestoreResult {
+  const RestoreImported(this.damagedEntries);
+
+  final int damagedEntries;
+}
+
+/// La importación falló: la fachada dejó la bóveda anterior bloqueada (o la
+/// sesión sin bóveda). [message] es un texto fijo, sin datos del archivo.
+class RestoreImportFailed extends RestoreResult {
+  const RestoreImportFailed(this.message);
+
+  final String message;
+}
+
+/// No se llegó a importar (el archivo no se pudo leer o era demasiado
+/// grande): la bóveda sigue como estaba.
+class RestorePickFailed extends RestoreResult {
+  const RestorePickFailed(this.message);
+
+  final String message;
+}
+
+const _genericImportError = 'No se pudo importar el respaldo.';
+
+/// Texto fijo por error de la importación; nunca detalles del núcleo.
+String restoreErrorMessage(Object error) {
+  if (error is VaultError) {
+    return switch (error) {
+      VaultError.wrongPassword => 'Contraseña del respaldo incorrecta.',
+      VaultError.notAVault => 'El archivo no es una bóveda.',
+      VaultError.unsupportedFormatVersion =>
+        'Este respaldo es de una versión que la app no admite.',
+      VaultError.storageCorrupt => 'El archivo del respaldo está dañado.',
+      _ => _genericImportError,
+    };
+  }
+  return _genericImportError;
+}
+
+/// Flujo de importar un respaldo, compartido por Ajustes y el primer uso
+/// (#44, detalle en `docs/superpowers/specs/2026-11-14-respaldos-selector-design.md`).
+///
+/// 1. Elige el archivo con el selector (sin bloqueo automático) y lo copia a
+///    un temporal. `null` si el usuario cancela.
+/// 2. Si al volver la pantalla ya no está (un bloqueo por el tope de 2
+///    minutos la quitó), no toca la bóveda y devuelve `null`.
+/// 3. Pide la contraseña **del respaldo** en [RestoreDialog] e importa.
+/// 4. Borra el temporal siempre, **antes** de devolver el resultado: quien
+///    lo reciba puede bloquear sin dejar nada atrás.
+/// 5. Con éxito, desactiva la huella (borra la copia y la llave del
+///    Keystore, que protegían la bóveda anterior).
+///
+/// [closeOnError]: en Ajustes, un error cierra el diálogo y devuelve
+/// [RestoreImportFailed] (la bóveda ya quedó bloqueada en Rust); en el primer
+/// uso no hay bóveda abierta y el error se muestra en el mismo diálogo.
+Future<RestoreResult?> runRestore(
+  BuildContext context, {
+  required VaultSession session,
+  required BackupFiles files,
+  required BiometricService biometric,
+  required bool replacesVault,
+  required bool closeOnError,
+}) async {
+  final scope = AutoLockScope.maybeOf(context);
+  final String? temp;
+  try {
+    temp = await (scope == null
+        ? files.pickToTemp()
+        : scope.runWithoutAutoLock(files.pickToTemp));
+  } on BackupFilesException catch (error) {
+    return RestorePickFailed(
+      error.failure == BackupFailure.tooLarge
+          ? 'El archivo es demasiado grande para ser un respaldo.'
+          : 'No se pudo leer el archivo.',
+    );
+  } catch (_) {
+    return const RestorePickFailed('No se pudo leer el archivo.');
+  }
+  if (temp == null) return null;
+
+  RestoreResult? result;
+  try {
+    // `mounted` no basta: el bloqueo quita la ruta con `removeRoute` y el
+    // `State` sigue montado hasta el siguiente cuadro.
+    if (!context.mounted || !(ModalRoute.of(context)?.isActive ?? true)) {
+      return null;
+    }
+    result = await showDialog<RestoreResult>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => RestoreDialog(
+        session: session,
+        backupPath: temp!,
+        replacesVault: replacesVault,
+        closeOnError: closeOnError,
+      ),
+    );
+  } finally {
+    try {
+      await files.deleteTemp(temp);
+    } catch (_) {}
+  }
+
+  if (result is RestoreImported) {
+    try {
+      await biometric.disable();
+    } catch (_) {}
+  }
+  return result;
+}
+
+/// Pide la contraseña del respaldo e importa. No se puede cerrar con la
+/// importación en curso: cancelarla a medias dejaría el estado en duda.
+class RestoreDialog extends StatefulWidget {
+  const RestoreDialog({
+    super.key,
+    required this.session,
+    required this.backupPath,
+    required this.replacesVault,
+    required this.closeOnError,
+  });
+
+  final VaultSession session;
+  final String backupPath;
+
+  /// Advierte que el respaldo reemplaza la bóveda actual (no en el primer
+  /// uso, donde no hay nada que reemplazar).
+  final bool replacesVault;
+
+  /// Un error cierra el diálogo con [RestoreImportFailed] (Ajustes) o se
+  /// muestra en el mismo diálogo y deja reintentar (primer uso).
+  final bool closeOnError;
+
+  @override
+  State<RestoreDialog> createState() => _RestoreDialogState();
+}
+
+class _RestoreDialogState extends State<RestoreDialog> {
+  final _password = TextEditingController();
+  bool _busy = false;
+  String? _error;
+
+  @override
+  void dispose() {
+    _password
+      ..clear()
+      ..dispose();
+    super.dispose();
+  }
+
+  Future<void> _submit() async {
+    if (_busy || _password.text.isEmpty) return;
+    setState(() {
+      _busy = true;
+      _error = null;
+    });
+    final password = _password.text;
+    try {
+      final report = await widget.session.importBackup(
+        backup: widget.backupPath,
+        password: password,
+      );
+      if (!mounted) return;
+      Navigator.of(context).pop(
+        RestoreImported(report.corrupt.length + report.unidentifiedCorrupt),
+      );
+    } catch (error) {
+      if (!mounted) return;
+      final message = restoreErrorMessage(error);
+      if (widget.closeOnError) {
+        Navigator.of(context).pop(RestoreImportFailed(message));
+      } else {
+        setState(() {
+          _busy = false;
+          _error = message;
+          _password.clear();
+        });
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return PopScope(
+      canPop: !_busy,
+      child: AlertDialog(
+        title: Text(
+          widget.replacesVault ? 'Importar respaldo' : 'Restaurar respaldo',
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            if (widget.replacesVault) ...[
+              const Text('Reemplaza la bóveda actual.'),
+              const SizedBox(height: 16),
+            ],
+            PasswordField(
+              key: const Key('restore-password'),
+              controller: _password,
+              label: 'Contraseña del respaldo',
+              enabled: !_busy,
+              errorText: _error,
+              onChanged: (_) => setState(() => _error = null),
+              onSubmitted: (_) => _submit(),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: _busy ? null : () => Navigator.of(context).pop(),
+            child: const Text('Cancelar'),
+          ),
+          TextFieldTapRegion(
+            child: FilledButton(
+              key: const Key('restore-submit'),
+              onPressed: _busy || _password.text.isEmpty ? null : _submit,
+              child: _busy
+                  ? const SizedBox.square(
+                      dimension: 16,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Text('Importar'),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}

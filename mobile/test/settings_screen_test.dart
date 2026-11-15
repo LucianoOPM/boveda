@@ -20,6 +20,9 @@ Future<void> pumpSettings(WidgetTester tester) async {
       home: SettingsScreen(
         session: session,
         files: files,
+        biometric: FakeBiometricService(),
+        onImported: (_) {},
+        onImportFailed: (_) {},
         onNotice: (text, {bool isError = false}) => notices.add(text),
       ),
     ),

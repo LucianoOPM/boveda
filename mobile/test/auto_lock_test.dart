@@ -882,22 +882,23 @@ void main() {
       expect(find.byType(SearchScreen), findsOneWidget);
     });
 
-    testWidgets('sin inactividad mientras corre y la cuenta reinicia al terminar', (
-      tester,
-    ) async {
-      await pumpUnlocked(tester, now: () => fakeNow);
-      final op = startOperation(tester, SearchScreen);
+    testWidgets(
+      'sin inactividad mientras corre y la cuenta reinicia al terminar',
+      (tester) async {
+        await pumpUnlocked(tester, now: () => fakeNow);
+        final op = startOperation(tester, SearchScreen);
 
-      await tester.pump(const Duration(minutes: 6));
-      expect(session.lockCalls, 0);
+        await tester.pump(const Duration(minutes: 6));
+        expect(session.lockCalls, 0);
 
-      op.done.complete();
-      await op.run;
-      await tester.pump(const Duration(minutes: 4, seconds: 59));
-      expect(session.lockCalls, 0);
-      await tester.pump(const Duration(seconds: 1));
-      expect(session.lockCalls, 1);
-    });
+        op.done.complete();
+        await op.run;
+        await tester.pump(const Duration(minutes: 4, seconds: 59));
+        expect(session.lockCalls, 0);
+        await tester.pump(const Duration(seconds: 1));
+        expect(session.lockCalls, 1);
+      },
+    );
 
     testWidgets('una operación que lanza baja la marca y reinicia la cuenta', (
       tester,

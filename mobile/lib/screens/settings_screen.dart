@@ -2,7 +2,9 @@ import 'package:flutter/material.dart';
 
 import '../services/auto_lock.dart';
 import '../services/backup_files.dart';
+import '../services/biometric_service.dart';
 import '../src/rust/api/session.dart';
+import 'restore_dialog.dart';
 
 /// Avisa algo al usuario cuando la pantalla que lo origina ya no está (un
 /// bloqueo la quitó): `VaultGate` lo muestra en la pantalla de desbloqueo.
@@ -20,11 +22,21 @@ class SettingsScreen extends StatefulWidget {
     super.key,
     required this.session,
     required this.files,
+    required this.biometric,
+    required this.onImported,
+    required this.onImportFailed,
     required this.onNotice,
   });
 
   final VaultSession session;
   final BackupFiles files;
+  final BiometricService biometric;
+
+  /// La bóveda quedó reemplazada y desbloqueada, con el total de dañadas.
+  final ValueChanged<int> onImported;
+
+  /// La importación falló: `VaultGate` bloquea y muestra el motivo.
+  final ValueChanged<String> onImportFailed;
   final NoticeCallback onNotice;
 
   @override
@@ -71,6 +83,38 @@ class _SettingsScreenState extends State<SettingsScreen> {
     if (mounted) setState(() => _busy = false);
   }
 
+  /// Importa un respaldo (ver `runRestore`). Un error de la importación deja
+  /// la bóveda bloqueada en Rust: la interfaz se bloquea con el motivo
+  /// (#44, opción a; validar sin soltar la bóveda es la #69).
+  Future<void> _import() async {
+    if (_busy) return;
+    setState(() => _busy = true);
+    RestoreResult? result;
+    try {
+      result = await runRestore(
+        context,
+        session: widget.session,
+        files: widget.files,
+        biometric: widget.biometric,
+        replacesVault: true,
+        closeOnError: true,
+      );
+    } catch (_) {
+      result = const RestorePickFailed('No se pudo importar el respaldo.');
+    }
+    if (mounted) setState(() => _busy = false);
+    switch (result) {
+      case RestoreImported(:final damagedEntries):
+        widget.onImported(damagedEntries);
+      case RestoreImportFailed(:final message):
+        widget.onImportFailed(message);
+      case RestorePickFailed(:final message):
+        _announce(message, true);
+      case null:
+        break;
+    }
+  }
+
   /// Con la pantalla a la vista, un `SnackBar`; si un bloqueo ya la quitó,
   /// el aviso va a `VaultGate`. `mounted` no basta: la ruta quitada con
   /// `removeRoute` sigue montada hasta el siguiente cuadro.
@@ -103,6 +147,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
             title: const Text('Importar respaldo'),
             subtitle: const Text('Reemplaza la bóveda actual'),
             enabled: !_busy,
+            onTap: _busy ? null : _import,
           ),
         ],
       ),
