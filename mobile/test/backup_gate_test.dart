@@ -276,6 +276,84 @@ void main() {
       expect(find.byType(SettingsScreen), findsOneWidget);
       expect(session.importCalls, isEmpty);
     });
+
+    const importedLate =
+        'Se importó el respaldo. Desbloquea con la contraseña del respaldo.';
+
+    /// Ajustes abierto, diálogo con la contraseña escrita y el Importar
+    /// tocado, con la importación pendiente.
+    Future<void> submitAndLock(WidgetTester tester) async {
+      await startImport(tester);
+      await tester.enterText(
+        find.byKey(const Key('restore-password')),
+        backupPassword,
+      );
+      await tester.pump();
+      await tester.tap(find.byKey(const Key('restore-submit')));
+      await tester.pump();
+      // La app se oculta con la importación en curso: bloquea y quita el diálogo.
+      await setLifecycle(tester, AppLifecycleState.hidden);
+      await setLifecycle(tester, AppLifecycleState.resumed);
+      await drain(tester);
+      expect(find.byType(UnlockScreen), findsOneWidget);
+    }
+
+    testWidgets('si un bloqueo quita el diálogo y la importación termina bien, '
+        'el desbloqueo avisa que ahora vale la contraseña del respaldo', (
+      tester,
+    ) async {
+      final importing = Completer<UnlockReport>();
+      session.onImportBackup = (_, _) => importing.future;
+      await submitAndLock(tester);
+
+      importing.complete(emptyReport);
+      await drain(tester);
+
+      expect(find.byType(UnlockScreen), findsOneWidget);
+      expect(find.text(importedLate), findsOneWidget);
+      expect(files.deleted, [files.tempPath]);
+      expect(biometric.calls, contains('disable'));
+    });
+
+    testWidgets('si un bloqueo quita el diálogo y la importación falla, el '
+        'desbloqueo muestra el motivo', (tester) async {
+      final importing = Completer<UnlockReport>();
+      session.onImportBackup = (_, _) => importing.future;
+      await submitAndLock(tester);
+
+      importing.completeError(VaultError.wrongPassword);
+      await drain(tester);
+
+      expect(find.text('Contraseña del respaldo incorrecta.'), findsOneWidget);
+      expect(files.deleted, [files.tempPath]);
+    });
+
+    testWidgets('un bloqueo mientras se borra el temporal tras importar no '
+        'monta la principal sobre una bóveda bloqueada', (tester) async {
+      final deleting = Completer<void>();
+      files.onDeleteTemp = (_) => deleting.future;
+      await startImport(tester);
+      await tester.enterText(
+        find.byKey(const Key('restore-password')),
+        backupPassword,
+      );
+      await tester.pump();
+      await tester.tap(find.byKey(const Key('restore-submit')));
+      await drain(tester);
+      expect(session.importCalls, hasLength(1));
+
+      await setLifecycle(tester, AppLifecycleState.hidden);
+      await setLifecycle(tester, AppLifecycleState.resumed);
+      await drain(tester);
+      expect(find.byType(UnlockScreen), findsOneWidget);
+
+      deleting.complete();
+      await drain(tester);
+
+      expect(find.byType(UnlockScreen), findsOneWidget);
+      expect(find.byType(SearchScreen), findsNothing);
+      expect(find.text(importedLate), findsOneWidget);
+    });
   });
 
   group('restaurar desde el primer uso', () {

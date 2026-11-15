@@ -95,6 +95,11 @@ Future<RestoreResult?> runRestore(
   if (temp == null) return null;
 
   RestoreResult? result;
+  // La importación en vuelo, si el usuario tocó Importar. Si un bloqueo quita
+  // el diálogo (su `showDialog` termina con `null`), la importación sigue
+  // corriendo en Rust: hay que esperarla, o la bóveda se reemplazaría sin que
+  // nadie lo supiera y el temporal se borraría con la copia en marcha.
+  Future<RestoreResult>? importing;
   try {
     // `mounted` no basta: el bloqueo quita la ruta con `removeRoute` y el
     // `State` sigue montado hasta el siguiente cuadro.
@@ -109,8 +114,10 @@ Future<RestoreResult?> runRestore(
         backupPath: temp!,
         replacesVault: replacesVault,
         closeOnError: closeOnError,
+        onImporting: (outcome) => importing = outcome,
       ),
     );
+    if (result == null && importing != null) result = await importing;
   } finally {
     try {
       await files.deleteTemp(temp);
@@ -134,10 +141,15 @@ class RestoreDialog extends StatefulWidget {
     required this.backupPath,
     required this.replacesVault,
     required this.closeOnError,
+    this.onImporting,
   });
 
   final VaultSession session;
   final String backupPath;
+
+  /// Recibe la importación en cuanto arranca, para que quien abrió el diálogo
+  /// pueda esperarla aunque un bloqueo quite el diálogo antes de que termine.
+  final ValueChanged<Future<RestoreResult>>? onImporting;
 
   /// Advierte que el respaldo reemplaza la bóveda actual (no en el primer
   /// uso, donde no hay nada que reemplazar).
@@ -170,28 +182,35 @@ class _RestoreDialogState extends State<RestoreDialog> {
       _busy = true;
       _error = null;
     });
-    final password = _password.text;
+    final outcome = _runImport(_password.text);
+    widget.onImporting?.call(outcome);
+    final result = await outcome;
+    // Quitado por un bloqueo: quien abrió el diálogo ya espera `outcome`.
+    if (!mounted) return;
+    if (result is RestoreImportFailed && !widget.closeOnError) {
+      setState(() {
+        _busy = false;
+        _error = result.message;
+        _password.clear();
+      });
+      return;
+    }
+    Navigator.of(context).pop(result);
+  }
+
+  /// Importa y devuelve el resultado; nunca lanza ni usa el `State` después
+  /// del primer `await`, así que sigue valiendo con el diálogo quitado.
+  Future<RestoreResult> _runImport(String password) async {
     try {
       final report = await widget.session.importBackup(
         backup: widget.backupPath,
         password: password,
       );
-      if (!mounted) return;
-      Navigator.of(context).pop(
-        RestoreImported(report.corrupt.length + report.unidentifiedCorrupt),
+      return RestoreImported(
+        report.corrupt.length + report.unidentifiedCorrupt,
       );
     } catch (error) {
-      if (!mounted) return;
-      final message = restoreErrorMessage(error);
-      if (widget.closeOnError) {
-        Navigator.of(context).pop(RestoreImportFailed(message));
-      } else {
-        setState(() {
-          _busy = false;
-          _error = message;
-          _password.clear();
-        });
-      }
+      return RestoreImportFailed(restoreErrorMessage(error));
     }
   }
 

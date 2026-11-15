@@ -103,11 +103,22 @@ class _SettingsScreenState extends State<SettingsScreen> {
       result = const RestorePickFailed('No se pudo importar el respaldo.');
     }
     if (mounted) setState(() => _busy = false);
+    // Si un bloqueo quitó esta pantalla mientras importaba, la bóveda ya
+    // está bloqueada: nunca se monta la principal sobre ella. Se avisa en el
+    // desbloqueo, con la contraseña que vale ahora.
+    final visible = mounted && (ModalRoute.of(context)?.isActive ?? true);
     switch (result) {
-      case RestoreImported(:final damagedEntries):
+      case RestoreImported(:final damagedEntries) when visible:
         widget.onImported(damagedEntries);
-      case RestoreImportFailed(:final message):
+      case RestoreImported():
+        widget.onNotice(
+          'Se importó el respaldo. Desbloquea con la contraseña del respaldo.',
+          isError: false,
+        );
+      case RestoreImportFailed(:final message) when visible:
         widget.onImportFailed(message);
+      case RestoreImportFailed(:final message):
+        widget.onNotice(message, isError: true);
       case RestorePickFailed(:final message):
         _announce(message, true);
       case null:
