@@ -96,6 +96,10 @@ class _UnlockScreenState extends State<UnlockScreen> {
   /// Aviso de huella desactivada.
   String? _notice;
 
+  /// La huella se desactivó porque la bóveda cambió (`WrongVaultKey`): tras
+  /// desbloquear con la contraseña se avisa con un `SnackBar` neutro (#44).
+  bool _vaultChanged = false;
+
   /// La huella está activa: se muestra "Usar huella".
   bool _biometricEnabled = false;
 
@@ -285,11 +289,17 @@ class _UnlockScreenState extends State<UnlockScreen> {
         });
       case BiometricFallback():
         _release();
-      case BiometricDisabled():
+      case BiometricDisabled(:final vaultChanged):
         setState(() {
           _biometricEnabled = false;
-          _notice =
-              'La huella se desactivó. Desbloquea con tu contraseña maestra.';
+          if (vaultChanged) {
+            // Sin aviso en rojo: lo normal tras importar un respaldo. El
+            // aviso neutro sale tras desbloquear con la contraseña.
+            _vaultChanged = true;
+          } else {
+            _notice =
+                'La huella se desactivó. Desbloquea con tu contraseña maestra.';
+          }
         });
         _release();
         await _refreshOffer();
@@ -359,6 +369,17 @@ class _UnlockScreenState extends State<UnlockScreen> {
         );
       }
       if (!mounted) return;
+    }
+    if (_vaultChanged) {
+      _vaultChanged = false;
+      messenger.showSnackBar(
+        const SnackBar(
+          content: Text(
+            'La huella se desactivó porque la bóveda cambió. '
+            'Puedes activarla de nuevo al desbloquear.',
+          ),
+        ),
+      );
     }
     widget.onUnlocked(damaged);
   }

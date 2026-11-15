@@ -20,6 +20,9 @@ const wrong = 'Contraseña incorrecta';
 const generic = 'No se pudo desbloquear la bóveda. Intenta de nuevo.';
 const disabledNotice =
     'La huella se desactivó. Desbloquea con tu contraseña maestra.';
+const vaultChangedNotice =
+    'La huella se desactivó porque la bóveda cambió. '
+    'Puedes activarla de nuevo al desbloquear.';
 const biometricKey = Key('unlock-biometric');
 const enableKey = Key('unlock-enable-biometric');
 
@@ -403,6 +406,32 @@ void main() {
       expect(find.byKey(biometricKey), findsNothing);
       expect(find.byKey(enableKey), findsOneWidget);
       expect(field(tester).focusNode!.hasFocus, isTrue);
+    });
+
+    testWidgets('wrongVaultKey de la huella: sin aviso en rojo, pide la '
+        'contraseña y tras desbloquear sale un SnackBar neutro', (
+      tester,
+    ) async {
+      biometric
+        ..enabled = true
+        ..available = true;
+      session.onUnlockWithKey = (_) async => throw VaultError.wrongVaultKey;
+      var unlocked = 0;
+      await pumpScreen(tester, session, onUnlocked: (_) => unlocked++);
+      await drain(tester);
+
+      expect(biometric.calls, contains('disable'));
+      expect(find.text(disabledNotice), findsNothing);
+      expect(find.text(vaultChangedNotice), findsNothing);
+      expect(find.byKey(biometricKey), findsNothing);
+      expect(field(tester).focusNode!.hasFocus, isTrue);
+
+      await type(tester, 'frase larga de prueba');
+      await submitWithButton(tester);
+      await drain(tester);
+
+      expect(unlocked, 1);
+      expect(find.text(vaultChangedNotice), findsOneWidget);
     });
 
     testWidgets('disabled sin huella disponible no muestra ni el botón ni la '

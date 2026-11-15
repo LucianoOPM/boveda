@@ -96,6 +96,17 @@ void main() {
       expect(session.unlockWithKeyCalls, isEmpty);
     });
 
+    test('wrongVaultKey indica que la bóveda cambió; invalidated no', () async {
+      session.onUnlockWithKey = (_) async => throw VaultError.wrongVaultKey;
+      final changed = await unlockWithBiometric(session, biometric);
+      expect((changed as BiometricDisabled).vaultChanged, isTrue);
+
+      biometric.onUnlock = () async =>
+          throw failure(BiometricFailure.invalidated);
+      final invalidated = await unlockWithBiometric(session, biometric);
+      expect((invalidated as BiometricDisabled).vaultChanged, isFalse);
+    });
+
     test('wrongVaultKey desactiva y pone la llave en ceros', () async {
       session.onUnlockWithKey = (_) async => throw VaultError.wrongVaultKey;
       expect(
