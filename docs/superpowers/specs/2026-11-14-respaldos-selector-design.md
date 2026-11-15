@@ -192,6 +192,19 @@ No cambian `core/`, `mobile/rust/` ni `lib/src/rust/`: no hay que regenerar el p
 
 Tras aprobar el diseño: en la #45 (cierre de la etapa), que la prueba de "restaurar en un emulador limpio" ya tiene el camino de la #44 y qué casos cubre la prueba a mano.
 
+## Hallazgos de la implementación y de la prueba a mano
+
+Emulador Pixel_10 (Android 16, API 37), borrado antes de empezar (`-wipe-data`: `adb` lo rechazaba como `unauthorized`), con la app de depuración. Pasaron los casos 1 a 9, 11 y 12:
+
+1. **Casos 1 y 2:** el selector sugirió `boveda-AAAA-MM-DD.db` (la fecha del emulador) y el archivo es una bóveda v2 válida (`application_id` BVLT, 2 filas, `integrity_check` ok, abierta con `node:sqlite`). Exportar con un nombre existente dio "(1)". Con el selector abierto había un temporal en `backup-tmp/`; tras guardar, vacía.
+2. **Caso 3:** importar un respaldo de 2 entradas sobre una bóveda de 3 deja las 2 (la contraseña se recuperó). **Caso 7:** "Restaurar un respaldo" en una app sin datos recuperó las entradas, sin la advertencia de reemplazo.
+3. **Casos 4 y 5:** contraseña incorrecta y un archivo de texto bloquean con el motivo en la pantalla de desbloqueo ("Contraseña del respaldo incorrecta.", "El archivo no es una bóveda."); la bóveda actual abre con su contraseña y no quedan temporales. **Caso 6:** un archivo de 21 MiB avisa "El archivo es demasiado grande…" sin bloquear ni dejar temporales.
+4. **Caso 8:** con el selector abierto, inicio y 135 s fuera, la app volvió bloqueada y sin temporales. Con el selector abierto para importar no hay temporal todavía: `pickToTemp` lo crea al elegir el archivo.
+5. **Caso 11:** `am force-stop` con el selector de exportar abierto deja el temporal; el selector del sistema sigue al frente y `MainActivity` no se recrea hasta cerrarlo. Al abrir la app de cero, `onCreate` vació `backup-tmp/`.
+6. **Caso 12:** `logcat` no trae contraseñas ni rutas de la app; las coincidencias son de `adbd` registrando los `adb shell input text` de la propia prueba.
+7. **Caso 10 (ruta fuera de `backup-tmp/` por el canal real): no se ejecutó.** Exige un canal temporal que Dart no usa. Lo cubre la prueba JVM de `isInsideTempDir`: 6 de 7 casos corren en Windows; la del enlace simbólico se omite (`Assume`) porque Windows sin privilegios no permite crearlos, así que ese caso solo se comprobó por contrato de `canonicalFile`.
+8. **Tooling:** Gradle necesita `JAVA_HOME` (el JDK de Android Studio, `D:\DevTools\android_studio\jbr`; Flutter lo encuentra solo, Gradle suelto no). Las pruebas JVM de Kotlin no corren en la CI de `mobile.yml` (solo Flutter): conviene agregarlas ahí en otra issue.
+
 ## Commits previstos
 
 1. `docs: diseño de los respaldos con el selector del sistema (#44)`
