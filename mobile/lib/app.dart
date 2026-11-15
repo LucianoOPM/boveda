@@ -8,6 +8,7 @@ import 'screens/biometric_offer_screen.dart';
 import 'screens/first_run_screen.dart';
 import 'screens/placeholder_screen.dart';
 import 'screens/search_screen.dart';
+import 'screens/settings_screen.dart';
 import 'screens/unlock_screen.dart';
 import 'services/auto_lock.dart';
 import 'services/backup_files.dart';
@@ -167,6 +168,10 @@ class _VaultGateState extends State<VaultGate> {
   DateTime? _hiddenAt;
   Timer? _awayCap;
 
+  /// Aviso de un solo uso para la pantalla de desbloqueo (#44): solo en
+  /// memoria y con texto fijo. La pantalla lo recibe y lo borra de aquí.
+  UnlockNotice? _notice;
+
   @override
   void initState() {
     super.initState();
@@ -272,9 +277,39 @@ class _VaultGateState extends State<VaultGate> {
     }
     setState(() {
       _damagedEntries = damagedEntries;
+      _notice = null;
       _state = next;
     });
     _restartIdle();
+  }
+
+  /// Muestra un aviso que llega de una pantalla apilada. Con la bóveda
+  /// bloqueada va a la pantalla de desbloqueo (un solo uso); en otro estado,
+  /// a un `SnackBar`.
+  void _showNotice(String text, {bool isError = false}) {
+    if (!mounted) return;
+    if (_state == VaultGateState.locked) {
+      setState(() => _notice = UnlockNotice(text, isError: isError));
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(text)));
+    }
+  }
+
+  void _noticeShown() {
+    if (mounted && _notice != null) setState(() => _notice = null);
+  }
+
+  /// Ajustes (#44), apilados en el `Navigator` raíz, que el bloqueo vacía.
+  void _openSettings() {
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => SettingsScreen(
+          session: widget.session,
+          files: widget.files,
+          onNotice: _showNotice,
+        ),
+      ),
+    );
   }
 
   void _onHidden() {
@@ -329,7 +364,7 @@ class _VaultGateState extends State<VaultGate> {
   /// Si `lock()` falla, igual se muestra el desbloqueo; la fachada bloquea
   /// aunque el `Mutex` esté envenenado, así que en la práctica no falla. El
   /// error se descarta sin detalles.
-  void _lock() {
+  void _lock({UnlockNotice? notice}) {
     if (!mounted) return;
     _idle?.cancel();
     _idle = null;
@@ -344,6 +379,7 @@ class _VaultGateState extends State<VaultGate> {
       ..removeCurrentSnackBar();
     setState(() {
       _epoch++;
+      _notice = notice;
       _state = VaultGateState.locked;
     });
   }
@@ -391,10 +427,13 @@ class _VaultGateState extends State<VaultGate> {
         onVaultOpened: () => _openWhileLocked = true,
         onUnlocked: (damaged) =>
             _enterUnlocked(VaultGateState.unlocked, damagedEntries: damaged),
+        notice: _notice,
+        onNoticeShown: _noticeShown,
       ),
       VaultGateState.unlocked => SearchScreen(
         session: widget.session,
         damagedEntries: _damagedEntries,
+        onOpenSettings: _openSettings,
       ),
       VaultGateState.openFailed => const PlaceholderScreen(
         text: 'No se pudo abrir la bóveda.',

@@ -37,7 +37,11 @@ class SearchScreen extends StatefulWidget {
     super.key,
     required this.session,
     required this.damagedEntries,
+    this.onOpenSettings,
   });
+
+  /// Abre Ajustes (#44); sin él, la pantalla no muestra el engranaje.
+  final VoidCallback? onOpenSettings;
 
   final VaultSession session;
 
@@ -181,30 +185,43 @@ class _SearchScreenState extends State<SearchScreen> {
             DamagedEntriesBanner(count: widget.damagedEntries),
             Padding(
               padding: const EdgeInsets.all(16),
-              child: ActivityTextField(
-                controller: _query,
-                focusNode: _focus,
-                textInputAction: TextInputAction.search,
-                // La tecla "buscar" no quita el foco.
-                onEditingComplete: () {},
-                onChanged: _onChanged,
-                // Con false, Flutter marca el campo en Android como contraseña
-                // visible (VISIBLE_PASSWORD) y el teclado muestra la fila de
-                // números. Sin aprendizaje del teclado, sus sugerencias no
-                // guardan lo que se busca.
-                autocorrect: false,
-                enableIMEPersonalizedLearning: false,
-                decoration: InputDecoration(
-                  hintText: 'Buscar',
-                  prefixIcon: const Icon(Icons.search),
-                  suffixIcon: _query.text.isEmpty
-                      ? null
-                      : IconButton(
-                          tooltip: 'Borrar búsqueda',
-                          icon: const Icon(Icons.close),
-                          onPressed: _clear,
-                        ),
-                ),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: ActivityTextField(
+                      controller: _query,
+                      focusNode: _focus,
+                      textInputAction: TextInputAction.search,
+                      // La tecla "buscar" no quita el foco.
+                      onEditingComplete: () {},
+                      onChanged: _onChanged,
+                      // Con false, Flutter marca el campo en Android como contraseña
+                      // visible (VISIBLE_PASSWORD) y el teclado muestra la fila de
+                      // números. Sin aprendizaje del teclado, sus sugerencias no
+                      // guardan lo que se busca.
+                      autocorrect: false,
+                      enableIMEPersonalizedLearning: false,
+                      decoration: InputDecoration(
+                        hintText: 'Buscar',
+                        prefixIcon: const Icon(Icons.search),
+                        suffixIcon: _query.text.isEmpty
+                            ? null
+                            : IconButton(
+                                tooltip: 'Borrar búsqueda',
+                                icon: const Icon(Icons.close),
+                                onPressed: _clear,
+                              ),
+                      ),
+                    ),
+                  ),
+                  if (widget.onOpenSettings case final openSettings?)
+                    IconButton(
+                      key: const Key('open-settings'),
+                      tooltip: 'Ajustes',
+                      icon: const Icon(Icons.settings),
+                      onPressed: openSettings,
+                    ),
+                ],
               ),
             ),
             Expanded(child: _body()),
