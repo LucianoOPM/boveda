@@ -1,11 +1,13 @@
 import 'package:flutter/material.dart';
 
+import '../services/backup_files.dart';
 import '../services/biometric_service.dart';
 import '../src/rust/api/error.dart';
 import '../src/rust/api/password.dart';
 import '../src/rust/api/session.dart';
 import '../widgets/password_field.dart';
 import '../widgets/strength_indicator.dart';
+import 'restore_dialog.dart';
 
 /// Primer uso: crear la contraseña maestra y la bóveda.
 ///
@@ -19,8 +21,10 @@ class FirstRunScreen extends StatefulWidget {
     required this.session,
     required this.strengthOf,
     required this.biometric,
+    required this.files,
     required this.onCreated,
     required this.onAlreadyExists,
+    required this.onRestored,
   });
 
   final VaultSession session;
@@ -36,6 +40,14 @@ class FirstRunScreen extends StatefulWidget {
   /// la pantalla vuelve a evaluar la bóveda en lugar de pedir reintentar.
   final VoidCallback onAlreadyExists;
 
+  /// Archivos de respaldo y selector del sistema, para "Restaurar un
+  /// respaldo" (#44).
+  final BackupFiles files;
+
+  /// Se llama cuando un respaldo quedó importado y desbloqueado, con el total
+  /// de entradas dañadas.
+  final ValueChanged<int> onRestored;
+
   @override
   State<FirstRunScreen> createState() => _FirstRunScreenState();
 }
@@ -45,6 +57,7 @@ class _FirstRunScreenState extends State<FirstRunScreen> {
   final _confirm = TextEditingController();
   bool _accepted = false;
   bool _creating = false;
+  bool _restoring = false;
   String? _error;
 
   /// Fortaleza de la contraseña escrita; `null` con el campo vacío. Se
@@ -67,6 +80,7 @@ class _FirstRunScreenState extends State<FirstRunScreen> {
 
   bool get _canCreate =>
       !_creating &&
+      !_restoring &&
       _accepted &&
       _strength != null &&
       _strength != PasswordStrength.tooShort &&
@@ -108,6 +122,40 @@ class _FirstRunScreenState extends State<FirstRunScreen> {
     }
     if (!mounted) return;
     widget.onCreated();
+  }
+
+  /// Restaura un respaldo en un celular nuevo o un emulador limpio (#44). No
+  /// hay bóveda que reemplazar ni abierta: un error de la importación se
+  /// muestra en el mismo diálogo y no bloquea nada.
+  Future<void> _restore() async {
+    if (_creating || _restoring) return;
+    setState(() {
+      _restoring = true;
+      _error = null;
+    });
+    RestoreResult? result;
+    try {
+      result = await runRestore(
+        context,
+        session: widget.session,
+        files: widget.files,
+        biometric: widget.biometric,
+        replacesVault: false,
+        closeOnError: false,
+      );
+    } catch (_) {
+      result = const RestorePickFailed('No se pudo importar el respaldo.');
+    }
+    if (!mounted) return;
+    setState(() => _restoring = false);
+    switch (result) {
+      case RestoreImported(:final damagedEntries):
+        widget.onRestored(damagedEntries);
+      case RestorePickFailed(:final message):
+        setState(() => _error = message);
+      case RestoreImportFailed() || null:
+        break;
+    }
   }
 
   void _fail(String message) {
@@ -214,6 +262,12 @@ class _FirstRunScreenState extends State<FirstRunScreen> {
                           )
                         : const Text('Crear bóveda'),
                   ),
+                ),
+                const SizedBox(height: 8),
+                TextButton(
+                  key: const Key('first-run-restore'),
+                  onPressed: _creating || _restoring ? null : _restore,
+                  child: const Text('Restaurar un respaldo'),
                 ),
               ],
             ),

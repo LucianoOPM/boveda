@@ -277,4 +277,99 @@ void main() {
       expect(session.importCalls, isEmpty);
     });
   });
+
+  group('restaurar desde el primer uso', () {
+    const backupPassword = 'clave del respaldo';
+
+    Future<void> pumpFirstRun(WidgetTester tester) async {
+      await tester.pumpWidget(
+        BovedaApp(
+          session: session,
+          vaultExists: () async => false,
+          strengthOf: fakeStrength,
+          biometric: biometric,
+          files: files,
+        ),
+      );
+      await drain(tester);
+    }
+
+    Future<void> startRestore(WidgetTester tester) async {
+      await pumpFirstRun(tester);
+      await tester.ensureVisible(find.byKey(const Key('first-run-restore')));
+      await tester.tap(find.byKey(const Key('first-run-restore')));
+      await drain(tester);
+    }
+
+    Future<void> submitRestore(WidgetTester tester) async {
+      await tester.enterText(
+        find.byKey(const Key('restore-password')),
+        backupPassword,
+      );
+      await tester.pump();
+      await tester.tap(find.byKey(const Key('restore-submit')));
+      await drain(tester);
+    }
+
+    testWidgets('con éxito desactiva la huella y ofrece activarla, sin la '
+        'advertencia de reemplazo', (tester) async {
+      biometric.available = true;
+      await startRestore(tester);
+      expect(find.byType(RestoreDialog), findsOneWidget);
+      expect(find.text('Reemplaza la bóveda actual.'), findsNothing);
+
+      await submitRestore(tester);
+
+      expect(session.importCalls.single, (
+        backup: files.tempPath,
+        password: backupPassword,
+      ));
+      expect(files.deleted, [files.tempPath]);
+      expect(biometric.calls, contains('disable'));
+      expect(find.byType(BiometricOfferScreen), findsOneWidget);
+    });
+
+    testWidgets('sin huella llega a la principal con el total de dañadas', (
+      tester,
+    ) async {
+      session.onImportBackup = (_, _) async =>
+          const UnlockReport(corrupt: ['aa'], unidentifiedCorrupt: 0);
+      await startRestore(tester);
+
+      await submitRestore(tester);
+
+      expect(find.byType(SearchScreen), findsOneWidget);
+      expect(find.text('1 entrada no se pudo leer'), findsOneWidget);
+    });
+
+    testWidgets('un error queda en el diálogo, sin bloquear, y se puede '
+        'reintentar', (tester) async {
+      session.onImportBackup = (_, _) async => throw VaultError.wrongPassword;
+      await startRestore(tester);
+
+      await submitRestore(tester);
+
+      expect(find.byType(RestoreDialog), findsOneWidget);
+      expect(find.text('Contraseña del respaldo incorrecta.'), findsOneWidget);
+      expect(session.lockCalls, 0);
+      expect(find.byType(UnlockScreen), findsNothing);
+      expect(files.deleted, isEmpty);
+
+      session.onImportBackup = (_, _) async => emptyReport;
+      await submitRestore(tester);
+
+      expect(session.importCalls, hasLength(2));
+      expect(find.byType(SearchScreen), findsOneWidget);
+      expect(files.deleted, [files.tempPath]);
+    });
+
+    testWidgets('cancelar el selector no cambia nada', (tester) async {
+      files.onPickToTemp = () async => null;
+      await startRestore(tester);
+
+      expect(find.byType(RestoreDialog), findsNothing);
+      expect(session.importCalls, isEmpty);
+      expect(find.byKey(const Key('first-run-restore')), findsOneWidget);
+    });
+  });
 }

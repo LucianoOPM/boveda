@@ -34,8 +34,10 @@ Future<void> pumpScreen(
         session: session,
         strengthOf: strengthOf,
         biometric: biometric,
+        files: FakeBackupFiles(),
         onCreated: onCreated ?? () {},
         onAlreadyExists: onAlreadyExists ?? () {},
+        onRestored: (_) {},
       ),
     ),
   );
@@ -60,8 +62,10 @@ Future<void> pumpAsSecondRoute(
         session: session,
         strengthOf: fakeStrength,
         biometric: biometric,
+        files: FakeBackupFiles(),
         onCreated: () {},
         onAlreadyExists: () {},
+        onRestored: (_) {},
       ),
     ),
   );
@@ -479,5 +483,30 @@ void main() {
       await tester.pump();
       expect(fieldHasFocus(tester, passwordField), isFalse);
     });
+  });
+
+  testWidgets('el botón Restaurar se desactiva mientras se crea la bóveda', (
+    tester,
+  ) async {
+    final session = FakeVaultSession();
+    final creating = Completer<void>();
+    session.onCreate = (_) => creating.future;
+    await pumpScreen(tester, session);
+    TextButton restore() =>
+        tester.widget<TextButton>(find.byKey(const Key('first-run-restore')));
+    expect(restore().onPressed, isNotNull);
+
+    await typePassword(tester, valid);
+    await typeConfirm(tester, valid);
+    await tester.ensureVisible(find.byKey(acceptKey));
+    await tester.tap(find.byKey(acceptKey));
+    await tester.pump();
+    await tester.ensureVisible(find.byKey(createKey));
+    await tester.tap(find.byKey(createKey));
+    await tester.pump();
+
+    expect(restore().onPressed, isNull);
+    creating.complete();
+    await tester.pump();
   });
 }

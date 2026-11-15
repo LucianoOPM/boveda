@@ -435,8 +435,10 @@ class _VaultGateState extends State<VaultGate> {
         session: widget.session,
         strengthOf: widget.strengthOf,
         biometric: widget.biometric,
+        files: widget.files,
         onCreated: _afterCreate,
         onAlreadyExists: _reevaluate,
+        onRestored: _onImported,
       ),
       VaultGateState.offerBiometric => BiometricOfferScreen(
         session: widget.session,
