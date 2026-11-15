@@ -28,6 +28,7 @@ class BovedaApp extends StatefulWidget {
     required this.strengthOf,
     required this.biometric,
     this.autoLockTimeout = defaultAutoLockTimeout,
+    this.now = DateTime.now,
   });
 
   final VaultSession session;
@@ -38,12 +39,15 @@ class BovedaApp extends StatefulWidget {
   /// Inactividad tras la que la bóveda se bloquea sola.
   final Duration autoLockTimeout;
 
+  /// Reloj para el tope fuera de la app de `runWithoutAutoLock` (#44).
+  final DateTime Function() now;
+
   @override
   State<BovedaApp> createState() => _BovedaAppState();
 }
 
 class _BovedaAppState extends State<BovedaApp> {
-  final _autoLock = AutoLockController();
+  late final _autoLock = AutoLockController(now: widget.now);
 
   @override
   Widget build(BuildContext context) {
@@ -148,10 +152,17 @@ class _VaultGateState extends State<VaultGate> {
   /// Temporizador de inactividad; solo corre con la bóveda en pantalla.
   Timer? _idle;
 
+  /// Mientras corre `runWithoutAutoLock` (#44): la hora en que la app se
+  /// ocultó y el temporizador del tope de `maxAwayDuringOperation`. Android
+  /// puede congelar el temporizador en segundo plano, así que al volver
+  /// también se compara la hora.
+  DateTime? _hiddenAt;
+  Timer? _awayCap;
+
   @override
   void initState() {
     super.initState();
-    _lifecycle = AppLifecycleListener(onHide: _onHidden);
+    _lifecycle = AppLifecycleListener(onHide: _onHidden, onResume: _onResumed);
     widget.autoLock.onActivity = _restartIdle;
     HardwareKeyboard.instance.addHandler(_onKey);
     _start();
@@ -160,6 +171,7 @@ class _VaultGateState extends State<VaultGate> {
   @override
   void dispose() {
     _idle?.cancel();
+    _awayCap?.cancel();
     HardwareKeyboard.instance.removeHandler(_onKey);
     if (widget.autoLock.onActivity == _restartIdle) {
       widget.autoLock.onActivity = null;
@@ -179,11 +191,15 @@ class _VaultGateState extends State<VaultGate> {
   void _restartIdle() {
     _idle?.cancel();
     _idle = null;
-    if (_state == VaultGateState.unlocked ||
-        _state == VaultGateState.offerBiometric) {
+    if (_showsVault && !widget.autoLock.isSuspended) {
       _idle = Timer(widget.autoLockTimeout, _lock);
     }
   }
+
+  /// La bóveda está en pantalla (`unlocked` u `offerBiometric`).
+  bool get _showsVault =>
+      _state == VaultGateState.unlocked ||
+      _state == VaultGateState.offerBiometric;
 
   /// Sin archivo, primer uso. Con archivo, se abre (queda bloqueada). Si
   /// algo falla, un mensaje genérico y nunca el primer uso: crear encima de
@@ -254,12 +270,49 @@ class _VaultGateState extends State<VaultGate> {
   }
 
   void _onHidden() {
+    if (widget.autoLock.isSuspended) {
+      // Una actividad externa (el selector de archivos) ocultó la app: no se
+      // bloquea, pero con un tope (#44).
+      if (_showsVault) {
+        _hiddenAt ??= widget.autoLock.now();
+        _awayCap?.cancel();
+        _awayCap = Timer(
+          AutoLockController.maxAwayDuringOperation,
+          _lockIfShowingVault,
+        );
+      }
+      return;
+    }
     final shouldLock = switch (_state) {
       VaultGateState.unlocked || VaultGateState.offerBiometric => true,
       VaultGateState.locked => _openWhileLocked,
       _ => false,
     };
     if (shouldLock) _lock();
+  }
+
+  /// La app volvió a `resumed`: si estuvo fuera más del tope mientras corría
+  /// una operación sin bloqueo, bloquea.
+  void _onResumed() {
+    final hiddenAt = _hiddenAt;
+    _clearAway();
+    if (hiddenAt != null &&
+        widget.autoLock.now().difference(hiddenAt) >
+            AutoLockController.maxAwayDuringOperation) {
+      _lockIfShowingVault();
+    }
+  }
+
+  void _clearAway() {
+    _awayCap?.cancel();
+    _awayCap = null;
+    _hiddenAt = null;
+  }
+
+  /// Bloquea solo con la bóveda en pantalla: sin bóveda (primer uso) no hay
+  /// nada que bloquear.
+  void _lockIfShowingVault() {
+    if (_showsVault) _lock();
   }
 
   /// Bloquea: borra la llave en Rust, cierra todo lo apilado sobre la raíz
@@ -272,6 +325,7 @@ class _VaultGateState extends State<VaultGate> {
     if (!mounted) return;
     _idle?.cancel();
     _idle = null;
+    _clearAway();
     _openWhileLocked = false;
     unawaited(
       Future.sync(widget.session.lock).then((_) {}, onError: (Object _) {}),
