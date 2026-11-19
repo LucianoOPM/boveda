@@ -148,6 +148,20 @@ fn derive_key_rejects_params_below_minimum() {
     assert_eq!(result.err(), Some(Error::InvalidKdfParams));
 }
 
+/// Vector fijo: la llave de una contraseña ASCII no cambia con la
+/// normalización NFC (#57). Se calculó con el código anterior al cambio y se
+/// verificó con el Argon2id de `node:crypto` (`argon2Sync`).
+#[test]
+fn ascii_password_derives_the_reference_key() {
+    let salt: [u8; SALT_LEN] = core::array::from_fn(|i| i as u8);
+    let key = derive_key(&password("clave-ascii-12345"), &salt, &KdfParams::MIN).unwrap();
+    let hex: String = key.iter().map(|b| format!("{b:02x}")).collect();
+    assert_eq!(
+        hex,
+        "7f51bec591d86903e9b95fc8bfcaa86ea4d19111408e28f5a05f4f960d9ffe2a"
+    );
+}
+
 #[test]
 fn generated_salts_are_different() {
     assert_ne!(generate_salt().unwrap(), generate_salt().unwrap());
