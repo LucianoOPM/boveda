@@ -181,12 +181,17 @@ pub(crate) fn seal_key_check(key: &VaultKey, format_version: u16) -> Result<[u8;
     let nonce = XNonce::try_generate().map_err(|_| Error::Random)?;
     let ad = key_check_associated_data(format_version);
     let mut body: [u8; 0] = [];
-    // La longitud es fija (32 bytes), así que este error no ocurre en la práctica.
-    let cipher =
-        XChaCha20Poly1305::new_from_slice(key.expose_secret()).map_err(|_| Error::WrongVaultKey)?;
+    // La longitud es fija (32 bytes), así que ninguno de los dos errores
+    // ocurre en la práctica. Se devuelve `MalformedEncryptedKey`, el mismo de
+    // `encrypt_vault_key`: `WrongVaultKey` solo es la respuesta real al
+    // verificar (`verify_key_check`), y `Random` a un fallo del generador
+    // (el nonce de arriba), y llamados desde `create`, la migración o el
+    // cambio de contraseña confundirían.
+    let cipher = XChaCha20Poly1305::new_from_slice(key.expose_secret())
+        .map_err(|_| Error::MalformedEncryptedKey)?;
     let tag = cipher
         .encrypt_inout_detached(&nonce, &ad, body.as_mut_slice().into())
-        .map_err(|_| Error::Random)?;
+        .map_err(|_| Error::MalformedEncryptedKey)?;
 
     let mut check = [0u8; KEY_CHECK_LEN];
     let (nonce_out, tag_out) = check.split_at_mut(NONCE_LEN);
