@@ -14,6 +14,7 @@ import 'services/auto_lock.dart';
 import 'services/backup_files.dart';
 import 'services/biometric_service.dart';
 import 'src/rust/api/session.dart';
+import 'theme/theme.dart';
 import 'widgets/strength_indicator.dart';
 
 /// La app: un `MaterialApp` cuyo inicio es [VaultGate].
@@ -59,6 +60,11 @@ class _BovedaAppState extends State<BovedaApp> {
   Widget build(BuildContext context) {
     return MaterialApp(
       title: 'Bóveda',
+      // Un solo tema, oscuro: ambos modos usan el mismo para que el tema del
+      // sistema no cambie la apariencia (docs/DESIGN.md, 5.1).
+      theme: buildTheme(defaultAccent),
+      darkTheme: buildTheme(defaultAccent),
+      themeMode: ThemeMode.dark,
       // Por encima del `Navigator`: cubre rutas, diálogos y hojas. Cualquier
       // toque cuenta como actividad; el `Listener` translúcido no lo consume.
       builder: (context, child) => AutoLockScope(
