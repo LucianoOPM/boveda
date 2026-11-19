@@ -49,22 +49,52 @@ jobs:
           distribution: temurin
           java-version: "17"
 
+      - name: Mismos canal y componentes en los dos rust-toolchain.toml
+        # El build hook que compila la librería de Android (hook/build.dart)
+        # lee mobile/rust/rust-toolchain.toml, y el resto del repositorio usa el
+        # de la raíz (#48). Deben fijar el mismo canal y los mismos componentes:
+        # subir Rust es un commit que cambia los dos archivos.
+        shell: bash
+        run: |
+          channel() { sed -n 's/^channel *= *"\(.*\)"/\1/p' "$1"; }
+          components() {
+            sed -n 's/^components *= *\[\(.*\)\]/\1/p' "$1" | tr -d ' "' | tr ',' '\n' | sort | paste -sd,
+          }
+          root=../rust-toolchain.toml
+          app=rust/rust-toolchain.toml
+          root_channel=$(channel "$root"); app_channel=$(channel "$app")
+          root_components=$(components "$root"); app_components=$(components "$app")
+          echo "raíz:        canal $root_channel, componentes [$root_components]"
+          echo "mobile/rust: canal $app_channel, componentes [$app_components]"
+          if [ -z "$root_channel" ] || [ -z "$app_channel" ]; then
+            echo "::error::No se pudo leer el canal de $root o de mobile/$app (el canal va en una línea: channel = \"x.y.z\")."
+            exit 1
+          fi
+          if [ "$root_channel" != "$app_channel" ]; then
+            echo "::error::El canal de rust-toolchain.toml ($root_channel) y el de mobile/$app ($app_channel) deben ser iguales. Subir Rust cambia los dos archivos en un commit propio."
+            exit 1
+          fi
+          if [ "$root_components" != "$app_components" ]; then
+            echo "::error::Los componentes de rust-toolchain.toml [$root_components] y los de mobile/$app [$app_components] deben ser iguales."
+            exit 1
+          fi
+
       - name: Toolchain de rust-toolchain.toml
         # Igual que en ci.yml: rustup instala la versión y los componentes del
         # archivo. Lo usan los pasos que corren cargo dentro del repo (codegen
-        # y cargo expand). El APK no: cargokit compila con el `stable` de la
-        # imagen, que se comprueba antes de compilarlo.
+        # y cargo expand). La librería de Android la compila el build hook con
+        # mobile/rust/rust-toolchain.toml (mismo canal, ver el paso anterior),
+        # y rustup instala ahí sus targets de Android.
         shell: bash
         run: |
           rustup toolchain install
           rustc --version
 
       - name: Caché de Rust
-        # Cargokit no compila en target/: usa su propio --target-dir dentro de
-        # mobile/build. Se declara aquí para que rust-cache lo guarde.
+        # El build hook compila la librería de Android dentro de
+        # mobile/.dart_tool, que rust-cache no guarda: solo se cachea target/ de
+        # la raíz y el registro de cargo.
         uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: ". -> mobile/build/rust_lib_boveda/build"
 
       - name: Flutter
         # El :hash: de subosito es el commit de Flutter, no el lock: la clave
@@ -132,26 +162,33 @@ jobs:
             exit 1
           fi
 
-      - name: Stable de la imagen igual a rust-toolchain.toml
-        # Cargokit compila con `rustup run stable`, no con rust-toolchain.toml
-        # (#48). Mientras eso no se resuelva, el stable de la imagen debe ser la
-        # versión fijada. No se ejecuta `rustup update stable`: la comprobación
-        # debe ver el stable que trae la imagen.
+      - name: APK debug
+        # Toolchain: el de mobile/rust/rust-toolchain.toml, con el que el build
+        # hook (hook/build.dart) compila la librería de Rust. Los hooks compilan
+        # siempre en release, también en un build de depuración.
+        # Las 3 ABI que Flutter empaqueta (armeabi-v7a, arm64-v8a y x86_64),
+        # las mismas que lista rust/rust-toolchain.toml.
+        run: flutter build apk --debug --target-platform android-arm,android-arm64,android-x64
+
+      - name: El APK trae la librería de Rust de las 3 ABI, compilada con el Rust fijado
+        # Falla si el hook no corrió o si falta la librería de alguna ABI. El
+        # compilador deja su versión en la sección .comment de la librería: si
+        # el hook usara otro toolchain, esto también lo detecta (#48).
         shell: bash
         run: |
           pinned=$(sed -n 's/^channel *= *"\(.*\)"/\1/p' ../rust-toolchain.toml)
-          stable=$(rustup run stable rustc --version | awk '{print $2}')
-          echo "rust-toolchain.toml: $pinned; stable de la imagen: $stable"
-          if [ "$stable" != "$pinned" ]; then
-            echo "::error::cargokit compila Android con el toolchain stable de la imagen ($stable), distinto del fijado en rust-toolchain.toml ($pinned). Actualiza rust-toolchain.toml a $stable en un commit propio, o resuelve la issue #48."
-            exit 1
-          fi
-
-      - name: APK debug
-        # Toolchain: stable (cargokit), que instala por su cuenta los targets
-        # de Android que le falten.
-        # En debug, cargokit compila además i686, pero el APK no lo incluye,
-        # porque Flutter fija abiFilters a armeabi-v7a, arm64-v8a y x86_64. El
-        # lib/armeabi-v7a/ que aparezca en un APK local es un resto de builds
-        # anteriores en mobile/build/; en la CI, que parte de cero, no aparece.
-        run: flutter build apk --debug --target-platform android-arm64,android-x64
+          apk=build/app/outputs/flutter-apk/app-debug.apk
+          for abi in armeabi-v7a arm64-v8a x86_64; do
+            lib="lib/$abi/librust_lib_boveda.so"
+            if ! unzip -l "$apk" "$lib" > /dev/null 2>&1; then
+              echo "::error::El APK no trae $lib: el build hook no compiló la librería de $abi."
+              exit 1
+            fi
+            unzip -p "$apk" "$lib" > "$RUNNER_TEMP/$abi.so"
+            found=$(strings -a "$RUNNER_TEMP/$abi.so" | grep -m1 '^rustc version ' || true)
+            echo "$abi: $found (fijado: $pinned)"
+            case "$found" in
+              "rustc version $pinned "*) ;;
+              *) echo "::error::La librería de $abi no se compiló con Rust $pinned."; exit 1 ;;
+            esac
+          done
