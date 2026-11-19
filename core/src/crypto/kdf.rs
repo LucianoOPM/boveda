@@ -3,9 +3,10 @@
 use std::time::{Duration, Instant};
 
 use argon2::{Algorithm, Argon2, Params, Version};
-use secrecy::{ExposeSecret, SecretString};
+use secrecy::SecretString;
 use zeroize::Zeroizing;
 
+use super::normalize::normalize_nfc;
 use crate::error::{Error, Result};
 
 /// Longitud de la sal en bytes.
@@ -156,9 +157,12 @@ pub(crate) fn derive_key(
     .map_err(|_| Error::InvalidKdfParams)?;
     let argon2 = Argon2::new(Algorithm::Argon2id, Version::V0x13, argon2_params);
 
+    // En NFC, para que una misma contraseña derive la misma llave sin importar
+    // cómo la escribió el teclado (#57). Una contraseña ASCII no cambia.
+    let normalized = normalize_nfc(password);
     let mut key = Zeroizing::new([0u8; DERIVED_KEY_LEN]);
     argon2
-        .hash_password_into(password.expose_secret().as_bytes(), salt, key.as_mut())
+        .hash_password_into(normalized.as_bytes(), salt, key.as_mut())
         .map_err(|_| Error::InvalidKdfParams)?;
     Ok(key)
 }
