@@ -180,13 +180,13 @@ Las maquetas usan un marco de 390 × 820 con esquinas de 54 y pantalla interna d
   - `extensions.dart`: `ThemeExtension<StatusColors>` (`success`, `warning`, `lan`, `errorStrong` y contenedores), `ThemeExtension<SyntaxColors>` y `ThemeExtension<BovedaText>`.
   - `spacing.dart`: la escala (`Space.xs = 4` … `Space.xxl = 48`) y los radios (`Radii.card = 16`…).
 - Los widgets leen todo del tema (`Theme.of(context).colorScheme`, `textTheme`, `extension<…>()`). Nunca un `Color(0x…)` ni un `TextStyle` con tamaño fijo fuera de `lib/theme/`.
-- Íconos: Material Symbols Outlined, trazo uniforme, el mismo ícono para la misma acción en toda la app.
+- Íconos: [Lucide](https://lucide.dev) (licencia ISC), trazo de 2 px y esquinas redondeadas, el mismo ícono para la misma acción en toda la app. Se empaquetan con la app, sin descargas en tiempo de ejecución. Si se usa un paquete de Flutter para ellos, es una dependencia nueva: se consulta antes de agregarla (la alternativa son los SVG como assets).
 
 ### 5.2 Windows (Tauri)
 
 - Tokens como variables CSS en `src/styles/tokens.css` (`--bg-base`, `--accent`…), con los mismos nombres. La PC usa Cyber Lime fijo: el acento elegido en el celular no viaja a la PC.
 - Ningún color ni tamaño literal fuera de `tokens.css`. La CSP de `tauri.conf.json` no permite orígenes externos.
-- Íconos: Fluent System Icons (SVG empaquetados).
+- Íconos: Lucide (SVG empaquetados), los mismos que en Android, con trazo de 2 px.
 
 ---
 
