@@ -151,7 +151,7 @@ fn derive_key_rejects_params_below_minimum() {
 }
 
 /// Garantía de tipo (#54): `DerivedKey` y `VaultKey` son un puntero al heap, así
-/// que mover una llave copia 8 bytes y no los 32 de la llave.
+/// que mover una llave copia un puntero y no los 32 bytes de la llave.
 ///
 /// No prueba que no haya copias en la pila (las copias internas de las
 /// dependencias, o las que decida el compilador): eso se cubre con la
@@ -163,6 +163,78 @@ fn derived_and_vault_keys_are_pointer_sized() {
 
     assert_eq!(size_of::<DerivedKey>(), size_of::<usize>());
     assert_eq!(size_of::<VaultKey>(), size_of::<usize>());
+}
+
+// --- Memoria de trabajo de Argon2id (#54) ---------------------------------
+//
+// `hash_into` recibe el búfer de memoria para poder comprobar que queda en
+// ceros al terminar. No se inspecciona memoria ya liberada: solo el búfer que
+// la prueba conserva.
+
+/// Memoria con todos los bloques en `u64::MAX`, como la que dejaría un uso previo.
+fn dirty_memory(blocks: usize) -> Vec<Block> {
+    let mut memory = vec![Block::new(); blocks];
+    for block in &mut memory {
+        block.as_mut().fill(u64::MAX);
+    }
+    memory
+}
+
+fn is_zeroed(memory: &[Block]) -> bool {
+    memory
+        .iter()
+        .all(|block| block.as_ref().iter().all(|word| *word == 0))
+}
+
+#[test]
+fn work_memory_has_the_exact_size_the_params_ask_for() {
+    let argon2 = argon2_for(&KdfParams::MIN).unwrap();
+    let blocks = argon2.params().block_count();
+    assert_eq!(blocks, KdfParams::MIN.memory_kib as usize);
+
+    let memory = work_memory(blocks).unwrap();
+    assert_eq!(memory.len(), blocks);
+    // Capacidad igual a la longitud: el `Vec` no volvió a reservar memoria.
+    assert_eq!(memory.capacity(), blocks);
+    assert!(is_zeroed(&memory));
+}
+
+#[test]
+fn hash_into_clears_the_working_memory() {
+    let argon2 = argon2_for(&KdfParams::MIN).unwrap();
+    let mut memory = dirty_memory(argon2.params().block_count());
+    let salt: [u8; SALT_LEN] = core::array::from_fn(|i| i as u8);
+    let mut out = [0u8; DERIVED_KEY_LEN];
+
+    hash_into(&argon2, b"clave-ascii-12345", &salt, &mut out, &mut memory).unwrap();
+
+    // El resultado es el de siempre (la memoria previa no lo cambia) y la
+    // memoria de trabajo quedó en ceros.
+    let hex: String = out.iter().map(|b| format!("{b:02x}")).collect();
+    assert_eq!(
+        hex,
+        "7f51bec591d86903e9b95fc8bfcaa86ea4d19111408e28f5a05f4f960d9ffe2a"
+    );
+    assert!(is_zeroed(&memory));
+}
+
+#[test]
+fn hash_into_clears_the_working_memory_on_error() {
+    let argon2 = argon2_for(&KdfParams::MIN).unwrap();
+    // Menos bloques de los que pide el parámetro: Argon2id falla antes de empezar.
+    let mut memory = dirty_memory(16);
+    let mut out = [0u8; DERIVED_KEY_LEN];
+
+    let result = hash_into(
+        &argon2,
+        b"clave-ascii-12345",
+        &[0u8; SALT_LEN],
+        &mut out,
+        &mut memory,
+    );
+
+    assert_eq!(result, Err(Error::InvalidKdfParams));
+    assert!(is_zeroed(&memory));
 }
 
 /// Llave de la contraseña NFC `café-clave-larga` (con `é` U+00E9), sal

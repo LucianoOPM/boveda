@@ -2,8 +2,9 @@
 
 use std::time::{Duration, Instant};
 
-use argon2::{Algorithm, Argon2, Params, Version};
+use argon2::{Algorithm, Argon2, Block, Params, Version};
 use secrecy::{SecretBox, SecretString};
+use zeroize::{Zeroize, Zeroizing};
 
 use super::normalize::normalize_nfc;
 use crate::error::{Error, Result};
@@ -150,6 +151,42 @@ pub(crate) fn derive_key(
 ) -> Result<DerivedKey> {
     #[cfg(test)]
     DERIVE_CALLS.with(|calls| calls.set(calls.get() + 1));
+    let argon2 = argon2_for(params)?;
+
+    // En NFC, para que una misma contraseña derive la misma llave sin importar
+    // cómo la escribió el teclado (#57). Una contraseña ASCII no cambia.
+    let normalized = normalize_nfc(password);
+
+    // La memoria de trabajo de Argon2id (de 64 a 128 MiB) es nuestra y se
+    // borra al terminar: la que reserva `hash_password_into` se libera sin
+    // borrar y, con paralelismo 1, permite recalcular la llave derivada.
+    let mut memory = work_memory(argon2.params().block_count())?;
+
+    // Argon2id escribe directamente en el búfer del heap: la llave nunca pasa
+    // por un arreglo propio en la pila. `init_with_mut` no devuelve `Result`,
+    // así que el error se captura afuera; si falla, el `SecretBox` se suelta y
+    // se borra sin copiar nada a otro lugar. Empieza en `Err`: si el closure
+    // no corriera, `derive_key` fallaría en vez de devolver una llave de ceros.
+    //
+    // Las copias internas de las dependencias que quedan fuera de nuestro
+    // alcance están documentadas en la excepción de `crypto`.
+    let mut hashed: Result<()> = Err(Error::InvalidKdfParams);
+    let key = DerivedKey::init_with_mut(|out| {
+        hashed = hash_into(
+            &argon2,
+            normalized.as_bytes(),
+            salt,
+            out.as_mut(),
+            memory.as_mut_slice(),
+        );
+    });
+    hashed?;
+    Ok(key)
+}
+
+/// Argon2id con los parámetros de la cabecera. Rechaza los que estén fuera de
+/// los límites de [`KdfParams::validate`].
+fn argon2_for(params: &KdfParams) -> Result<Argon2<'static>> {
     params.validate()?;
     let argon2_params = Params::new(
         params.memory_kib,
@@ -158,27 +195,46 @@ pub(crate) fn derive_key(
         Some(DERIVED_KEY_LEN),
     )
     .map_err(|_| Error::InvalidKdfParams)?;
-    let argon2 = Argon2::new(Algorithm::Argon2id, Version::V0x13, argon2_params);
+    Ok(Argon2::new(
+        Algorithm::Argon2id,
+        Version::V0x13,
+        argon2_params,
+    ))
+}
 
-    // En NFC, para que una misma contraseña derive la misma llave sin importar
-    // cómo la escribió el teclado (#57). Una contraseña ASCII no cambia.
-    let normalized = normalize_nfc(password);
+/// Reserva la memoria de trabajo de Argon2id con el tamaño exacto que piden
+/// los parámetros. La capacidad reservada coincide con la longitud, así que
+/// el `Vec` no vuelve a reservar memoria y no deja copias en un búfer anterior.
+/// Se borra al soltarla, también si algo hace panic.
+///
+/// Si no hay memoria, devuelve [`Error::InvalidKdfParams`]: la API pública no
+/// hace panic ni aborta.
+fn work_memory(blocks: usize) -> Result<Zeroizing<Vec<Block>>> {
+    let mut memory = Zeroizing::new(Vec::new());
+    memory
+        .try_reserve_exact(blocks)
+        .map_err(|_| Error::InvalidKdfParams)?;
+    memory.resize(blocks, Block::new());
+    Ok(memory)
+}
 
-    // Argon2id escribe directamente en el búfer del heap: la llave nunca pasa
-    // por un arreglo propio en la pila. `init_with_mut` no devuelve `Result`,
-    // así que el error se captura afuera; si falla, el `SecretBox` se suelta y
-    // se borra sin copiar nada a otro lugar.
-    //
-    // Las copias internas de `argon2` (`full_out`, en `blake2b_long`) quedan
-    // fuera de nuestro alcance: ver la excepción documentada en `crypto`.
-    let mut hashed: Result<()> = Ok(());
-    let key = DerivedKey::init_with_mut(|out| {
-        hashed = argon2
-            .hash_password_into(normalized.as_bytes(), salt, out.as_mut())
-            .map_err(|_| Error::InvalidKdfParams);
-    });
-    hashed?;
-    Ok(key)
+/// Corre Argon2id sobre la memoria de trabajo `memory` y la borra al terminar,
+/// con éxito o con error. Es una función aparte, que recibe el búfer, para
+/// poder comprobar en una prueba que queda en ceros.
+fn hash_into(
+    argon2: &Argon2<'_>,
+    password: &[u8],
+    salt: &[u8],
+    out: &mut [u8],
+    memory: &mut [Block],
+) -> Result<()> {
+    let hashed = argon2
+        .hash_password_into_with_memory(password, salt, out, &mut *memory)
+        .map_err(|_| Error::InvalidKdfParams);
+    // `Block` implementa `Zeroize`, pero no `DefaultIsZeroes`, así que no hay
+    // `Zeroize` para el slice entero: se borra bloque por bloque.
+    memory.iter_mut().for_each(Zeroize::zeroize);
+    hashed
 }
 
 /// Genera una sal nueva con el generador del sistema.
