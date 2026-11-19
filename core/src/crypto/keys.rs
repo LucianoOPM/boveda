@@ -7,6 +7,7 @@
 use chacha20poly1305::aead::{Generate, Tag};
 use chacha20poly1305::{AeadInOut, KeyInit, XChaCha20Poly1305, XNonce};
 use secrecy::{ExposeSecret, ExposeSecretMut, SecretBox, SecretString};
+use zeroize::Zeroizing;
 
 use super::kdf::{self, DerivedKey, KdfParams, SALT_LEN};
 use crate::error::{Error, Result};
@@ -64,18 +65,20 @@ pub(crate) fn encrypt_vault_key(
     let nonce = XNonce::try_generate().map_err(|_| Error::Random)?;
 
     // Se cifra en el mismo búfer de tamaño fijo: al terminar ya solo contiene
-    // texto cifrado y no queda ninguna copia de la llave en claro.
-    let mut ciphertext = [0u8; ENCRYPTED_KEY_LEN];
-    let (body, tag_out) = ciphertext.split_at_mut(VAULT_KEY_LEN);
+    // texto cifrado. Va en `Zeroizing` porque antes de cifrar guarda la llave
+    // de bóveda en claro: si el cifrado falla, `?` lo borra al salir.
+    let mut buffer = Zeroizing::new([0u8; ENCRYPTED_KEY_LEN]);
+    let (body, tag_out) = buffer.split_at_mut(VAULT_KEY_LEN);
     body.copy_from_slice(vault_key.expose_secret());
     let tag = cipher(derived)?
         .encrypt_inout_detached(&nonce, associated_data, body.into())
         .map_err(|_| Error::MalformedEncryptedKey)?;
     tag_out.copy_from_slice(&tag);
 
+    // Solo sale del búfer lo que ya es texto cifrado y etiqueta.
     Ok(EncryptedKey {
         nonce: nonce.into(),
-        ciphertext,
+        ciphertext: *buffer,
     })
 }
 
