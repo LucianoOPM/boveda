@@ -50,6 +50,7 @@ boveda/
 │   ├── flutter_rust_bridge.yaml
 │   ├── rust/               # crate puente rust_lib_boveda: fachada delgada sobre vault-core
 │   │   ├── Cargo.toml      # edición 2021 por el código generado
+│   │   ├── rust-toolchain.toml  # mismo canal y componentes que el de la raíz, más los 3 targets de Android; lo lee el build hook
 │   │   └── src/
 │   │       ├── lib.rs
 │   │       ├── api/        # expuesto a Dart, un archivo por área:
@@ -59,7 +60,8 @@ boveda/
 │   │       │               #   de la contraseña maestra); pruebas en <área>/tests.rs
 │   │       ├── test_support.rs   # ayudantes de pruebas (copia de vault-v2.db)
 │   │       └── frb_generated.rs  # generado; no se edita
-│   ├── rust_builder/       # generado por flutter_rust_bridge (cargokit); no se edita
+│   ├── hook/
+│   │   └── build.dart      # build hook (flutter_rust_bridge_hooks y native_toolchain_rust): compila la librería de Rust de Android con rust/rust-toolchain.toml; reemplaza a cargokit
 │   ├── test/               # pruebas de widgets en la PC, con el puente simulado
 │   ├── integration_test/   # pruebas en dispositivo que cargan la librería de Rust
 │   ├── test_driver/        # punto de entrada para correr integration_test con flutter drive
@@ -71,7 +73,7 @@ boveda/
 │   │   ├── widgets/        # activity_text_field.dart (campo que cuenta como actividad, cierra el teclado al tocar fuera y, con `copyable: false`, no deja copiar ni cortar; los controles del formulario van en `TextFieldTapRegion`), password_field.dart, tags_field.dart (etiquetas como chips), strength_indicator.dart, damaged_entries_banner.dart
 │   │   └── services/       # vault_location.dart (ruta en noBackupFilesDir), auto_lock.dart (tiempo de bloqueo, alcance de la actividad y `runWithoutAutoLock`), backup_files.dart (selector de archivos y temporales del respaldo), biometric_service.dart (canal de la huella), biometric_unlock.dart (activar y desbloquear con huella), local_clipboard.dart (copia local)
 │   ├── android/            # app/src/main/kotlin/.../MainActivity.kt (FLAG_SECURE, canales; cancela la huella en onStop), BiometricVault.kt (Keystore y huella), LocalClipboard.kt (marca sensible y borrado condicional) y BackupFiles.kt (selector del sistema y temporales en `noBackupFilesDir/backup-tmp/`; `BackupPaths.kt` comprueba que un temporal cuelgue de esa carpeta); AndroidManifest.xml y res/xml/ (respaldo automático desactivado)
-│   └── build/              # ignorado; cargokit compila Rust en build/rust_lib_boveda/build
+│   └── build/              # ignorado; el build hook compila Rust en .dart_tool/hooks_runner (en Windows, en un directorio corto del temporal)
 │
 └── desktop/                # app Tauri 2 (esperado, etapa 3)
     ├── CLAUDE.md

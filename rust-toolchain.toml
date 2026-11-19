@@ -1,10 +1,9 @@
 # Toolchain compartido por el núcleo y las dos apps.
 # La versión está fijada para que la CI y la PC compilen igual. Subirla es un
-# commit propio que cambia este archivo (ver CLAUDE.md de la raíz).
-# Sin targets de Android: cargokit compila la app con el toolchain `stable`,
-# no con este archivo, y les instala sus targets por su cuenta. Listarlos aquí
-# solo haría que rustup los descargara para la versión fijada sin que nadie los use. La
-# #48 decide si vuelven cuando la librería de Android use este toolchain.
+# commit propio que cambia este archivo y mobile/rust/rust-toolchain.toml, que
+# lleva el mismo canal y los mismos componentes (ver CLAUDE.md de la raíz).
+# Sin targets de Android: la librería de la app la compila el build hook con
+# mobile/rust/rust-toolchain.toml, que es el que lista sus targets.
 [toolchain]
 channel = "1.100.0"
 components = ["rustfmt", "clippy"]

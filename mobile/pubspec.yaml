@@ -34,9 +34,15 @@ dependencies:
   # The following adds the Cupertino Icons font to your application.
   # Use with the CupertinoIcons class for iOS style icons.
   cupertino_icons: ^1.0.8
-  rust_lib_boveda:
-    path: rust_builder
   flutter_rust_bridge: 2.13.0
+  # Compilan el Rust con el toolchain de rust/rust-toolchain.toml (#48). Código
+  # de compilación que corre en cada build: versión exacta y, para actualizar,
+  # revisar de nuevo su código (ver mobile/CLAUDE.md).
+  flutter_rust_bridge_hooks: 2.13.0
+  native_toolchain_rust: 1.1.1
+  # Solo lo usa hook/build.dart para compilar únicamente cuando el destino es
+  # Android (dart.dev, BSD-3). Versión exacta, como los dos anteriores.
+  code_assets: 2.2.0
   path: ^1.9.1
 
 dev_dependencies:
