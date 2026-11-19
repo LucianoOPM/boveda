@@ -7,7 +7,14 @@ import '../services/biometric_service.dart';
 import '../services/biometric_unlock.dart';
 import '../src/rust/api/error.dart';
 import '../src/rust/api/session.dart';
+import '../theme/colors.dart';
+import '../theme/extensions.dart';
+import '../theme/icons.dart';
+import '../theme/spacing.dart';
+import '../theme/theme.dart';
 import '../widgets/password_field.dart';
+import '../widgets/primary_glow.dart';
+import '../widgets/status_capsule.dart';
 
 /// Aviso para [UnlockScreen]: [isError] lo muestra en el color de error.
 class UnlockNotice {
@@ -395,32 +402,103 @@ class _UnlockScreenState extends State<UnlockScreen> {
 
   void _onChanged(String _) => setState(() => _error = null);
 
+  /// Aviso en un contenedor con ícono: `errorContainer` si [isError] y
+  /// `warningContainer` si no (`docs/DESIGN.md`, 7.3).
+  Widget _banner(Key key, String text, {required bool isError}) {
+    final theme = Theme.of(context);
+    final status = theme.extension<StatusColors>() ?? StatusColors.standard;
+    final color = isError ? theme.colorScheme.error : status.warning;
+    return Container(
+      key: key,
+      padding: const EdgeInsets.all(Space.md),
+      decoration: BoxDecoration(
+        color: isError
+            ? BovedaColors.errorContainer
+            : BovedaColors.warningContainer,
+        borderRadius: BorderRadius.circular(Radii.card),
+        border: Border.all(color: color.withValues(alpha: 0.38)),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(BovedaIcons.triangleAlert, size: 18, color: color),
+          const SizedBox(width: Space.sm),
+          Expanded(
+            child: Text(
+              text,
+              style: theme.textTheme.bodyMedium?.copyWith(color: color),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final errorStyle = TextStyle(color: theme.colorScheme.error);
+    final accent = theme.colorScheme.primary;
+    final accentColors =
+        theme.extension<AccentColors>() ?? AccentColors.of(defaultAccent);
+    final meta = (theme.extension<BovedaText>() ?? BovedaText.standard).meta;
     return Scaffold(
+      backgroundColor: BovedaColors.lockScrim,
       body: SafeArea(
         child: SingleChildScrollView(
-          padding: const EdgeInsets.all(24),
+          padding: const EdgeInsets.symmetric(
+            horizontal: Space.lg,
+            vertical: Space.xl,
+          ),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              Text('Bóveda bloqueada', style: theme.textTheme.headlineSmall),
+              const SizedBox(height: Space.xl),
+              Center(
+                child: ExcludeSemantics(
+                  child: Container(
+                    key: const Key('unlock-lock-box'),
+                    width: 72,
+                    height: 72,
+                    decoration: BoxDecoration(
+                      color: BovedaColors.iconBox,
+                      borderRadius: BorderRadius.circular(Radii.card),
+                      border: Border.all(color: accentColors.border),
+                    ),
+                    child: Icon(BovedaIcons.lock, size: 32, color: accent),
+                  ),
+                ),
+              ),
+              const SizedBox(height: Space.lg),
+              Text(
+                'Bóveda bloqueada',
+                textAlign: TextAlign.center,
+                style: theme.textTheme.headlineSmall,
+              ),
+              const SizedBox(height: Space.md),
+              const Center(
+                child: StatusCapsule(
+                  text: 'BLOQUEADA',
+                  locked: true,
+                  semanticsLabel: 'Bóveda bloqueada',
+                ),
+              ),
               if (_shownNotice case final shown?) ...[
-                const SizedBox(height: 16),
-                Text(
+                const SizedBox(height: Space.lg),
+                _banner(
+                  const Key('unlock-notice'),
                   shown.text,
-                  style: shown.isError
-                      ? errorStyle
-                      : TextStyle(color: theme.colorScheme.onSurfaceVariant),
+                  isError: shown.isError,
                 ),
               ],
               if (_notice case final notice?) ...[
-                const SizedBox(height: 16),
-                Text(notice, style: errorStyle),
+                const SizedBox(height: Space.lg),
+                _banner(
+                  const Key('unlock-biometric-notice'),
+                  notice,
+                  isError: false,
+                ),
               ],
-              const SizedBox(height: 24),
+              const SizedBox(height: Space.xl),
               PasswordField(
                 key: const Key('unlock-password'),
                 controller: _password,
@@ -432,11 +510,30 @@ class _UnlockScreenState extends State<UnlockScreen> {
                 onSubmitted: (_) => _unlock(),
               ),
               if (_error case final error?) ...[
-                const SizedBox(height: 8),
-                Text(error, style: errorStyle),
+                const SizedBox(height: Space.sm),
+                Row(
+                  key: const Key('unlock-error'),
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Icon(
+                      BovedaIcons.triangleAlert,
+                      size: 16,
+                      color: theme.colorScheme.error,
+                    ),
+                    const SizedBox(width: Space.sm),
+                    Expanded(
+                      child: Text(
+                        error,
+                        style: theme.textTheme.bodyMedium?.copyWith(
+                          color: theme.colorScheme.error,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
               ],
               if (_canOfferBiometric) ...[
-                const SizedBox(height: 8),
+                const SizedBox(height: Space.sm),
                 // En el grupo del campo: tocarlo no cierra el teclado.
                 TextFieldTapRegion(
                   child: CheckboxListTile(
@@ -452,37 +549,80 @@ class _UnlockScreenState extends State<UnlockScreen> {
                   ),
                 ),
               ],
-              const SizedBox(height: 24),
+              const SizedBox(height: Space.xl),
               // En el grupo del campo: tocarlo no cierra el teclado.
               TextFieldTapRegion(
-                child: FilledButton(
-                  key: const Key('unlock-submit'),
-                  onPressed: _canUnlock ? _unlock : null,
-                  child: _busy
-                      ? Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            const SizedBox.square(
-                              dimension: 16,
-                              child: CircularProgressIndicator(strokeWidth: 2),
-                            ),
-                            const SizedBox(width: 12),
-                            Text(
-                              _activating
-                                  ? 'Activando huella…'
-                                  : 'Desbloqueando…',
-                            ),
-                          ],
-                        )
-                      : const Text('Desbloquear'),
+                child: PrimaryGlow(
+                  enabled: _canUnlock,
+                  child: FilledButton(
+                    key: const Key('unlock-submit'),
+                    onPressed: _canUnlock ? _unlock : null,
+                    child: _busy
+                        ? Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              const SizedBox.square(
+                                dimension: 16,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                ),
+                              ),
+                              const SizedBox(width: Space.md),
+                              Text(
+                                _activating
+                                    ? 'Activando huella…'
+                                    : 'Desbloqueando…',
+                              ),
+                            ],
+                          )
+                        : const Text('Desbloquear'),
+                  ),
                 ),
               ),
               if (_biometricEnabled) ...[
-                const SizedBox(height: 8),
-                OutlinedButton(
-                  key: const Key('unlock-biometric'),
-                  onPressed: _busy ? null : _unlockWithBiometric,
-                  child: const Text('Usar huella'),
+                const SizedBox(height: Space.xl),
+                Center(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Tooltip(
+                        message: 'Usar huella',
+                        child: SizedBox.square(
+                          key: const Key('unlock-biometric'),
+                          dimension: 64,
+                          child: Material(
+                            color: BovedaColors.surfaceElevated,
+                            shape: CircleBorder(
+                              side: BorderSide(color: accentColors.border),
+                            ),
+                            child: InkWell(
+                              customBorder: const CircleBorder(),
+                              onTap: _busy ? null : _unlockWithBiometric,
+                              child: Center(
+                                child: Icon(
+                                  BovedaIcons.fingerprint,
+                                  size: 28,
+                                  color: _busy
+                                      ? BovedaColors.textDisabled
+                                      : accent,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: Space.sm),
+                      // El tooltip ya lo anuncia: el texto no se lee dos veces.
+                      ExcludeSemantics(
+                        child: Text(
+                          'Usar huella',
+                          style: meta.copyWith(
+                            color: theme.colorScheme.onSurfaceVariant,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
               ],
             ],
