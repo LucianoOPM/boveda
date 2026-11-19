@@ -1225,6 +1225,56 @@ fn failed_migration_keeps_v1_byte_for_byte() {
     assert_eq!(fs::read(&path).unwrap(), before);
 }
 
+/// Una migración que falla a mitad de la transacción se revierte entera
+/// (#53). `deny_writes_for_test` la hace fallar en su primer paso, antes de
+/// escribir nada, así que no distingue una migración con transacción de una
+/// sin ella. Aquí la vista `v` apunta a `header`: con `legacy_alter_table`
+/// apagado, el `ALTER TABLE header_v2 RENAME TO header` falla, y eso ocurre
+/// después del `CREATE`, el `INSERT` y el `DROP`. Sin la transacción, el
+/// archivo quedaría sin la tabla `header`.
+#[test]
+fn failed_migration_rolls_back_after_dropping_the_old_header() {
+    let (_dir, path) = fixture_v1_copy();
+    let conn = raw(&path);
+    conn.execute_batch("CREATE VIEW v AS SELECT * FROM header")
+        .unwrap();
+    // Guardia: la prueba depende de que SQLite deje borrar `header` pero no
+    // renombrar otra tabla a ese nombre mientras la vista la mencione. Si una
+    // versión nueva de SQLite lo cambiara, falla aquí y no más abajo, con un
+    // `unwrap_err` confuso. Se revierte: el archivo no cambia.
+    conn.execute_batch("BEGIN; CREATE TABLE t2 (x); DROP TABLE header")
+        .expect("DROP TABLE header debe poder ejecutarse");
+    assert!(
+        conn.execute_batch("ALTER TABLE t2 RENAME TO header")
+            .is_err(),
+        "con la vista v, el RENAME debe fallar"
+    );
+    conn.execute_batch("ROLLBACK").unwrap();
+    drop(conn);
+
+    let mut vault = Vault::open(&path).unwrap();
+    let before = fs::read(&path).unwrap();
+
+    let err = vault.unlock(&password(FIXTURE_V1_PASSWORD)).unwrap_err();
+    assert!(matches!(err, Error::Storage(_)), "{err:?}");
+    assert!(vault.is_locked());
+    drop(vault);
+
+    assert_eq!(fs::read(&path).unwrap(), before);
+    let (version, header_rows): (i64, i64) = raw(&path)
+        .query_row(
+            "SELECT format_version, (SELECT count(*) FROM header) FROM header WHERE id = 1",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .unwrap();
+    assert_eq!((version, header_rows), (1, 1));
+    let integrity: String = raw(&path)
+        .query_row("PRAGMA integrity_check", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(integrity, "ok");
+}
+
 #[test]
 fn wrong_password_on_v1_writes_nothing() {
     let (_dir, path) = fixture_v1_copy();

@@ -531,6 +531,24 @@ fn fixture_v2_opens_with_known_contents() {
     assert_fixture_contents(&mut vault);
 }
 
+/// `vault-v2.db` es de verdad de la versión 2 (#53): una v2 no escribe nada
+/// al desbloquear, mientras que una v1 se migraría en silencio y el archivo
+/// cambiaría. `fixture_v2_opens_with_known_contents` no lo distingue: pasaría
+/// igual con una v1 y la contraseña de la v2. Aquí no se revela ningún
+/// secreto, porque revelar actualiza `last_used_at`.
+#[test]
+fn fixture_v2_unlock_does_not_write() {
+    let (_dir, path) = fixture_copy_of("vault-v2.db");
+    let before = fs::read(&path).unwrap();
+    let mut vault = Vault::open(&path).unwrap();
+    assert_eq!(
+        vault.unlock(&password(FIXTURE_V2_PASSWORD)).unwrap(),
+        clean_report()
+    );
+    drop(vault);
+    assert_eq!(fs::read(&path).unwrap(), before);
+}
+
 #[test]
 fn fixture_v1_migrates_and_keeps_working() {
     let (_dir, path) = fixture_copy();
