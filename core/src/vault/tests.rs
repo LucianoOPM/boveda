@@ -1235,9 +1235,23 @@ fn failed_migration_keeps_v1_byte_for_byte() {
 #[test]
 fn failed_migration_rolls_back_after_dropping_the_old_header() {
     let (_dir, path) = fixture_v1_copy();
-    raw(&path)
-        .execute_batch("CREATE VIEW v AS SELECT * FROM header")
+    let conn = raw(&path);
+    conn.execute_batch("CREATE VIEW v AS SELECT * FROM header")
         .unwrap();
+    // Guardia: la prueba depende de que SQLite deje borrar `header` pero no
+    // renombrar otra tabla a ese nombre mientras la vista la mencione. Si una
+    // versión nueva de SQLite lo cambiara, falla aquí y no más abajo, con un
+    // `unwrap_err` confuso. Se revierte: el archivo no cambia.
+    conn.execute_batch("BEGIN; CREATE TABLE t2 (x); DROP TABLE header")
+        .expect("DROP TABLE header debe poder ejecutarse");
+    assert!(
+        conn.execute_batch("ALTER TABLE t2 RENAME TO header")
+            .is_err(),
+        "con la vista v, el RENAME debe fallar"
+    );
+    conn.execute_batch("ROLLBACK").unwrap();
+    drop(conn);
+
     let mut vault = Vault::open(&path).unwrap();
     let before = fs::read(&path).unwrap();
 
