@@ -16,7 +16,9 @@ Que la llave derivada de la contraseña maestra no deje copias sin borrar por lo
 Context7 (`secrecy` 0.10.3, `argon2`) y lectura del código de `argon2` 0.6.0 y `chacha20poly1305` 0.11.0:
 
 - `SecretBox<S>`: `Default` crea `Box::<S>::default()` (en el heap, con ceros: no es un secreto), `init_with_mut(|&mut S| ...)` inicializa en el sitio y `expose_secret_mut()` da `&mut S`. Mover un `SecretBox` copia un puntero. No tiene `Deref` ni `Clone`; su `Debug` no muestra el valor.
-- `Argon2::hash_password_into(pwd, salt, out: &mut [u8])` escribe el resultado directamente en `out`. Con la feature `zeroize` (activa en `core/Cargo.toml`) borra `initial_hash` y los bloques de trabajo. **Pero** `blake2b_long` (`argon2-0.6.0/src/blake2b_long.rs:31-34`) arma el hash de 64 bytes en un arreglo de la pila, `full_out`, y copia los 32 primeros a `out`; `full_out` no se borra.
+- `Argon2::hash_password_into(pwd, salt, out: &mut [u8])` escribe el resultado directamente en `out`. Con la feature `zeroize` (activa en `core/Cargo.toml`) borra `initial_hash` y la copia `blockhash`/`blockhash_bytes`. **Corrección:** una versión anterior de este documento decía que también borraba los bloques de trabajo; es falso: `Blocks` se reserva con `alloc_zeroed` y su `Drop` solo hace `dealloc` (`argon2-0.6.0/src/block.rs:191-200`), así que los 64 a 128 MiB de memoria se liberan sin borrar y, con paralelismo 1, permiten recalcular la llave derivada. `hash_password_into_with_memory` permite pasar una memoria propia.
+- `blake2b_long` (`argon2-0.6.0/src/blake2b_long.rs:31-34`) arma el hash de 64 bytes en un arreglo de la pila, `full_out`, y copia los 32 primeros a `out`; `full_out` no se borra.
+- `argon2::initial_hash` (`lib.rs:592-615`) mete la contraseña maestra en un `Blake2b512`. Su búfer de bloque (`block-buffer` 0.12.1) y el estado `h`/`t` (`blake2` 0.11.0) solo se borran al soltarse con la feature `zeroize`, y `argon2` no la propaga (`cargo tree` mostraba `digest [block-api,default,mac]`, `block-buffer []` y `blake2 []`). `blake2/zeroize` activa `digest/zeroize`, y esta `block-buffer/zeroize`.
 - `ChaChaPoly1305` guarda la llave por valor dentro de la estructura (`key: Key`; `new` hace `*key`) y se borra al soltarse (feature `zeroize`, activa). Mover el cifrador puede dejar copias.
 
 ## Decisiones (aprobadas por el usuario)
@@ -27,13 +29,19 @@ Context7 (`secrecy` 0.10.3, `argon2`) y lectura del código de `argon2` 0.6.0 y 
 - Se eliminan los ayudantes que devuelven el cifrador por valor (`cipher` y `vault_key_cipher` en `keys.rs`, `cipher` en `aead.rs`): el cifrador se crea y se usa en la misma función y se suelta ahí. Cada sitio lleva una línea con su propio error (`WrongPassword`, `WrongVaultKey`, `CorruptEntry`), así que no hace falta un ayudante con closure. **Esfuerzo razonable, sin garantía**: el compilador decide los movimientos; no se agregan pruebas que pretendan verificarlo.
 - Prueba determinista `derived_and_vault_keys_are_pointer_sized`: `size_of::<DerivedKey>()` y `size_of::<VaultKey>()` valen `size_of::<usize>()`. Garantiza que el tipo es un puntero y que mover no copia la llave; **no prueba que no haya copias en la pila**, que se sigue cubriendo con la revisión de código.
 - Las features `zeroize` de `argon2` y `chacha20poly1305` ya están activas en `core/Cargo.toml`: no hay que cambiarlas.
+- **Memoria de trabajo de Argon2id (agregado tras la revisión final, aprobado):** `derive_key` reserva una `Zeroizing<Vec<Block>>` con el tamaño exacto de `block_count` (`try_reserve_exact`, sin que el `Vec` pueda volver a reservar y sin panic si falta memoria), la pasa a `hash_password_into_with_memory` a través de `hash_into`, que la borra al terminar con éxito o con error (el `Zeroizing` la borra además si hay panic). `hash_into` recibe el búfer para poder comprobar en una prueba que queda en ceros; no se inspecciona memoria ya liberada. Mide el costo en el celular de las pruebas de la #40.
+- **`blake2` como dependencia directa con `zeroize` (aprobado tras verificar el código):** `blake2 = { version = "=0.11.0", default-features = false, features = ["zeroize"] }` en `core/Cargo.toml`, con un comentario que explica que solo está para activar la feature por unificación. Basta `blake2`: `digest` no hace falta, porque `blake2/zeroize` activa `digest/zeroize`. Misma versión que resuelve `argon2` y sin paquetes nuevos en `Cargo.lock` (solo cambian los arreglos de dependencias de `vault-core`, `digest` y `block-buffer`). Se verificó leyendo el código, no con una prueba: comprobar el contenido de un hasher ya soltado exigiría leer memoria sin inicializar.
+- `hashed` en `derive_key` empieza en `Err(Error::InvalidKdfParams)`: si `init_with_mut` no llamara al closure, la función falla en vez de devolver una llave de ceros.
 
 ## Excepción documentada (`ARCHITECTURE.md` y `docs/especificacion.md`, junto a las de `nucleo-matcher` y `nfc()`)
 
-- **`argon2` 0.6.0:** `full_out`, un arreglo de 64 bytes en la pila de `blake2b_long`, contiene el hash completo (los 32 primeros bytes son la llave derivada) y no se borra. Con una salida de 32 bytes no hay ruta de la API que lo evite.
+- **`argon2` 0.6.0:** `full_out`, un arreglo de 64 bytes en la pila de `blake2b_long`, contiene el hash completo (los 32 primeros bytes son la llave derivada) y no se borra. Con una salida de 32 bytes no hay ruta de la API que lo evite. Borrar el estado `h` (lo que hace `blake2/zeroize`) no cierra esta exposición, porque `full_out` guarda el mismo hash.
 - **`chacha20poly1305` 0.11.0:** `ChaChaPoly1305` guarda la llave por valor dentro de la estructura; se borra al soltarla, pero un movimiento del cifrador puede dejar copias. Reducimos los movimientos nuestros, sin garantía.
-- **Cuándo se revisa:** al actualizar cualquiera de las dos versiones.
-- **Por qué no se evita:** solo se cierra con una primitiva propia (Argon2id o ChaCha20-Poly1305 con búferes que se borran), y `core/CLAUDE.md` la prohíbe.
+- **`chacha20` 0.10.2:** `XChaChaCore::new` deja en la pila la subllave de `hchacha` y su estado, sin borrar; equivale a la llave para ese nonce.
+- **Copias transitorias** que el compilador deje en registros y pila durante la compresión de BLAKE2.
+- **Cuándo se revisa:** al actualizar cualquiera de las versiones.
+- **Por qué no se evita:** solo se cierra con una primitiva propia (Argon2id, BLAKE2 o ChaCha20-Poly1305 con búferes que se borran), y `core/CLAUDE.md` la prohíbe.
+- **La contraseña también está en Dart:** vive en la memoria de Dart, que no se puede borrar. Todo lo anterior es defensa en profundidad y no cierra la exposición completa.
 
 ## Approaches
 
@@ -43,7 +51,10 @@ Context7 (`secrecy` 0.10.3, `argon2`) y lectura del código de `argon2` 0.6.0 y 
 
 ## Criterios de aceptación
 
-- [ ] `DerivedKey` vive en el heap y Argon2id escribe directamente en ese búfer; la copia interna de `argon2` queda documentada.
+- [ ] `DerivedKey` vive en el heap y Argon2id escribe directamente en ese búfer; las copias internas de las dependencias quedan documentadas.
+- [ ] La memoria de trabajo de Argon2id se reserva con el tamaño exacto y se borra en todas las rutas (pruebas: en ceros tras un éxito y tras un error; con la mutación de quitar el borrado, fallan).
+- [ ] `blake2` con `zeroize` verificada con `cargo tree` (`blake2`, `digest` y `block-buffer` con `zeroize`) y sin paquetes nuevos en `Cargo.lock`.
+- [ ] Costo del borrado medido en el celular de las pruebas de la #40, frente al tiempo de desbloqueo actual.
 - [ ] Revisión de código: ningún secreto de tamaño fijo se mueve por valor como arreglo en la pila dentro de `crypto/` (con las excepciones documentadas de las dependencias).
 - [ ] Sin ayudantes que devuelvan el cifrador por valor.
 - [ ] Las pruebas existentes de `kdf`, `keys`, `aead` y la cabecera pasan sin cambios de comportamiento; los vectores de `derive_key` (ASCII y `café`) no cambian.
