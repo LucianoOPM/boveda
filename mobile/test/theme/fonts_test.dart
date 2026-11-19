@@ -18,7 +18,7 @@ void main() {
       multiLine: true,
     ).allMatches(_pubspec()).map((m) => m.group(1)!).toList();
 
-    expect(assets, hasLength(6));
+    expect(assets, hasLength(7));
     for (final path in assets) {
       final file = File(path);
       expect(file.existsSync(), isTrue, reason: '$path no existe');
@@ -26,13 +26,13 @@ void main() {
     }
   });
 
-  test('font families are the two documented', () {
+  test('font families are the documented ones', () {
     final families = RegExp(
       r'^\s*-\s*family:\s*(\S+)',
       multiLine: true,
     ).allMatches(_pubspec()).map((m) => m.group(1)!).toSet();
 
-    expect(families, {'PlusJakartaSans', 'JetBrainsMono'});
+    expect(families, {'PlusJakartaSans', 'JetBrainsMono', 'Lucide'});
   });
 
   test('font licenses are registered', () async {
@@ -49,9 +49,10 @@ void main() {
 
     expect(
       byPackage.keys,
-      containsAll(['Plus Jakarta Sans', 'JetBrains Mono']),
+      containsAll(['Plus Jakarta Sans', 'JetBrains Mono', 'Lucide']),
     );
     expect(byPackage['Plus Jakarta Sans'], isNotEmpty);
     expect(byPackage['JetBrains Mono'], isNotEmpty);
+    expect(byPackage['Lucide'], isNotEmpty);
   });
 }

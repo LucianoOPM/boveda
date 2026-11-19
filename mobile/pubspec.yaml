@@ -73,6 +73,7 @@ flutter:
   assets:
     - assets/fonts/OFL-PlusJakartaSans.txt
     - assets/fonts/OFL-JetBrainsMono.txt
+    - assets/fonts/LICENSE-Lucide.txt
 
   # Fuentes del diseño (docs/DESIGN.md, sección 3), empaquetadas: nunca se
   # descargan en tiempo de ejecución.
@@ -93,6 +94,10 @@ flutter:
           weight: 700
         - asset: assets/fonts/JetBrainsMono-ExtraBold.ttf
           weight: 800
+    # Íconos de Lucide (ISC), versión 1.76.0; ver `BovedaIcons`.
+    - family: Lucide
+      fonts:
+        - asset: assets/fonts/lucide.ttf
 
   # To add assets to your application, add an assets section, like this:
   # assets:
