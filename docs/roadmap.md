@@ -41,17 +41,19 @@ Resultado: el crate `vault-core` crea, abre y respalda una bóveda cifrada, prob
 
 Resultado: un gestor de contraseñas usable en tu celular, con búsqueda y respaldos, aunque todavía no envíe nada a la PC.
 
-- [ ] Proyecto Flutter con flutter_rust_bridge, compilando `vault-core` para Android (dispositivo físico y emulador).
-- [ ] Primer uso: crear la contraseña maestra con indicador de fortaleza y la advertencia de que no se puede recuperar.
-- [ ] Desbloqueo con contraseña maestra y con huella, guardando la copia cifrada de la llave de bóveda en el Keystore.
-- [ ] Bloqueo automático por inactividad y al pasar la app a segundo plano.
+- [x] Proyecto Flutter con flutter_rust_bridge, compilando `vault-core` para Android (dispositivo físico y emulador) (#33, #35; la librería de Rust se compila con el toolchain fijado, #48).
+- [x] Primer uso (#36): crear la contraseña maestra con indicador de fortaleza y la advertencia de que no se puede recuperar.
+- [x] Desbloqueo con contraseña maestra y con huella, guardando la copia cifrada de la llave de bóveda en el Keystore (#37, #38).
+- [x] Bloqueo automático por inactividad y al pasar la app a segundo plano (#39).
 - [x] Pantalla principal con la barra de búsqueda y la lista filtrándose al escribir (#40; sin foco inicial: el teclado sale al tocar el campo).
 - [x] Detalle, creación, edición y eliminación de entradas; mostrar u ocultar la contraseña (#41).
-- [ ] Copiar localmente con el contenido marcado como sensible (#42; falta la prueba manual en emulador).
-- [ ] Bloqueo de capturas de pantalla y contenido oculto en apps recientes, y respaldo automático de Android desactivado (#43; probado a mano en el celular, falta la captura en el emulador).
-- [ ] Exportar e importar el respaldo usando el selector de archivos del sistema.
+- [x] Copiar localmente con el contenido marcado como sensible (#42; probado a mano en el emulador el 2026-11-19: vista previa oculta y borrado a los 30 s, con el puente de portapapeles del emulador apagado).
+- [x] Bloqueo de capturas de pantalla y contenido oculto en apps recientes, y respaldo automático de Android desactivado (#43; probado a mano en el celular y, el 2026-11-19, en el emulador: la captura sale negra).
+- [x] Exportar e importar el respaldo usando el selector de archivos del sistema (#44).
 
 **Se cierra cuando** ya guardas en ella tus contraseñas reales y restauraste un respaldo con éxito en un emulador limpio.
+
+**Cerrada el 2026-11-19:** las nueve tareas están hechas. Se guardó una entrada real en el celular, se exportó un respaldo y se restauró en un emulador limpio con su entrada y su contraseña intactas; `integration_test/` pasa en el emulador y en el celular, y la integración continua pasa en `dev` (commit `8ce8fcc`). Quedan fuera, sin bloquear el cierre: la pantalla de entradas dañadas (#65, etapa 4) y validar un respaldo sin perder la sesión (#69).
 
 ## Etapa 3 — App Windows, emparejamiento y envío
 
