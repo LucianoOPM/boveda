@@ -164,9 +164,12 @@ pub(crate) fn derive_key(
 
     // Argon2id escribe directamente en el búfer del heap: la llave nunca pasa
     // por un arreglo propio en la pila. `init_with_mut` no devuelve `Result`,
-    // así que el error se captura afuera; si falla, el `SecretBox` se suelta y
-    // se borra sin copiar nada a otro lugar. Empieza en `Err`: si el closure
-    // no corriera, `derive_key` fallaría en vez de devolver una llave de ceros.
+    // así que el error se captura afuera; si Argon2id devuelve un error, el
+    // `SecretBox` se suelta y se borra sin copiar nada a otro lugar (un panic
+    // dentro del closure no está cubierto: `init_with_mut` no borra en ese
+    // caso, y la API de `argon2` no hace panic con parámetros ya validados).
+    // Empieza en `Err`: si el closure no corriera, `derive_key` fallaría en
+    // vez de devolver una llave de ceros.
     //
     // Las copias internas de las dependencias que quedan fuera de nuestro
     // alcance están documentadas en la excepción de `crypto`.
