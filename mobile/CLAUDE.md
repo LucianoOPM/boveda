@@ -2,6 +2,8 @@
 
 Interfaz de la bóveda. Dart nunca hace criptografía ni guarda la bóveda: todo pasa por el núcleo a través del crate puente.
 
+Antes de crear o cambiar una pantalla, un widget o un estilo, lee `docs/DESIGN.md` (secciones 2 a 7 y 9 a 13).
+
 ## Comandos (desde mobile/)
 
 - Pruebas: `flutter test`

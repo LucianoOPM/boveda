@@ -2,7 +2,7 @@
 
 Gestor de contraseñas personal. La bóveda vive en el celular Android; una app de Windows recibe contraseñas por la red local y las deja en el portapapeles. Todo lo crítico (cifrado, formato de la bóveda, búsqueda y protocolo) está escrito una sola vez en Rust y lo usan ambas apps.
 
-Documentos relacionados: `docs/especificacion.md` (qué y por qué) y `docs/roadmap.md` (en qué orden).
+Documentos relacionados: `docs/especificacion.md` (qué y por qué) y `docs/roadmap.md` (en qué orden); el diseño visual está en `docs/DESIGN.md`.
 
 ## Mapa del repositorio
 
@@ -24,6 +24,7 @@ boveda/
 ├── docs/
 │   ├── especificacion.md
 │   ├── roadmap.md
+│   ├── DESIGN.md           # sistema de diseño de las dos apps (referencia)
 │   └── superpowers/
 │       ├── specs/          # diseños por issue (AAAA-MM-DD-tema-design.md)
 │       └── plans/          # planes de implementación por issue

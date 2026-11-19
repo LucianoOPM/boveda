@@ -2,6 +2,8 @@
 
 App de bandeja que recibe contraseñas del celular y las deja en el portapapeles. Usa `vault-core` directamente para el protocolo y toda la criptografía.
 
+Antes de crear o cambiar una ventana o un estilo, lee `docs/DESIGN.md` (secciones 2 a 4, 5.2 y 8).
+
 ## Comandos (desde desktop/)
 
 - Gestor de paquetes: bun. No uses npm, yarn ni pnpm ni agregues sus lockfiles.
