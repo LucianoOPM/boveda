@@ -20,6 +20,9 @@ serde = { version = "1", default-features = false, features = ["derive"] }
 # Respaldo de la búsqueda: distancia OSA para errores de escritura.
 strsim = "0.11.1"
 thiserror = "2"
+# Normaliza a NFC la contraseña maestra antes de derivar la llave (#57).
+# Versión exacta: cambia los bytes que recibe Argon2id. (MIT OR Apache-2.0) AND Unicode-3.0.
+unicode-normalization = "=0.1.26"
 zeroize = { version = "1.9", features = ["derive"] }
 
 [dev-dependencies]
