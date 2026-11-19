@@ -65,6 +65,12 @@ fn compatibility_characters_are_left_alone() {
 #[test]
 fn normalized_copy_has_exact_capacity() {
     // Sin reasignaciones: ningún búfer anterior del `String` guarda restos.
+    // Esta prueba por sí sola no lo demuestra (un `Vec` que crece pasa a
+    // `max(2·cap, necesario, 8)` y podría coincidir con la longitud); detecta
+    // los errores probables (`String::new()` o `with_capacity(text.len())`).
+    // La garantía está en el código: `with_capacity` es exacta para `u8`,
+    // `nfc()` es determinista sobre el mismo `&str` y `extend` no reserva más
+    // porque `Recompositions` no define `size_hint`.
     for text in [
         "cafe\u{0301}",
         "e\u{0302}\u{0323}-e\u{0323}\u{0302}-clave",

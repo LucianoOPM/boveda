@@ -62,7 +62,7 @@ pub(crate) fn normalize_nfc(password: &SecretString) -> NormalizedPassword<'_>;
 
 ### Excepción de borrado (para `ARCHITECTURE.md` y `docs/especificacion.md`, junto a la de `nucleo-matcher`)
 
-- **Qué queda:** el buffer interno del iterador `nfc()` (hasta 4 caracteres en la pila; en heap si un grupo combinante es más largo), con el grupo de caracteres que se está componiendo en ese momento. No es la contraseña entera.
+- **Qué queda:** los búferes internos del iterador `nfc()` (de 4 elementos en la pila; en el heap si un grupo combinante es más largo). La revisión final comprobó en `tinyvec` que no borra los `char` al vaciarlos, así que pueden quedar restos de varios grupos anteriores, no solo del último, y en varias zonas de la pila (cada llamada crea hasta tres iteradores). Son unos pocos caracteres, nunca la contraseña entera.
 - **Cuándo:** solo con contraseñas que no están en NFC o que contienen caracteres con NFC_QC=Maybe (marcas combinantes, algunos jamo). ASCII y letras precompuestas no pasan por el iterador.
 - **Por qué se acepta:** las alternativas eran una primitiva propia con tablas Unicode o dejar la #57 sin resolver.
 - **Revisión:** si `unicode-normalization` ofrece borrar ese buffer, la excepción se revisa.
