@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../theme/extensions.dart';
 import '../theme/spacing.dart';
+import '../theme/theme.dart';
 
 /// Resplandor de la acción principal de una pantalla (`docs/DESIGN.md`, 4.4):
 /// el acento al 28 % con desenfoque de 25, alrededor de [child].
@@ -17,7 +18,10 @@ class PrimaryGlow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final glow = Theme.of(context).extension<AccentColors>()!.glow;
+    final glow =
+        (Theme.of(context).extension<AccentColors>() ??
+                AccentColors.of(defaultAccent))
+            .glow;
     return DecoratedBox(
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(Radii.control),

@@ -29,8 +29,8 @@ class StatusCapsule extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final status = theme.extension<StatusColors>()!;
-    final meta = theme.extension<BovedaText>()!.meta;
+    final status = theme.extension<StatusColors>() ?? StatusColors.standard;
+    final meta = (theme.extension<BovedaText>() ?? BovedaText.standard).meta;
     final ledColor = locked ? status.errorStrong : theme.colorScheme.primary;
     final textColor = locked ? theme.colorScheme.error : ledColor;
     return Semantics(

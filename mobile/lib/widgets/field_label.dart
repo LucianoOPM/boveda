@@ -18,9 +18,8 @@ class FieldLabel extends StatelessWidget {
     final theme = Theme.of(context);
     return Text(
       text.toUpperCase(),
-      style: theme.extension<BovedaText>()!.meta.copyWith(
-        color: theme.colorScheme.onSurfaceVariant,
-      ),
+      style: (theme.extension<BovedaText>() ?? BovedaText.standard).meta
+          .copyWith(color: theme.colorScheme.onSurfaceVariant),
     );
   }
 }

@@ -125,6 +125,31 @@ void main() {
     });
   }
 
+  testWidgets(
+    'los widgets compartidos funcionan sin las extensiones del tema',
+    (tester) async {
+      // Muchas pruebas montan pantallas en un `MaterialApp` sin `buildTheme`;
+      // en la app, `BovedaApp` siempre lo pone.
+      await tester.pumpWidget(
+        const MaterialApp(
+          home: Scaffold(
+            body: Column(
+              children: [
+                StatusCapsule(text: 'ABIERTA'),
+                FieldLabel('Campo'),
+                PrimaryGlow(enabled: true, child: SizedBox(width: 80)),
+              ],
+            ),
+          ),
+        ),
+      );
+
+      expect(tester.takeException(), isNull);
+      expect(find.text('ABIERTA'), findsOneWidget);
+      expect(find.text('CAMPO'), findsOneWidget);
+    },
+  );
+
   testWidgets('StatusCapsule anuncia su etiqueta semántica', (tester) async {
     final handle = tester.ensureSemantics();
     await pump(
