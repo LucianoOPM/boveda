@@ -1728,6 +1728,12 @@ fn assert_create_ignores_orphans(dest: &Path) {
     assert!(vault.entries().unwrap().is_empty());
     drop(vault);
 
+    // SQLite los borró: no quedan para aplicarse sobre otra base más tarde.
+    // El `-shm` no se comprueba: puede sobrevivir y no hace daño (la bóveda
+    // no usa WAL).
+    assert!(!sibling(dest, "-journal").exists());
+    assert!(!sibling(dest, "-wal").exists());
+
     assert_eq!(Storage::open(dest).unwrap().check_integrity(), Ok(()));
     let mut reopened = Vault::open(dest).unwrap();
     assert_eq!(
@@ -1753,6 +1759,9 @@ fn create_next_to_orphan_wal_and_shm() {
     assert_create_ignores_orphans(&dest);
 }
 
+/// Un diario y un WAL no conviven en una misma base, pero sí pueden quedar
+/// juntos junto a una ruta que se reutiliza (restos de dos instalaciones o de
+/// un cambio de modo): se prueba el peor caso, con los tres archivos.
 #[test]
 fn create_next_to_all_orphans() {
     let (_dir, dest) = orphans_next_to_new_path(true, true);
