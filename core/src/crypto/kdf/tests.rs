@@ -148,6 +148,44 @@ fn derive_key_rejects_params_below_minimum() {
     assert_eq!(result.err(), Some(Error::InvalidKdfParams));
 }
 
+/// Llave de la contraseña NFC `café-clave-larga` (con `é` U+00E9), sal
+/// `00 01 .. 0f` y `KdfParams::MIN`, calculada con `node:crypto` (`argon2Sync`)
+/// sobre los bytes UTF-8 de la forma NFC.
+const CAFE_KEY_HEX: &str = "8fcbd7402846edc9eae3230ad6f866b007f7d5d807df8cc300ae02a0da0816aa";
+
+fn key_hex(text: &str) -> String {
+    let salt: [u8; SALT_LEN] = core::array::from_fn(|i| i as u8);
+    let key = derive_key(&password(text), &salt, &KdfParams::MIN).unwrap();
+    key.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+#[test]
+fn composed_and_decomposed_passwords_derive_the_same_key() {
+    // U+00E9 contra U+0065 U+0301: la misma contraseña escrita desde otro teclado.
+    assert_eq!(key_hex("caf\u{00e9}-clave-larga"), CAFE_KEY_HEX);
+    assert_eq!(key_hex("cafe\u{0301}-clave-larga"), CAFE_KEY_HEX);
+}
+
+#[test]
+fn a_different_accent_derives_a_different_key() {
+    assert_ne!(key_hex("cafe\u{0300}-clave-larga"), CAFE_KEY_HEX);
+    assert_ne!(key_hex("cafe-clave-larga"), CAFE_KEY_HEX);
+}
+
+/// Vector fijo: la llave de una contraseña ASCII no cambia con la
+/// normalización NFC (#57). Se calculó con el código anterior al cambio y se
+/// verificó con el Argon2id de `node:crypto` (`argon2Sync`).
+#[test]
+fn ascii_password_derives_the_reference_key() {
+    let salt: [u8; SALT_LEN] = core::array::from_fn(|i| i as u8);
+    let key = derive_key(&password("clave-ascii-12345"), &salt, &KdfParams::MIN).unwrap();
+    let hex: String = key.iter().map(|b| format!("{b:02x}")).collect();
+    assert_eq!(
+        hex,
+        "7f51bec591d86903e9b95fc8bfcaa86ea4d19111408e28f5a05f4f960d9ffe2a"
+    );
+}
+
 #[test]
 fn generated_salts_are_different() {
     assert_ne!(generate_salt().unwrap(), generate_salt().unwrap());

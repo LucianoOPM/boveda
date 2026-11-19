@@ -69,6 +69,82 @@ fn change_password_with_calibration() {
     assert!(vault.unlock(&password("nueva-maestra")).is_ok());
 }
 
+// --- Contraseña maestra en NFC (#57) -------------------------------------
+//
+// `é` compuesta (U+00E9) y `e` + acento combinante (U+0065 U+0301) son la misma
+// contraseña escrita desde otro teclado: tienen que abrir la misma bóveda.
+
+const COMPOSED: &str = "contrase\u{00f1}a-caf\u{00e9}-larga";
+const DECOMPOSED: &str = "contrasen\u{0303}a-cafe\u{0301}-larga";
+
+#[test]
+fn composed_and_decomposed_master_passwords_are_interchangeable() {
+    for (created_with, opened_with) in [(COMPOSED, DECOMPOSED), (DECOMPOSED, COMPOSED)] {
+        let (_dir, path) = temp_path();
+        let mut vault = Vault::create(&path, &password(created_with)).unwrap();
+        let search = SearchData::new("gmail", None, None, &[]).unwrap();
+        let id = vault
+            .add(search, Secret::new(password("clave-gmail"), None).unwrap())
+            .unwrap();
+        vault.lock();
+
+        let report = vault.unlock(&password(opened_with)).unwrap();
+        assert!(report.corrupt.is_empty());
+        assert_eq!(
+            vault.reveal(id).unwrap().password().expose_secret(),
+            "clave-gmail"
+        );
+    }
+}
+
+#[test]
+fn change_master_password_accepts_either_form_of_the_current_one() {
+    let (_dir, path) = temp_path();
+    let mut vault = Vault::create(&path, &password(COMPOSED)).unwrap();
+    // La actual escrita descompuesta; la nueva, descompuesta.
+    vault
+        .change_master_password(&password(DECOMPOSED), &password(DECOMPOSED))
+        .unwrap();
+    vault.lock();
+    assert!(vault.unlock(&password(COMPOSED)).is_ok());
+    vault.lock();
+    assert!(vault.unlock(&password(DECOMPOSED)).is_ok());
+}
+
+#[test]
+fn import_accepts_either_form_of_the_master_password() {
+    let (dir, path) = temp_path();
+    let mut vault = Vault::create(&path, &password(COMPOSED)).unwrap();
+    let search = SearchData::new("banco", None, None, &[]).unwrap();
+    let id = vault
+        .add(search, Secret::new(password("clave-banco"), None).unwrap())
+        .unwrap();
+    let backup = dir.path().join("respaldo.db");
+    vault.export(&backup).unwrap();
+    drop(vault);
+    std::fs::remove_file(&path).unwrap();
+
+    let (mut imported, report) = Vault::import(&backup, &path, &password(DECOMPOSED)).unwrap();
+
+    assert!(report.corrupt.is_empty());
+    assert_eq!(
+        imported.reveal(id).unwrap().password().expose_secret(),
+        "clave-banco"
+    );
+}
+
+#[test]
+fn a_different_accent_is_still_a_wrong_password() {
+    let (_dir, path) = temp_path();
+    let mut vault = Vault::create(&path, &password(COMPOSED)).unwrap();
+    vault.lock();
+    let other = "contrase\u{00f1}a-caf\u{00e8}-larga";
+    assert_eq!(
+        vault.unlock(&password(other)).err(),
+        Some(Error::WrongPassword)
+    );
+}
+
 #[test]
 fn search_with_public_api() {
     let (_dir, path) = temp_path();

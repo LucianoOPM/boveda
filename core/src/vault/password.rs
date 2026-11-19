@@ -2,14 +2,16 @@
 //!
 //! Se basa solo en la longitud, como recomienda NIST SP 800-63B, y no en
 //! tipos de caracteres (una regla de tipos acepta `P@ssword1`). Cuenta
-//! caracteres Unicode (`char`), no bytes, y no recorta: los espacios cuentan.
+//! caracteres Unicode (`char`) de la forma NFC, no bytes, y no recorta: los
+//! espacios cuentan.
 //!
 //! Se aplica solo al crear la bóveda y al cambiar la contraseña maestra,
 //! nunca al desbloquear ni al importar: las bóvedas y los respaldos que ya
 //! existen con una contraseña más corta siguen abriendo.
 
-use secrecy::{ExposeSecret, SecretString};
+use secrecy::SecretString;
 
+use crate::crypto::normalize::normalize_nfc;
 use crate::error::{Error, Result};
 
 /// Longitud mínima de la contraseña maestra, en caracteres.
@@ -31,9 +33,10 @@ pub enum PasswordStrength {
     Strong,
 }
 
-/// Fortaleza de `password`. Cuenta sobre el secreto, sin copiarlo.
+/// Fortaleza de `password`. Cuenta sobre su forma NFC, para que `é` compuesta
+/// y `e` más un acento combinante cuenten igual. Si ya está en NFC no se copia.
 pub fn password_strength(password: &SecretString) -> PasswordStrength {
-    let chars = password.expose_secret().chars().count();
+    let chars = normalize_nfc(password).chars().count();
     if chars < MIN_MASTER_PASSWORD_CHARS {
         PasswordStrength::TooShort
     } else if chars < STRONG_MASTER_PASSWORD_CHARS {
