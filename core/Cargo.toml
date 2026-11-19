@@ -8,6 +8,14 @@ publish.workspace = true
 [dependencies]
 # Sin `password-hash`: no se usa la cadena PHC, los parámetros se guardan por separado.
 argon2 = { version = "0.6", default-features = false, features = ["alloc", "zeroize"] }
+# No se usa directamente: está solo para activar `zeroize` en blake2, digest y
+# block-buffer por unificación de features (#54). `argon2` mete la contraseña
+# maestra en un `Blake2b512` y, sin la feature, el búfer de bloque y el estado
+# del hasher se sueltan sin borrar (`blake2/zeroize` activa `digest/zeroize` y
+# `block-buffer/zeroize`). Misma versión que resuelve `argon2` (0.6.0): al
+# actualizar `argon2`, comprobar que sigue siendo la misma. Sin crates nuevos en
+# Cargo.lock. (MIT OR Apache-2.0)
+blake2 = { version = "=0.11.0", default-features = false, features = ["zeroize"] }
 chacha20poly1305 = { version = "0.11", default-features = false, features = ["alloc", "getrandom", "zeroize"] }
 getrandom = "0.4"
 # Búsqueda principal por subsecuencia ("gm" encuentra "Gmail"). MPL-2.0.

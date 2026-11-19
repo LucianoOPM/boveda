@@ -1,14 +1,12 @@
 //! Pruebas unitarias de `crypto/keys.rs`.
 
-use zeroize::Zeroizing;
-
 use super::*;
 
 const AAD: &[u8] = b"cabecera de prueba";
 
 /// Llave derivada fija: estas pruebas no necesitan pasar por Argon2id.
 fn derived(byte: u8) -> DerivedKey {
-    Zeroizing::new([byte; 32])
+    SecretBox::new(Box::new([byte; 32]))
 }
 
 #[test]
@@ -154,7 +152,7 @@ fn open_keeping_derived_matches_open() {
         open_vault_key_keeping_derived(&encrypted, &password, &salt, &params, AAD).unwrap();
     assert_eq!(opened.expose_secret(), vault_key.expose_secret());
     let expected = kdf::derive_key(&password, &salt, &params).unwrap();
-    assert_eq!(*derived, *expected);
+    assert_eq!(derived.expose_secret(), expected.expose_secret());
 
     let wrong = SecretString::from("otra");
     assert!(matches!(

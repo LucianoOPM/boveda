@@ -7,6 +7,7 @@
 use chacha20poly1305::aead::{Generate, Tag};
 use chacha20poly1305::{AeadInOut, KeyInit, XChaCha20Poly1305, XNonce};
 use secrecy::{ExposeSecret, ExposeSecretMut, SecretBox, SecretString};
+use zeroize::Zeroizing;
 
 use super::kdf::{self, DerivedKey, KdfParams, SALT_LEN};
 use crate::error::{Error, Result};
@@ -47,12 +48,6 @@ pub(crate) fn generate_vault_key() -> Result<VaultKey> {
     Ok(vault_key)
 }
 
-/// Crea el cifrador a partir de la llave derivada (se borra al soltarlo).
-fn cipher(derived: &DerivedKey) -> Result<XChaCha20Poly1305> {
-    // La longitud es fija (32 bytes), así que este error no ocurre en la práctica.
-    XChaCha20Poly1305::new_from_slice(derived.as_ref()).map_err(|_| Error::WrongPassword)
-}
-
 /// Cifra la llave de bóveda con la llave derivada y `associated_data`.
 ///
 /// Usa un nonce aleatorio nuevo en cada llamada.
@@ -64,18 +59,26 @@ pub(crate) fn encrypt_vault_key(
     let nonce = XNonce::try_generate().map_err(|_| Error::Random)?;
 
     // Se cifra en el mismo búfer de tamaño fijo: al terminar ya solo contiene
-    // texto cifrado y no queda ninguna copia de la llave en claro.
-    let mut ciphertext = [0u8; ENCRYPTED_KEY_LEN];
-    let (body, tag_out) = ciphertext.split_at_mut(VAULT_KEY_LEN);
+    // texto cifrado. Va en `Zeroizing` porque antes de cifrar guarda la llave
+    // de bóveda en claro: si el cifrado falla, `?` lo borra al salir.
+    let mut buffer = Zeroizing::new([0u8; ENCRYPTED_KEY_LEN]);
+    let (body, tag_out) = buffer.split_at_mut(VAULT_KEY_LEN);
     body.copy_from_slice(vault_key.expose_secret());
-    let tag = cipher(derived)?
+    // El cifrador (que guarda una copia de la llave y la borra al soltarse) se
+    // crea y se usa aquí, sin devolverlo por valor desde un ayudante: es un
+    // esfuerzo razonable por evitar movimientos, sin garantía (ver `crypto`).
+    // La longitud es fija (32 bytes), así que este error no ocurre en la práctica.
+    let cipher = XChaCha20Poly1305::new_from_slice(derived.expose_secret())
+        .map_err(|_| Error::WrongPassword)?;
+    let tag = cipher
         .encrypt_inout_detached(&nonce, associated_data, body.into())
         .map_err(|_| Error::MalformedEncryptedKey)?;
     tag_out.copy_from_slice(&tag);
 
+    // Solo sale del búfer lo que ya es texto cifrado y etiqueta.
     Ok(EncryptedKey {
         nonce: nonce.into(),
-        ciphertext,
+        ciphertext: *buffer,
     })
 }
 
@@ -95,7 +98,9 @@ pub(crate) fn decrypt_vault_key(
     // falla, el búfer se borra al soltarlo.
     let mut vault_key = VaultKey::default();
     vault_key.expose_secret_mut().copy_from_slice(body);
-    cipher(derived)?
+    let cipher = XChaCha20Poly1305::new_from_slice(derived.expose_secret())
+        .map_err(|_| Error::WrongPassword)?;
+    cipher
         .decrypt_inout_detached(
             &nonce,
             associated_data,
@@ -166,12 +171,6 @@ pub(crate) fn key_check_associated_data(format_version: u16) -> [u8; KEY_CHECK_A
     ad
 }
 
-/// Cifrador a partir de la llave de bóveda (se borra al soltarlo).
-fn vault_key_cipher(key: &VaultKey) -> Result<XChaCha20Poly1305> {
-    // La longitud es fija (32 bytes), así que este error no ocurre en la práctica.
-    XChaCha20Poly1305::new_from_slice(key.expose_secret()).map_err(|_| Error::WrongVaultKey)
-}
-
 /// Crea el verificador de la llave de bóveda: cifra un texto vacío con un
 /// nonce aleatorio nuevo y devuelve `nonce (24) | etiqueta (16)`.
 ///
@@ -182,7 +181,10 @@ pub(crate) fn seal_key_check(key: &VaultKey, format_version: u16) -> Result<[u8;
     let nonce = XNonce::try_generate().map_err(|_| Error::Random)?;
     let ad = key_check_associated_data(format_version);
     let mut body: [u8; 0] = [];
-    let tag = vault_key_cipher(key)?
+    // La longitud es fija (32 bytes), así que este error no ocurre en la práctica.
+    let cipher =
+        XChaCha20Poly1305::new_from_slice(key.expose_secret()).map_err(|_| Error::WrongVaultKey)?;
+    let tag = cipher
         .encrypt_inout_detached(&nonce, &ad, body.as_mut_slice().into())
         .map_err(|_| Error::Random)?;
 
@@ -205,7 +207,9 @@ pub(crate) fn verify_key_check(
     let tag = Tag::<XChaCha20Poly1305>::try_from(tag).map_err(|_| Error::WrongVaultKey)?;
     let ad = key_check_associated_data(format_version);
     let mut body: [u8; 0] = [];
-    vault_key_cipher(key)?
+    let cipher =
+        XChaCha20Poly1305::new_from_slice(key.expose_secret()).map_err(|_| Error::WrongVaultKey)?;
+    cipher
         .decrypt_inout_detached(&nonce, &ad, body.as_mut_slice().into(), &tag)
         .map_err(|_| Error::WrongVaultKey)
 }

@@ -10,7 +10,7 @@ Núcleo compartido: criptografía, formato de la bóveda, búsqueda y protocolo.
 
 ## Criptografía
 
-- Usa solo estos crates: `argon2`, `chacha20poly1305` (`XChaCha20Poly1305`), `snow`, `x25519-dalek`, `zeroize`, `secrecy` y `getrandom` como generador del sistema, y `unicode-normalization` (`=0.1.26`) solo para normalizar a NFC la contraseña maestra. No implementes primitivas criptográficas propias.
+- Usa solo estos crates: `argon2`, `chacha20poly1305` (`XChaCha20Poly1305`), `snow`, `x25519-dalek`, `zeroize`, `secrecy` y `getrandom` como generador del sistema, `unicode-normalization` (`=0.1.26`) solo para normalizar a NFC la contraseña maestra, y `blake2` (`=0.11.0`) solo para activar su feature `zeroize` por unificación de features (no se usa directamente; ver el comentario de `Cargo.toml`). No implementes primitivas criptográficas propias.
 - La contraseña maestra se normaliza a NFC en un solo punto (`crypto/normalize.rs`), antes de Argon2id y antes de contar su longitud. No la proceses sin pasar por ese ayudante.
 - Argon2id calibrado para tardar unos 0.5 s en el dispositivo, sin bajar nunca de 64 MiB de memoria, 3 iteraciones y paralelismo 1. Los parámetros usados se guardan en la cabecera de la bóveda.
 - Cada operación de cifrado usa un nonce aleatorio nuevo de 24 bytes. Nunca reutilices ni derives nonces.

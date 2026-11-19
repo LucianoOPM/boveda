@@ -106,12 +106,6 @@ impl fmt::Debug for EncryptedPart {
     }
 }
 
-/// Crea el cifrador a partir de la llave de bóveda (se borra al soltarlo).
-fn cipher(key: &VaultKey) -> Result<XChaCha20Poly1305> {
-    // La longitud es fija (32 bytes), así que este error no ocurre en la práctica.
-    XChaCha20Poly1305::new_from_slice(key.expose_secret()).map_err(|_| Error::CorruptEntry)
-}
-
 /// Cifra una parte de una entrada con un nonce aleatorio nuevo.
 ///
 /// Un fallo del generador aleatorio devuelve [`Error::Random`].
@@ -136,7 +130,13 @@ pub(crate) fn seal_part(
     buf.extend_from_slice(plaintext);
 
     let body = buf.get_mut(NONCE_LEN..).ok_or(Error::CorruptEntry)?;
-    let tag = cipher(key)?
+    // El cifrador (que guarda una copia de la llave y la borra al soltarse) se
+    // crea y se usa aquí, sin devolverlo por valor desde un ayudante: es un
+    // esfuerzo razonable por evitar movimientos, sin garantía (ver `crypto`).
+    // La longitud es fija (32 bytes), así que este error no ocurre en la práctica.
+    let cipher =
+        XChaCha20Poly1305::new_from_slice(key.expose_secret()).map_err(|_| Error::CorruptEntry)?;
+    let tag = cipher
         .encrypt_inout_detached(&nonce, &ad, body.into())
         .map_err(|_| Error::CorruptEntry)?;
     buf.extend_from_slice(&tag);
@@ -167,7 +167,9 @@ pub(crate) fn open_part(
     // Se descifra en un búfer `Zeroizing`; `decrypt_in_place` lo trunca a la
     // longitud del texto en claro sin reasignar.
     let mut buf = Zeroizing::new(body.to_vec());
-    cipher(key)?
+    let cipher =
+        XChaCha20Poly1305::new_from_slice(key.expose_secret()).map_err(|_| Error::CorruptEntry)?;
+    cipher
         .decrypt_in_place(&nonce, &ad, &mut *buf)
         .map_err(|_| Error::CorruptEntry)?;
     Ok(buf)
