@@ -153,8 +153,9 @@ void main() {
       find.text('Usa una frase de varias palabras. Mínimo 12 caracteres.'),
       findsOneWidget,
     );
-    expect(find.text('Contraseña maestra'), findsOneWidget);
-    expect(find.text('Confirma la contraseña'), findsOneWidget);
+    // Las etiquetas van encima de los campos, en mayúsculas.
+    expect(find.text('CONTRASEÑA MAESTRA'), findsOneWidget);
+    expect(find.text('CONFIRMA LA CONTRASEÑA'), findsOneWidget);
     expect(
       find.text(
         'Entiendo que si olvido la contraseña maestra pierdo el acceso a la '
