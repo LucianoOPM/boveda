@@ -69,6 +69,31 @@ flutter:
   # the material Icons class.
   uses-material-design: true
 
+  # Licencias de las fuentes (OFL 1.1); `registerFontLicenses` las lee.
+  assets:
+    - assets/fonts/OFL-PlusJakartaSans.txt
+    - assets/fonts/OFL-JetBrainsMono.txt
+
+  # Fuentes del diseño (docs/DESIGN.md, sección 3), empaquetadas: nunca se
+  # descargan en tiempo de ejecución.
+  fonts:
+    - family: PlusJakartaSans
+      fonts:
+        - asset: assets/fonts/PlusJakartaSans-Regular.ttf
+          weight: 400
+        - asset: assets/fonts/PlusJakartaSans-Bold.ttf
+          weight: 700
+        - asset: assets/fonts/PlusJakartaSans-ExtraBold.ttf
+          weight: 800
+    - family: JetBrainsMono
+      fonts:
+        - asset: assets/fonts/JetBrainsMono-Medium.ttf
+          weight: 500
+        - asset: assets/fonts/JetBrainsMono-Bold.ttf
+          weight: 700
+        - asset: assets/fonts/JetBrainsMono-ExtraBold.ttf
+          weight: 800
+
   # To add assets to your application, add an assets section, like this:
   # assets:
   #   - images/a_dot_burr.jpeg

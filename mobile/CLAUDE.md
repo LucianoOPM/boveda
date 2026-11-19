@@ -13,6 +13,7 @@ Antes de crear o cambiar una pantalla, un widget o un estilo, lee `docs/DESIGN.m
 
 ## Reglas
 
+- Los colores, tamaños de texto, espaciado y radios salen de `lib/theme/` (`Theme.of(context)`, sus extensiones y `Space`/`Radii`): nada de `Color(0x…)`, `Colors.` ni `fontSize:` fuera de esa carpeta. `test/theme/design_guard_test.dart` lo exige.
 - `rust/` es una fachada delgada: convierte tipos y llama a `vault-core`, sin lógica propia. Si necesitas lógica nueva, va en `core/`.
 - No edites a mano `lib/src/rust/`; es código generado. El codegen no borra los `.dart` de un archivo de `rust/src/api/` eliminado: bórralos tú. Y si cambias un nombre en `api/`, regenera antes de `cargo test`, porque `frb_generated.rs` todavía usa el anterior.
 - Ninguna función de `rust/src/api/` que toque la bóveda lleva `#[frb(sync)]`. Solo dos lo llevan: `VaultSession::new`, que no toca la bóveda ni el disco, y `password_strength`, que no toca la `Vault` ni el `Mutex` y es instantánea. Una función síncrona corre en el hilo de la interfaz: si espera el `Mutex` de la sesión mientras otra corre Argon2id, congela la app alrededor de medio segundo.
