@@ -1691,3 +1691,80 @@ fn entry_locked() {
     vault.lock();
     assert_eq!(vault.entry(id).err(), Some(Error::Locked));
 }
+
+// --- Restos de otra bóveda junto a una ruta nueva (#58) -----------------
+
+/// Crea una bóveda "vieja" con una entrada, deja junto a `boveda.db` los
+/// restos reales que pide cada caso (diario caliente, `-wal` válido con su
+/// `-shm`) y borra la base. Devuelve el directorio y la ruta de `boveda.db`.
+fn orphans_next_to_new_path(journal: bool, wal: bool) -> (tempfile::TempDir, PathBuf) {
+    let dir = tempfile::tempdir().unwrap();
+    let old = dir.path().join("vieja.db");
+    let mut vault =
+        Vault::create_with_params(&old, &password("clave-vieja-larga"), KdfParams::MIN).unwrap();
+    let (search, secret) = sample("vieja");
+    vault.add(search, secret).unwrap();
+    drop(vault);
+
+    let dest = dir.path().join("boveda.db");
+    if journal {
+        make_hot_journal_copy(&old, &dest);
+    }
+    if wal {
+        copy_live_wal(&old, &dest);
+        fs::write(sibling(&dest, "-shm"), [0xBB_u8; 1024]).unwrap();
+    }
+    fs::remove_file(&dest).ok();
+    (dir, dest)
+}
+
+/// SQLite abre una base de 0 bytes (la que deja `create_new`) y descarta el
+/// diario y el WAL que encuentre al lado. Si una versión nueva de SQLite lo
+/// cambiara, estas pruebas fallan y hay que volver a la #58 (borrar los
+/// restos en `Storage::create`, como `settle_dest` en `import`).
+fn assert_create_ignores_orphans(dest: &Path) {
+    let vault =
+        Vault::create_with_params(dest, &password("clave-nueva-larga"), KdfParams::MIN).unwrap();
+    assert!(vault.entries().unwrap().is_empty());
+    drop(vault);
+
+    // SQLite los borró: no quedan para aplicarse sobre otra base más tarde.
+    // El `-shm` no se comprueba: puede sobrevivir y no hace daño (la bóveda
+    // no usa WAL).
+    assert!(!sibling(dest, "-journal").exists());
+    assert!(!sibling(dest, "-wal").exists());
+
+    assert_eq!(Storage::open(dest).unwrap().check_integrity(), Ok(()));
+    let mut reopened = Vault::open(dest).unwrap();
+    assert_eq!(
+        reopened.unlock(&password("clave-vieja-larga")).err(),
+        Some(Error::WrongPassword)
+    );
+    let report = reopened.unlock(&password("clave-nueva-larga")).unwrap();
+    assert!(report.corrupt.is_empty());
+    assert!(reopened.entries().unwrap().is_empty());
+}
+
+#[test]
+fn create_next_to_orphan_journal() {
+    let (_dir, dest) = orphans_next_to_new_path(true, false);
+    assert!(sibling(&dest, "-journal").exists());
+    assert_create_ignores_orphans(&dest);
+}
+
+#[test]
+fn create_next_to_orphan_wal_and_shm() {
+    let (_dir, dest) = orphans_next_to_new_path(false, true);
+    assert!(sibling(&dest, "-wal").exists());
+    assert_create_ignores_orphans(&dest);
+}
+
+/// Un diario y un WAL no conviven en una misma base, pero sí pueden quedar
+/// juntos junto a una ruta que se reutiliza (restos de dos instalaciones o de
+/// un cambio de modo): se prueba el peor caso, con los tres archivos.
+#[test]
+fn create_next_to_all_orphans() {
+    let (_dir, dest) = orphans_next_to_new_path(true, true);
+    assert!(sibling(&dest, "-journal").exists() && sibling(&dest, "-wal").exists());
+    assert_create_ignores_orphans(&dest);
+}
