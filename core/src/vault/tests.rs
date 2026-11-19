@@ -1098,10 +1098,7 @@ fn fill_fixture(vault: &mut Vault) {
     .unwrap();
     let full_secret = Secret::new(
         password("clave-completa-ñ"),
-        Some(password(
-            "Línea uno
-Línea dos",
-        )),
+        Some(password("Línea uno\nLínea dos")),
     )
     .unwrap();
     vault.add(full, full_secret).unwrap();
