@@ -3,8 +3,8 @@
 # commit propio que cambia este archivo (ver CLAUDE.md de la raíz).
 # Sin targets de Android: cargokit compila la app con el toolchain `stable`,
 # no con este archivo, y les instala sus targets por su cuenta. Listarlos aquí
-# solo haría que rustup los descargara para 1.99.1 sin que nadie los use. La
+# solo haría que rustup los descargara para la versión fijada sin que nadie los use. La
 # #48 decide si vuelven cuando la librería de Android use este toolchain.
 [toolchain]
-channel = "1.99.1"
+channel = "1.100.0"
 components = ["rustfmt", "clippy"]
