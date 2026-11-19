@@ -225,6 +225,26 @@ void main() {
         expect(style.foregroundColor!.resolve({}), accent.onAccent);
       });
 
+      test('disabled primary button stands out on every surface', () {
+        // Dentro de un diálogo (surfaceElevated), sobre la pantalla (bgBase) y
+        // sobre una tarjeta (surface2): el fondo deshabilitado no puede
+        // confundirse con ninguna.
+        final disabled = t.filledButtonTheme.style!.backgroundColor!.resolve({
+          WidgetState.disabled,
+        })!;
+        for (final surface in [
+          BovedaColors.bgBase,
+          BovedaColors.surface2,
+          BovedaColors.surfaceElevated,
+        ]) {
+          expect(
+            contrast(Color.alphaBlend(disabled, surface), surface),
+            greaterThan(1.1),
+            reason: 'sobre $surface con ${accent.name}',
+          );
+        }
+      });
+
       test('controls follow the design', () {
         final button = t.filledButtonTheme.style!;
         expect(button.minimumSize!.resolve({})!.height, 52);

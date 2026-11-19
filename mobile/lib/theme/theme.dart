@@ -132,7 +132,10 @@ ThemeData buildTheme(BovedaAccent accent) {
       style: FilledButton.styleFrom(
         backgroundColor: accent.accent,
         foregroundColor: accent.onAccent,
-        disabledBackgroundColor: BovedaColors.surfaceElevated,
+        // Translúcido a propósito: sobre la pantalla, una tarjeta o un diálogo
+        // el botón deshabilitado sigue viéndose como botón, sin confundirse
+        // con ninguna de esas superficies.
+        disabledBackgroundColor: accent.accentDim,
         disabledForegroundColor: BovedaColors.textDisabled,
         minimumSize: const Size(64, 52),
         shape: controlShape,
