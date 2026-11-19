@@ -9,11 +9,13 @@ import 'services/vault_location.dart';
 import 'src/rust/api/password.dart';
 import 'src/rust/api/session.dart';
 import 'src/rust/frb_generated.dart';
+import 'theme/licenses.dart';
 
 /// Arma las dependencias reales y arranca la app. Si la librería de Rust o
 /// la ruta de la bóveda fallan, muestra un mensaje genérico.
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  registerFontLicenses();
   runApp(
     await bootstrap(
       initRust: RustLib.init,
