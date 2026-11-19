@@ -27,7 +27,7 @@ Context7 (flutter_rust_bridge 2.13.0, "Native assets" y "Migrate from Cargokit t
   - Lee, sin escribir, fuera del directorio del crate: archivos `.cargo/config.toml` de los ancestros del directorio actual y del crate y de `CARGO_HOME` (para decidir si agrega la bandera de 16 KB), el `.d` de la compilación y el `Cargo.lock` más cercano.
   - Pasa a `cargo` el entorno completo del proceso más las variables de la compilación, y **registra a nivel info el entorno completo** de cada invocación.
   - Ninguno de los dos paquetes define su propio `hook/build.dart` ni scripts de instalación: no ejecutan nada en quien los usa más allá del builder que invoca `hook/build.dart` del proyecto.
-  - Dependencias transitivas: `hooks`, `code_assets`, `logging`, `meta` y `path` (publicadas por dart.dev, BSD-3) y `toml` (MIT).
+  - Dependencias transitivas: `hooks`, `code_assets`, `logging`, `meta` y `path` (publicadas por dart.dev, BSD-3) y `toml` (MIT). La revisión de la #48 también encontró `crypto` 3.0.8 (dart.dev, solo hashing), transitiva de `native_toolchain_rust`; solo corre al compilar y no entra en el código de la app. Aceptada por el usuario.
   - Un único publicador (`gsconrad.com`), versión 1.1.1 de hace pocos días.
 - `hook/build.dart` generado: `FlutterRustBridgeNativeAssetsBuilder(cratePath: 'rust')`, que compila siempre en `release` (los hooks no distinguen `debug` de `profile`).
 - El código Dart generado por el puente no cambia de forma con este backend (mismo cargador).

@@ -56,12 +56,23 @@ jobs:
         # subir Rust es un commit que cambia los dos archivos.
         shell: bash
         run: |
-          channel() { sed -n 's/^channel *= *"\(.*\)"/\1/p' "$1"; }
+          # El canal se lee hasta la comilla de cierre: un comentario al final
+          # de la línea no cuenta.
+          channel() { sed -n 's/^channel *= *"\([^"]*\)".*/\1/p' "$1"; }
           components() {
-            sed -n 's/^components *= *\[\(.*\)\]/\1/p' "$1" | tr -d ' "' | tr ',' '\n' | sort | paste -sd,
+            sed -n 's/^components *= *\[\(.*\)\].*/\1/p' "$1" | tr -d ' "' | tr ',' '\n' | sort | paste -sd,
           }
           root=../rust-toolchain.toml
           app=rust/rust-toolchain.toml
+          # Si un archivo lleva `components` pero no se pudo leer (por ejemplo,
+          # un arreglo en varias líneas), dos listas vacías serían "iguales":
+          # se rechaza en vez de aprobar sin comparar.
+          for f in "$root" "$app"; do
+            if grep -q '^components' "$f" && [ -z "$(components "$f")" ]; then
+              echo "::error::No se pudieron leer los componentes de $f (van en una sola línea: components = [\"rustfmt\", \"clippy\"])."
+              exit 1
+            fi
+          done
           root_channel=$(channel "$root"); app_channel=$(channel "$app")
           root_components=$(components "$root"); app_components=$(components "$app")
           echo "raíz:        canal $root_channel, componentes [$root_components]"
@@ -176,7 +187,7 @@ jobs:
         # el hook usara otro toolchain, esto también lo detecta (#48).
         shell: bash
         run: |
-          pinned=$(sed -n 's/^channel *= *"\(.*\)"/\1/p' ../rust-toolchain.toml)
+          pinned=$(sed -n 's/^channel *= *"\([^"]*\)".*/\1/p' ../rust-toolchain.toml)
           apk=build/app/outputs/flutter-apk/app-debug.apk
           for abi in armeabi-v7a arm64-v8a x86_64; do
             lib="lib/$abi/librust_lib_boveda.so"
@@ -188,6 +199,9 @@ jobs:
             found=$(strings -a "$RUNNER_TEMP/$abi.so" | grep -m1 '^rustc version ' || true)
             echo "$abi: $found (fijado: $pinned)"
             case "$found" in
+              "")
+                echo "::error::No se encontró la cadena 'rustc version' en la librería de $abi: puede que el empaquetado haya quitado la sección .comment, no que el Rust sea otro."
+                exit 1 ;;
               "rustc version $pinned "*) ;;
               *) echo "::error::La librería de $abi no se compiló con Rust $pinned."; exit 1 ;;
             esac
