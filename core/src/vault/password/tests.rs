@@ -54,6 +54,37 @@ fn counts_chars_not_bytes() {
     );
 }
 
+/// La forma descompuesta (`e` + U+0301) cuenta igual que la compuesta (#57):
+/// el mínimo no depende de cómo escribió el teclado.
+#[test]
+fn composed_and_decomposed_forms_have_the_same_strength() {
+    let composed = "\u{00e9}";
+    let decomposed = "e\u{0301}";
+    for (count, expected) in [
+        (11, PasswordStrength::TooShort),
+        (12, PasswordStrength::Acceptable),
+        (15, PasswordStrength::Acceptable),
+        (16, PasswordStrength::Strong),
+    ] {
+        for form in [composed, decomposed] {
+            assert_eq!(
+                password_strength(&s(&form.repeat(count))),
+                expected,
+                "{count} × {form:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn eleven_decomposed_letters_are_rejected_as_too_short() {
+    let password = s(&"e\u{0301}".repeat(11));
+    assert_eq!(
+        require_master_password(&password),
+        Err(Error::PasswordTooShort)
+    );
+}
+
 #[test]
 fn emoji_counts_one() {
     let password = format!("{}🔐", "a".repeat(11));
