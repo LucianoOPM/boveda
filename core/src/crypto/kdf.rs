@@ -3,8 +3,7 @@
 use std::time::{Duration, Instant};
 
 use argon2::{Algorithm, Argon2, Params, Version};
-use secrecy::SecretString;
-use zeroize::Zeroizing;
+use secrecy::{SecretBox, SecretString};
 
 use super::normalize::normalize_nfc;
 use crate::error::{Error, Result};
@@ -16,7 +15,11 @@ pub(crate) const SALT_LEN: usize = 16;
 pub(crate) const DERIVED_KEY_LEN: usize = 32;
 
 /// Llave derivada de la contraseña maestra; se borra de memoria al soltarla.
-pub(crate) type DerivedKey = Zeroizing<[u8; DERIVED_KEY_LEN]>;
+///
+/// Vive en el heap (`SecretBox`, como `VaultKey`): mover la llave copia un
+/// puntero y no los 32 bytes, que es lo que dejaría copias sin borrar en la
+/// pila con un arreglo (#54). Su `Debug` no muestra el valor.
+pub(crate) type DerivedKey = SecretBox<[u8; DERIVED_KEY_LEN]>;
 
 /// Tiempo objetivo de una derivación en el dispositivo.
 const CALIBRATION_TARGET: Duration = Duration::from_millis(500);
@@ -160,10 +163,21 @@ pub(crate) fn derive_key(
     // En NFC, para que una misma contraseña derive la misma llave sin importar
     // cómo la escribió el teclado (#57). Una contraseña ASCII no cambia.
     let normalized = normalize_nfc(password);
-    let mut key = Zeroizing::new([0u8; DERIVED_KEY_LEN]);
-    argon2
-        .hash_password_into(normalized.as_bytes(), salt, key.as_mut())
-        .map_err(|_| Error::InvalidKdfParams)?;
+
+    // Argon2id escribe directamente en el búfer del heap: la llave nunca pasa
+    // por un arreglo propio en la pila. `init_with_mut` no devuelve `Result`,
+    // así que el error se captura afuera; si falla, el `SecretBox` se suelta y
+    // se borra sin copiar nada a otro lugar.
+    //
+    // Las copias internas de `argon2` (`full_out`, en `blake2b_long`) quedan
+    // fuera de nuestro alcance: ver la excepción documentada en `crypto`.
+    let mut hashed: Result<()> = Ok(());
+    let key = DerivedKey::init_with_mut(|out| {
+        hashed = argon2
+            .hash_password_into(normalized.as_bytes(), salt, out.as_mut())
+            .map_err(|_| Error::InvalidKdfParams);
+    });
+    hashed?;
     Ok(key)
 }
 

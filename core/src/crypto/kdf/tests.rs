@@ -1,5 +1,7 @@
 //! Pruebas unitarias de `crypto/kdf.rs`.
 
+use secrecy::ExposeSecret;
+
 use super::*;
 
 const MIB: u32 = 1024;
@@ -117,7 +119,7 @@ fn same_inputs_derive_same_key() {
     let salt = [7u8; SALT_LEN];
     let first = derive_key(&password("correcta"), &salt, &KdfParams::MIN).unwrap();
     let second = derive_key(&password("correcta"), &salt, &KdfParams::MIN).unwrap();
-    assert_eq!(*first, *second);
+    assert_eq!(first.expose_secret(), second.expose_secret());
 }
 
 #[test]
@@ -134,7 +136,7 @@ fn different_salt_password_or_params_derive_different_keys() {
     let other_params = derive_key(&password("correcta"), &salt, &more_iterations);
 
     for other in [other_salt, other_password, other_params] {
-        assert_ne!(*base, *other.unwrap());
+        assert_ne!(base.expose_secret(), other.unwrap().expose_secret());
     }
 }
 
@@ -148,6 +150,21 @@ fn derive_key_rejects_params_below_minimum() {
     assert_eq!(result.err(), Some(Error::InvalidKdfParams));
 }
 
+/// Garantía de tipo (#54): `DerivedKey` y `VaultKey` son un puntero al heap, así
+/// que mover una llave copia 8 bytes y no los 32 de la llave.
+///
+/// No prueba que no haya copias en la pila (las copias internas de las
+/// dependencias, o las que decida el compilador): eso se cubre con la
+/// revisión de código y con las excepciones documentadas.
+#[test]
+fn derived_and_vault_keys_are_pointer_sized() {
+    use crate::crypto::keys::VaultKey;
+    use std::mem::size_of;
+
+    assert_eq!(size_of::<DerivedKey>(), size_of::<usize>());
+    assert_eq!(size_of::<VaultKey>(), size_of::<usize>());
+}
+
 /// Llave de la contraseña NFC `café-clave-larga` (con `é` U+00E9), sal
 /// `00 01 .. 0f` y `KdfParams::MIN`, calculada con `node:crypto` (`argon2Sync`)
 /// sobre los bytes UTF-8 de la forma NFC.
@@ -156,7 +173,10 @@ const CAFE_KEY_HEX: &str = "8fcbd7402846edc9eae3230ad6f866b007f7d5d807df8cc300ae
 fn key_hex(text: &str) -> String {
     let salt: [u8; SALT_LEN] = core::array::from_fn(|i| i as u8);
     let key = derive_key(&password(text), &salt, &KdfParams::MIN).unwrap();
-    key.iter().map(|b| format!("{b:02x}")).collect()
+    key.expose_secret()
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect()
 }
 
 #[test]
@@ -179,7 +199,11 @@ fn a_different_accent_derives_a_different_key() {
 fn ascii_password_derives_the_reference_key() {
     let salt: [u8; SALT_LEN] = core::array::from_fn(|i| i as u8);
     let key = derive_key(&password("clave-ascii-12345"), &salt, &KdfParams::MIN).unwrap();
-    let hex: String = key.iter().map(|b| format!("{b:02x}")).collect();
+    let hex: String = key
+        .expose_secret()
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect();
     assert_eq!(
         hex,
         "7f51bec591d86903e9b95fc8bfcaa86ea4d19111408e28f5a05f4f960d9ffe2a"

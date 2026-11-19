@@ -50,7 +50,7 @@ pub(crate) fn generate_vault_key() -> Result<VaultKey> {
 /// Crea el cifrador a partir de la llave derivada (se borra al soltarlo).
 fn cipher(derived: &DerivedKey) -> Result<XChaCha20Poly1305> {
     // La longitud es fija (32 bytes), así que este error no ocurre en la práctica.
-    XChaCha20Poly1305::new_from_slice(derived.as_ref()).map_err(|_| Error::WrongPassword)
+    XChaCha20Poly1305::new_from_slice(derived.expose_secret()).map_err(|_| Error::WrongPassword)
 }
 
 /// Cifra la llave de bóveda con la llave derivada y `associated_data`.
