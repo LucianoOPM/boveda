@@ -9,6 +9,14 @@ import '../src/rust/api/error.dart';
 import '../src/rust/api/session.dart';
 import '../widgets/password_field.dart';
 
+/// Aviso para [UnlockScreen]: [isError] lo muestra en el color de error.
+class UnlockNotice {
+  const UnlockNotice(this.text, {this.isError = true});
+
+  final String text;
+  final bool isError;
+}
+
 /// Desbloqueo con la contraseña maestra o con huella.
 ///
 /// La contraseña solo vive en el controlador de esta pantalla y en la
@@ -38,10 +46,19 @@ class UnlockScreen extends StatefulWidget {
     required this.biometric,
     required this.onUnlocked,
     this.onVaultOpened,
+    this.notice,
+    this.onNoticeShown,
   });
 
   final VaultSession session;
   final BiometricService biometric;
+
+  /// Aviso de un solo uso (#44): el motivo de un error al importar o el
+  /// resultado de una exportación que terminó tras el bloqueo. Texto fijo,
+  /// sin datos de la bóveda ni rutas. La pantalla lo conserva mientras
+  /// exista y avisa con [onNoticeShown] para que quien lo guarda lo borre.
+  final UnlockNotice? notice;
+  final VoidCallback? onNoticeShown;
 
   /// Se llama cuando `unlock` tuvo éxito y la pantalla va a activar la huella
   /// con la casilla: desde aquí Rust está desbloqueado aunque la interfaz
@@ -79,6 +96,10 @@ class _UnlockScreenState extends State<UnlockScreen> {
   /// Aviso de huella desactivada.
   String? _notice;
 
+  /// La huella se desactivó porque la bóveda cambió (`WrongVaultKey`): tras
+  /// desbloquear con la contraseña se avisa con un `SnackBar` neutro (#44).
+  bool _vaultChanged = false;
+
   /// La huella está activa: se muestra "Usar huella".
   bool _biometricEnabled = false;
 
@@ -107,9 +128,28 @@ class _UnlockScreenState extends State<UnlockScreen> {
   /// de que venza, la canceló el sistema al ocultarse; si no, el usuario.
   Timer? _cancelWindow;
 
+  /// Aviso de [UnlockScreen.notice] ya recibido; vive tanto como la pantalla.
+  UnlockNotice? _shownNotice;
+
+  void _takeNotice(UnlockNotice? notice) {
+    if (notice == null) return;
+    _shownNotice = notice;
+    // Fuera de `build`: quien lo guarda lo borra y se reconstruye.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) widget.onNoticeShown?.call();
+    });
+  }
+
+  @override
+  void didUpdateWidget(UnlockScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!identical(widget.notice, oldWidget.notice)) _takeNotice(widget.notice);
+  }
+
   @override
   void initState() {
     super.initState();
+    _takeNotice(widget.notice);
     _lifecycle = AppLifecycleListener(onHide: _onHide, onResume: _onResume);
     // Después del primer cuadro, para que el diálogo no choque con la
     // construcción de la pantalla. Corre una sola vez por instancia.
@@ -249,11 +289,17 @@ class _UnlockScreenState extends State<UnlockScreen> {
         });
       case BiometricFallback():
         _release();
-      case BiometricDisabled():
+      case BiometricDisabled(:final vaultChanged):
         setState(() {
           _biometricEnabled = false;
-          _notice =
-              'La huella se desactivó. Desbloquea con tu contraseña maestra.';
+          if (vaultChanged) {
+            // Sin aviso en rojo: lo normal tras importar un respaldo. El
+            // aviso neutro sale tras desbloquear con la contraseña.
+            _vaultChanged = true;
+          } else {
+            _notice =
+                'La huella se desactivó. Desbloquea con tu contraseña maestra.';
+          }
         });
         _release();
         await _refreshOffer();
@@ -324,6 +370,17 @@ class _UnlockScreenState extends State<UnlockScreen> {
       }
       if (!mounted) return;
     }
+    if (_vaultChanged) {
+      _vaultChanged = false;
+      messenger.showSnackBar(
+        const SnackBar(
+          content: Text(
+            'La huella se desactivó porque la bóveda cambió. '
+            'Puedes activarla de nuevo al desbloquear.',
+          ),
+        ),
+      );
+    }
     widget.onUnlocked(damaged);
   }
 
@@ -350,6 +407,15 @@ class _UnlockScreenState extends State<UnlockScreen> {
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               Text('Bóveda bloqueada', style: theme.textTheme.headlineSmall),
+              if (_shownNotice case final shown?) ...[
+                const SizedBox(height: 16),
+                Text(
+                  shown.text,
+                  style: shown.isError
+                      ? errorStyle
+                      : TextStyle(color: theme.colorScheme.onSurfaceVariant),
+                ),
+              ],
               if (_notice case final notice?) ...[
                 const SizedBox(height: 16),
                 Text(notice, style: errorStyle),

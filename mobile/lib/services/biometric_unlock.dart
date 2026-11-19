@@ -74,8 +74,14 @@ class BiometricFallback extends BiometricUnlockOutcome {
 
 /// La copia ya no sirve (llave invalidada o inexistente, copia ilegible o
 /// `WrongVaultKey`): la huella quedó desactivada.
+///
+/// [vaultChanged] es `true` solo con `WrongVaultKey`: la copia era de otra
+/// bóveda (por ejemplo, tras importar un respaldo) y la pantalla lo avisa
+/// sin alarma, después de desbloquear con la contraseña (#44).
 class BiometricDisabled extends BiometricUnlockOutcome {
-  const BiometricDisabled();
+  const BiometricDisabled({this.vaultChanged = false});
+
+  final bool vaultChanged;
 }
 
 /// El núcleo falló por otro motivo: el mensaje genérico de desbloqueo.
@@ -110,7 +116,9 @@ Future<BiometricUnlockOutcome> unlockWithBiometric(
     );
   } on VaultError catch (error) {
     if (error == VaultError.alreadyUnlocked) return const BiometricUnlocked(0);
-    if (error == VaultError.wrongVaultKey) return _disable(biometric);
+    if (error == VaultError.wrongVaultKey) {
+      return _disable(biometric, vaultChanged: true);
+    }
     return const BiometricCoreError();
   } catch (_) {
     return const BiometricCoreError();
@@ -134,9 +142,12 @@ void _wipe(Uint8List key) {
 /// Desactiva la huella. Si `disable` falla, la copia que quede dará
 /// `invalidated` o `WrongVaultKey` en el siguiente intento y se volverá a
 /// desactivar.
-Future<BiometricUnlockOutcome> _disable(BiometricService biometric) async {
+Future<BiometricUnlockOutcome> _disable(
+  BiometricService biometric, {
+  bool vaultChanged = false,
+}) async {
   try {
     await biometric.disable();
   } catch (_) {}
-  return const BiometricDisabled();
+  return BiometricDisabled(vaultChanged: vaultChanged);
 }

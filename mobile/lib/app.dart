@@ -8,8 +8,10 @@ import 'screens/biometric_offer_screen.dart';
 import 'screens/first_run_screen.dart';
 import 'screens/placeholder_screen.dart';
 import 'screens/search_screen.dart';
+import 'screens/settings_screen.dart';
 import 'screens/unlock_screen.dart';
 import 'services/auto_lock.dart';
+import 'services/backup_files.dart';
 import 'services/biometric_service.dart';
 import 'src/rust/api/session.dart';
 import 'widgets/strength_indicator.dart';
@@ -27,7 +29,9 @@ class BovedaApp extends StatefulWidget {
     required this.vaultExists,
     required this.strengthOf,
     required this.biometric,
+    required this.files,
     this.autoLockTimeout = defaultAutoLockTimeout,
+    this.now = DateTime.now,
   });
 
   final VaultSession session;
@@ -35,15 +39,21 @@ class BovedaApp extends StatefulWidget {
   final StrengthOf strengthOf;
   final BiometricService biometric;
 
+  /// Archivos de respaldo y selector del sistema (#44).
+  final BackupFiles files;
+
   /// Inactividad tras la que la bóveda se bloquea sola.
   final Duration autoLockTimeout;
+
+  /// Reloj para el tope fuera de la app de `runWithoutAutoLock` (#44).
+  final DateTime Function() now;
 
   @override
   State<BovedaApp> createState() => _BovedaAppState();
 }
 
 class _BovedaAppState extends State<BovedaApp> {
-  final _autoLock = AutoLockController();
+  late final _autoLock = AutoLockController(now: widget.now);
 
   @override
   Widget build(BuildContext context) {
@@ -64,6 +74,7 @@ class _BovedaAppState extends State<BovedaApp> {
         vaultExists: widget.vaultExists,
         strengthOf: widget.strengthOf,
         biometric: widget.biometric,
+        files: widget.files,
         autoLock: _autoLock,
         autoLockTimeout: widget.autoLockTimeout,
       ),
@@ -114,6 +125,7 @@ class VaultGate extends StatefulWidget {
     required this.vaultExists,
     required this.strengthOf,
     required this.biometric,
+    required this.files,
     required this.autoLock,
     required this.autoLockTimeout,
   });
@@ -122,6 +134,7 @@ class VaultGate extends StatefulWidget {
   final Future<bool> Function() vaultExists;
   final StrengthOf strengthOf;
   final BiometricService biometric;
+  final BackupFiles files;
   final AutoLockController autoLock;
   final Duration autoLockTimeout;
 
@@ -148,10 +161,21 @@ class _VaultGateState extends State<VaultGate> {
   /// Temporizador de inactividad; solo corre con la bóveda en pantalla.
   Timer? _idle;
 
+  /// Mientras corre `runWithoutAutoLock` (#44): la hora en que la app se
+  /// ocultó y el temporizador del tope de `maxAwayDuringOperation`. Android
+  /// puede congelar el temporizador en segundo plano, así que al volver
+  /// también se compara la hora.
+  DateTime? _hiddenAt;
+  Timer? _awayCap;
+
+  /// Aviso de un solo uso para la pantalla de desbloqueo (#44): solo en
+  /// memoria y con texto fijo. La pantalla lo recibe y lo borra de aquí.
+  UnlockNotice? _notice;
+
   @override
   void initState() {
     super.initState();
-    _lifecycle = AppLifecycleListener(onHide: _onHidden);
+    _lifecycle = AppLifecycleListener(onHide: _onHidden, onResume: _onResumed);
     widget.autoLock.onActivity = _restartIdle;
     HardwareKeyboard.instance.addHandler(_onKey);
     _start();
@@ -160,6 +184,7 @@ class _VaultGateState extends State<VaultGate> {
   @override
   void dispose() {
     _idle?.cancel();
+    _awayCap?.cancel();
     HardwareKeyboard.instance.removeHandler(_onKey);
     if (widget.autoLock.onActivity == _restartIdle) {
       widget.autoLock.onActivity = null;
@@ -179,11 +204,15 @@ class _VaultGateState extends State<VaultGate> {
   void _restartIdle() {
     _idle?.cancel();
     _idle = null;
-    if (_state == VaultGateState.unlocked ||
-        _state == VaultGateState.offerBiometric) {
+    if (_showsVault && !widget.autoLock.isSuspended) {
       _idle = Timer(widget.autoLockTimeout, _lock);
     }
   }
+
+  /// La bóveda está en pantalla (`unlocked` u `offerBiometric`).
+  bool get _showsVault =>
+      _state == VaultGateState.unlocked ||
+      _state == VaultGateState.offerBiometric;
 
   /// Sin archivo, primer uso. Con archivo, se abre (queda bloqueada). Si
   /// algo falla, un mensaje genérico y nunca el primer uso: crear encima de
@@ -213,7 +242,7 @@ class _VaultGateState extends State<VaultGate> {
 
   /// Después de crear la bóveda: ofrecer la huella si el dispositivo la
   /// admite y no está activa. Si la comprobación falla, no se ofrece.
-  Future<void> _afterCreate() async {
+  Future<void> _afterCreate({int damaged = 0}) async {
     bool offer;
     try {
       offer =
@@ -225,6 +254,7 @@ class _VaultGateState extends State<VaultGate> {
     if (!mounted) return;
     _enterUnlocked(
       offer ? VaultGateState.offerBiometric : VaultGateState.unlocked,
+      damagedEntries: damaged,
     );
   }
 
@@ -248,12 +278,76 @@ class _VaultGateState extends State<VaultGate> {
     }
     setState(() {
       _damagedEntries = damagedEntries;
+      _notice = null;
       _state = next;
     });
     _restartIdle();
   }
 
+  /// Muestra un aviso que llega de una pantalla apilada. Con la bóveda
+  /// bloqueada va a la pantalla de desbloqueo (un solo uso); en otro estado,
+  /// a un `SnackBar`.
+  void _showNotice(String text, {bool isError = false}) {
+    if (!mounted) return;
+    if (_state == VaultGateState.locked) {
+      setState(() => _notice = UnlockNotice(text, isError: isError));
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(text)));
+    }
+  }
+
+  void _noticeShown() {
+    if (mounted && _notice != null) setState(() => _notice = null);
+  }
+
+  /// Una importación terminó bien: la bóveda es la del respaldo y está
+  /// desbloqueada. Quita Ajustes y lo apilado, monta pantallas nuevas y sigue
+  /// el camino de crear (oferta de la huella o pantalla principal), con el
+  /// total de dañadas para el aviso.
+  void _onImported(int damaged) {
+    if (!mounted) return;
+    _removeStackedRoutes(Navigator.of(context));
+    setState(() {
+      _epoch++;
+      _state = VaultGateState.checking;
+    });
+    _afterCreate(damaged: damaged);
+  }
+
+  /// La importación falló desde Ajustes: la fachada dejó la bóveda bloqueada
+  /// en Rust, así que la interfaz se bloquea y muestra el motivo.
+  void _onImportFailed(String message) => _lock(notice: UnlockNotice(message));
+
+  /// Ajustes (#44), apilados en el `Navigator` raíz, que el bloqueo vacía.
+  void _openSettings() {
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => SettingsScreen(
+          session: widget.session,
+          files: widget.files,
+          biometric: widget.biometric,
+          onImported: _onImported,
+          onImportFailed: _onImportFailed,
+          onNotice: _showNotice,
+        ),
+      ),
+    );
+  }
+
   void _onHidden() {
+    if (widget.autoLock.isSuspended) {
+      // Una actividad externa (el selector de archivos) ocultó la app: no se
+      // bloquea, pero con un tope (#44).
+      if (_showsVault) {
+        _hiddenAt ??= widget.autoLock.now();
+        _awayCap?.cancel();
+        _awayCap = Timer(
+          AutoLockController.maxAwayDuringOperation,
+          _lockIfShowingVault,
+        );
+      }
+      return;
+    }
     final shouldLock = switch (_state) {
       VaultGateState.unlocked || VaultGateState.offerBiometric => true,
       VaultGateState.locked => _openWhileLocked,
@@ -262,16 +356,41 @@ class _VaultGateState extends State<VaultGate> {
     if (shouldLock) _lock();
   }
 
+  /// La app volvió a `resumed`: si estuvo fuera más del tope mientras corría
+  /// una operación sin bloqueo, bloquea.
+  void _onResumed() {
+    final hiddenAt = _hiddenAt;
+    _clearAway();
+    if (hiddenAt != null &&
+        widget.autoLock.now().difference(hiddenAt) >
+            AutoLockController.maxAwayDuringOperation) {
+      _lockIfShowingVault();
+    }
+  }
+
+  void _clearAway() {
+    _awayCap?.cancel();
+    _awayCap = null;
+    _hiddenAt = null;
+  }
+
+  /// Bloquea solo con la bóveda en pantalla: sin bóveda (primer uso) no hay
+  /// nada que bloquear.
+  void _lockIfShowingVault() {
+    if (_showsVault) _lock();
+  }
+
   /// Bloquea: borra la llave en Rust, cierra todo lo apilado sobre la raíz
   /// (rutas, diálogos, hojas) y los `SnackBar`, y monta un desbloqueo nuevo.
   ///
   /// Si `lock()` falla, igual se muestra el desbloqueo; la fachada bloquea
   /// aunque el `Mutex` esté envenenado, así que en la práctica no falla. El
   /// error se descarta sin detalles.
-  void _lock() {
+  void _lock({UnlockNotice? notice}) {
     if (!mounted) return;
     _idle?.cancel();
     _idle = null;
+    _clearAway();
     _openWhileLocked = false;
     unawaited(
       Future.sync(widget.session.lock).then((_) {}, onError: (Object _) {}),
@@ -282,6 +401,7 @@ class _VaultGateState extends State<VaultGate> {
       ..removeCurrentSnackBar();
     setState(() {
       _epoch++;
+      _notice = notice;
       _state = VaultGateState.locked;
     });
   }
@@ -315,13 +435,18 @@ class _VaultGateState extends State<VaultGate> {
         session: widget.session,
         strengthOf: widget.strengthOf,
         biometric: widget.biometric,
+        files: widget.files,
         onCreated: _afterCreate,
         onAlreadyExists: _reevaluate,
+        onRestored: _onImported,
       ),
       VaultGateState.offerBiometric => BiometricOfferScreen(
         session: widget.session,
         biometric: widget.biometric,
-        onDone: () => _enterUnlocked(VaultGateState.unlocked),
+        onDone: () => _enterUnlocked(
+          VaultGateState.unlocked,
+          damagedEntries: _damagedEntries,
+        ),
       ),
       VaultGateState.locked => UnlockScreen(
         session: widget.session,
@@ -329,10 +454,13 @@ class _VaultGateState extends State<VaultGate> {
         onVaultOpened: () => _openWhileLocked = true,
         onUnlocked: (damaged) =>
             _enterUnlocked(VaultGateState.unlocked, damagedEntries: damaged),
+        notice: _notice,
+        onNoticeShown: _noticeShown,
       ),
       VaultGateState.unlocked => SearchScreen(
         session: widget.session,
         damagedEntries: _damagedEntries,
+        onOpenSettings: _openSettings,
       ),
       VaultGateState.openFailed => const PlaceholderScreen(
         text: 'No se pudo abrir la bóveda.',

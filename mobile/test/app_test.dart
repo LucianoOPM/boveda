@@ -34,6 +34,7 @@ Future<void> pumpApp(
       vaultExists: vaultExists,
       strengthOf: fakeStrength,
       biometric: biometric,
+      files: FakeBackupFiles(),
     ),
   );
 }

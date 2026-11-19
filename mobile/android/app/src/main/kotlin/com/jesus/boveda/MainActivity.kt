@@ -1,5 +1,6 @@
 package com.jesus.boveda
 
+import android.content.Intent
 import android.os.Bundle
 import android.view.WindowManager
 import io.flutter.embedding.android.FlutterActivity
@@ -9,6 +10,7 @@ import io.flutter.plugin.common.MethodChannel
 class MainActivity : FlutterActivity() {
     private val biometric = BiometricVault(this)
     private val localClipboard = LocalClipboard(this)
+    private val backup = BackupFiles(this)
 
     // Protección de pantalla (#43): la ventana se marca como segura antes de
     // que Flutter pinte el primer cuadro. Sin capturas ni grabación de
@@ -17,7 +19,19 @@ class MainActivity : FlutterActivity() {
     // todas las variantes, incluida debug.
     override fun onCreate(savedInstanceState: Bundle?) {
         window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
+        // Temporales de respaldo (#44): al arrancar no puede haber ninguna
+        // operación en curso, así que lo que quede es de un cierre forzado.
+        backup.cleanTempDir()
         super.onCreate(savedInstanceState)
+    }
+
+    // Resultado del selector de archivos del respaldo (#44); lo que no es
+    // suyo sigue a Flutter y a sus plugins.
+    @Suppress("DEPRECATION")
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        if (!backup.onActivityResult(requestCode, resultCode, data)) {
+            super.onActivityResult(requestCode, resultCode, data)
+        }
     }
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
@@ -39,6 +53,9 @@ class MainActivity : FlutterActivity() {
         // Copia local: contraseñas marcadas como sensibles y usuario normal.
         MethodChannel(messenger, "boveda/clipboard")
             .setMethodCallHandler(localClipboard::handle)
+        // Exportar e importar el respaldo con el selector del sistema.
+        MethodChannel(messenger, "boveda/backup")
+            .setMethodCallHandler(backup::handle)
     }
 
     override fun onWindowFocusChanged(hasFocus: Boolean) {
@@ -61,6 +78,7 @@ class MainActivity : FlutterActivity() {
     }
 
     override fun onDestroy() {
+        backup.onDestroy()
         biometric.onDestroy()
         super.onDestroy()
     }

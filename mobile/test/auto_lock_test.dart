@@ -10,6 +10,7 @@ import 'package:boveda/screens/entry_form_screen.dart';
 import 'package:boveda/screens/first_run_screen.dart';
 import 'package:boveda/screens/search_screen.dart';
 import 'package:boveda/screens/unlock_screen.dart';
+import 'package:boveda/services/auto_lock.dart';
 import 'package:boveda/services/biometric_service.dart';
 import 'package:boveda/src/rust/api/error.dart';
 import 'package:boveda/src/rust/api/session.dart';
@@ -30,22 +31,18 @@ Future<void> pumpApp(
   WidgetTester tester, {
   bool vaultExists = true,
   Duration? autoLockTimeout,
+  DateTime Function()? now,
 }) async {
   await tester.pumpWidget(
-    autoLockTimeout == null
-        ? BovedaApp(
-            session: session,
-            vaultExists: () async => vaultExists,
-            strengthOf: fakeStrength,
-            biometric: biometric,
-          )
-        : BovedaApp(
-            session: session,
-            vaultExists: () async => vaultExists,
-            strengthOf: fakeStrength,
-            biometric: biometric,
-            autoLockTimeout: autoLockTimeout,
-          ),
+    BovedaApp(
+      session: session,
+      vaultExists: () async => vaultExists,
+      strengthOf: fakeStrength,
+      biometric: biometric,
+      files: FakeBackupFiles(),
+      autoLockTimeout: autoLockTimeout ?? defaultAutoLockTimeout,
+      now: now ?? DateTime.now,
+    ),
   );
   await drain(tester);
 }
@@ -67,8 +64,12 @@ Future<void> submitPassword(WidgetTester tester) async {
 }
 
 /// Abre la app con bóveda y la desbloquea con la contraseña.
-Future<void> pumpUnlocked(WidgetTester tester, {Duration? timeout}) async {
-  await pumpApp(tester, autoLockTimeout: timeout);
+Future<void> pumpUnlocked(
+  WidgetTester tester, {
+  Duration? timeout,
+  DateTime Function()? now,
+}) async {
+  await pumpApp(tester, autoLockTimeout: timeout, now: now);
   await submitPassword(tester);
   await drain(tester);
   expect(find.byType(SearchScreen), findsOneWidget);
@@ -848,6 +849,153 @@ void main() {
 
       await tester.pump(const Duration(minutes: 1));
       expect(session.lockCalls, 1);
+    });
+  });
+
+  group('runWithoutAutoLock (#44)', () {
+    late DateTime fakeNow;
+
+    setUp(() => fakeNow = DateTime(2026, 11, 14, 12));
+
+    /// Arranca una operación que no termina hasta completar `done`.
+    ({Completer<void> done, Future<void> run}) startOperation(
+      WidgetTester tester,
+      Type screen,
+    ) {
+      final scope = AutoLockScope.maybeOf(tester.element(find.byType(screen)))!;
+      final done = Completer<void>();
+      return (done: done, run: scope.runWithoutAutoLock(() => done.future));
+    }
+
+    testWidgets('ocultarse con la operación en curso no bloquea', (
+      tester,
+    ) async {
+      await pumpUnlocked(tester, now: () => fakeNow);
+      final op = startOperation(tester, SearchScreen);
+
+      await setLifecycle(tester, AppLifecycleState.hidden);
+      expect(session.lockCalls, 0);
+
+      await setLifecycle(tester, AppLifecycleState.resumed);
+      op.done.complete();
+      await op.run;
+      expect(find.byType(SearchScreen), findsOneWidget);
+    });
+
+    testWidgets(
+      'sin inactividad mientras corre y la cuenta reinicia al terminar',
+      (tester) async {
+        await pumpUnlocked(tester, now: () => fakeNow);
+        final op = startOperation(tester, SearchScreen);
+
+        await tester.pump(const Duration(minutes: 6));
+        expect(session.lockCalls, 0);
+
+        op.done.complete();
+        await op.run;
+        await tester.pump(const Duration(minutes: 4, seconds: 59));
+        expect(session.lockCalls, 0);
+        await tester.pump(const Duration(seconds: 1));
+        expect(session.lockCalls, 1);
+      },
+    );
+
+    testWidgets('una operación que lanza baja la marca y reinicia la cuenta', (
+      tester,
+    ) async {
+      await pumpUnlocked(tester, now: () => fakeNow);
+      final scope = AutoLockScope.maybeOf(mainContext(tester))!;
+
+      await expectLater(
+        scope.runWithoutAutoLock<void>(() async => throw StateError('falla')),
+        throwsStateError,
+      );
+      expect(scope.controller.isSuspended, isFalse);
+
+      await tester.pump(defaultAutoLockTimeout);
+      expect(session.lockCalls, 1);
+    });
+
+    testWidgets('una segunda llamada lanza StateError y no anida', (
+      tester,
+    ) async {
+      await pumpUnlocked(tester, now: () => fakeNow);
+      final op = startOperation(tester, SearchScreen);
+      final scope = AutoLockScope.maybeOf(mainContext(tester))!;
+
+      expect(
+        () => scope.runWithoutAutoLock<void>(() async {}),
+        throwsStateError,
+      );
+
+      op.done.complete();
+      await op.run;
+    });
+
+    testWidgets('tope de 2 minutos por temporizador', (tester) async {
+      await pumpUnlocked(tester, now: () => fakeNow);
+      final op = startOperation(tester, SearchScreen);
+
+      await setLifecycle(tester, AppLifecycleState.hidden);
+      await tester.pump(const Duration(minutes: 1, seconds: 59));
+      expect(session.lockCalls, 0);
+      await tester.pump(const Duration(seconds: 1));
+      expect(session.lockCalls, 1);
+
+      await expectLocked(tester);
+      op.done.complete();
+      await op.run;
+    });
+
+    testWidgets('tope de 2 minutos por la hora al volver', (tester) async {
+      await pumpUnlocked(tester, now: () => fakeNow);
+      final op = startOperation(tester, SearchScreen);
+
+      await setLifecycle(tester, AppLifecycleState.hidden);
+      // El temporizador no corrió (Android lo congela en segundo plano),
+      // pero la hora sí avanzó.
+      fakeNow = fakeNow.add(const Duration(minutes: 3));
+      await setLifecycle(tester, AppLifecycleState.resumed);
+      await drain(tester);
+
+      expect(session.lockCalls, 1);
+      expect(find.byType(UnlockScreen), findsOneWidget);
+      op.done.complete();
+      await op.run;
+    });
+
+    testWidgets('volver antes del tope no bloquea', (tester) async {
+      await pumpUnlocked(tester, now: () => fakeNow);
+      final op = startOperation(tester, SearchScreen);
+
+      await setLifecycle(tester, AppLifecycleState.hidden);
+      await tester.pump(const Duration(minutes: 1));
+      fakeNow = fakeNow.add(const Duration(minutes: 1));
+      await setLifecycle(tester, AppLifecycleState.resumed);
+      await tester.pump(const Duration(minutes: 3));
+
+      expect(session.lockCalls, 0);
+      expect(find.byType(SearchScreen), findsOneWidget);
+      op.done.complete();
+      await op.run;
+    });
+
+    testWidgets('sin bóveda el tope no bloquea ni cambia de estado', (
+      tester,
+    ) async {
+      await pumpApp(tester, vaultExists: false, now: () => fakeNow);
+      final op = startOperation(tester, FirstRunScreen);
+
+      await setLifecycle(tester, AppLifecycleState.hidden);
+      await tester.pump(const Duration(minutes: 3));
+      fakeNow = fakeNow.add(const Duration(minutes: 3));
+      await setLifecycle(tester, AppLifecycleState.resumed);
+      await drain(tester);
+
+      expect(session.lockCalls, 0);
+      expect(find.byType(FirstRunScreen), findsOneWidget);
+      op.done.complete();
+      await op.run;
     });
   });
 }
