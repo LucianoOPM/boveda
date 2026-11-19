@@ -45,6 +45,7 @@ Flutter llega al núcleo por flutter_rust_bridge; la app de Tauri lo usa directa
 | Necesidad | Crate o herramienta |
 | --- | --- |
 | Derivar la llave de la contraseña maestra | `argon2` |
+| Normalizar a NFC la contraseña maestra | `unicode-normalization` (`=0.1.26`) |
 | Cifrar entradas | `chacha20poly1305` |
 | Borrar secretos de memoria | `zeroize` |
 | Base de datos local | `rusqlite` |
@@ -101,6 +102,13 @@ Decisiones tomadas el 2026-11-07, antes de implementar las llaves. Fijan el form
 - La cabecera guarda por separado (no como cadena PHC): versión del formato, algoritmo de derivación, memoria, iteraciones, paralelismo, sal de 16 bytes y la llave de bóveda cifrada con su nonce.
 - Al cifrar la llave de bóveda, los campos de la cabecera (versión, algoritmo, parámetros y sal) van como dato autenticado, en binario de ancho fijo y little-endian: `versión (u16) | algoritmo (u8) | memoria en KiB (u32) | iteraciones (u32) | paralelismo (u32) | sal (16 bytes)`. El algoritmo `1` es Argon2id versión 0x13. Alterar cualquier parámetro de la cabecera hace fallar el descifrado.
 - En el `Cargo.toml` de la raíz, `[profile.dev.package.argon2]` y `[profile.dev.package.blake2]` llevan `opt-level = 3` para que las pruebas en modo debug no sean lentas. Se agregan junto con la dependencia `argon2`.
+- Contraseña maestra en NFC (decidido el 2026-11-18, #57; detalle en `docs/superpowers/specs/2026-11-18-nfc-contrasena-maestra-design.md`):
+  - Qué recibe Argon2id: los bytes UTF-8 de la contraseña **en forma NFC** (no NFKC, que cambia el significado de caracteres). `é` compuesta (U+00E9) y `e` + acento combinante (U+0065 U+0301) derivan la misma llave. Un solo ayudante (`crypto/normalize.rs`) lo aplica en `kdf::derive_key`, y de ahí en `create`, `unlock`, `change_master_password` (la actual y la nueva), `rekey` e `import`; `password_strength` cuenta los caracteres de la forma NFC.
+  - Sin cambio de `format_version`: solo cambian los bytes que recibe Argon2id para una contraseña que no está en NFC. Todo el ASCII y las letras precompuestas ya están en NFC y derivan la misma llave que antes (vector fijo en las pruebas). `vault-v1.db` y `vault-v2.db` usan `prueba-bóveda-v1/v2` con la "ó" compuesta, ya en NFC, y siguen abriendo sin modificarse.
+  - Sin segundo intento: `unlock` no prueba la contraseña original si la NFC falla. Se asume que no existen bóvedas con contraseñas descompuestas porque la decisión se tomó antes de guardar datos reales; una bóveda creada antes con una contraseña no NFC no abriría.
+  - Una contraseña que ya está en NFC se usa sin copiarla. Si no, la copia normalizada vive en un `Zeroizing<String>` de capacidad exacta, calculada antes de llenarla, para no dejar restos en un búfer anterior.
+  - Excepción de borrado aceptada, junto a la de `nucleo-matcher`: el iterador `nfc()` de `unicode-normalization` guarda un búfer interno de hasta 4 caracteres en la pila (en el heap si un grupo de marcas combinantes es más largo), con el grupo de caracteres que se está componiendo; no se puede borrar desde fuera. Ocurre solo con contraseñas que no están en NFC o que contienen caracteres cuya comprobación rápida no es concluyente (marcas combinantes y algunos jamo coreanos); ASCII y letras precompuestas no pasan por el iterador. Se acepta porque las otras opciones eran una primitiva propia con tablas Unicode (prohibida por `core/CLAUDE.md`) o dejar la #57 sin resolver. Si `unicode-normalization` ofrece borrar ese búfer, la excepción se revisa.
+  - Fuera de alcance: NFC de las etiquetas y demás datos de búsqueda (ver la limitación de la versión de estructura 1).
 
 **Entradas.**
 
@@ -260,7 +268,7 @@ Decidido el 2026-11-14 (#44, detalle en `docs/superpowers/specs/2026-11-14-respa
 - Sin texto, devuelve todas: las usadas más recientemente primero, las nunca usadas al final y, entre empates, por servicio.
 - Buscador principal: `nucleo-matcher` (MPL-2.0, permitida en `deny.toml`) por subsecuencia ("gm" encuentra "Gmail"), sin distinguir mayúsculas y con "telefono" encontrando "Teléfono". Cada palabra del texto debe coincidir con algún campo; el puntaje es la suma del mejor de cada palabra. Los signos (`^ ! ' $`) son literales.
 - Respaldo, solo si el principal no encuentra nada: distancia OSA (`strsim`) por palabras, sin acentos ni mayúsculas, contra cada palabra de los campos y contra su inicio del mismo largo. Tolera 1 con 3 a 5 caracteres y 2 con 6 o más; las palabras de menos de 3 solo coinciden por subsecuencia.
-- Las copias internas de `nucleo-matcher` y `strsim` no se pueden borrar de memoria: es una limitación aceptada, porque son datos de búsqueda y no secretos.
+- Las copias internas de `nucleo-matcher` y `strsim` no se pueden borrar de memoria: es una limitación aceptada, porque son datos de búsqueda y no secretos. La del iterador `nfc()` sobre la contraseña maestra, que sí es un secreto, es una excepción aparte y acotada (ver "Formato de la bóveda", contraseña maestra en NFC).
 
 ## Emparejamiento y envío
 

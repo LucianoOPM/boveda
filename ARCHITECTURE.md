@@ -34,7 +34,7 @@ boveda/
 │   ├── src/
 │   │   ├── lib.rs
 │   │   ├── error.rs        # tipo Error (thiserror), sin secretos
-│   │   ├── crypto/         # kdf.rs (Argon2), keys.rs, aead.rs
+│   │   ├── crypto/         # kdf.rs (Argon2), keys.rs, aead.rs, normalize.rs (NFC)
 │   │   ├── vault/          # mod.rs (API), header.rs, entry.rs, storage.rs, backup.rs, password.rs
 │   │   ├── search.rs
 │   │   └── protocol/       # identity.rs, pairing.rs, message.rs, transport.rs
@@ -102,7 +102,7 @@ Los miembros del workspace se agregan conforme existen: `core` en la etapa 1, `m
 
 | Módulo | Responsabilidad |
 | --- | --- |
-| `crypto/` | Argon2id (`kdf.rs`); generar la llave de bóveda, derivar la llave maestra y cifrar o descifrar con ella la llave de bóveda, y crear y comprobar el verificador `key_check` (`keys.rs`); cifrar y descifrar cada parte de una entrada con XChaCha20-Poly1305 y su dato autenticado (`aead.rs`) |
+| `crypto/` | Argon2id (`kdf.rs`, sobre la contraseña maestra en NFC); normalizar la contraseña maestra a NFC con una copia que se borra (`normalize.rs`); generar la llave de bóveda, derivar la llave maestra y cifrar o descifrar con ella la llave de bóveda, y crear y comprobar el verificador `key_check` (`keys.rs`); cifrar y descifrar cada parte de una entrada con XChaCha20-Poly1305 y su dato autenticado (`aead.rs`) |
 | `vault/` | API de la bóveda (`mod.rs`, estructura `Vault`); cabecera (formato 2, con `key_check`): codificarla como dato autenticado, leerla y validarla, y armar la v2 al desbloquear una v1 (`header.rs`); modelo de entrada (`entry.rs`) y entrada cifrada (`entry/sealed.rs`), almacenamiento SQLite con lápidas para las eliminadas y la migración de la cabecera v1 a v2 (`storage.rs`), respaldos: exportar con `VACUUM INTO` e importar validando una copia temporal (`backup.rs`), regla de la contraseña maestra: longitud mínima y fortaleza (`password.rs`) |
 | `search.rs` | Búsqueda tolerante a errores sobre los datos de búsqueda |
 | `protocol/` | Identidades X25519, emparejamiento y envío con Noise (`snow`), descubrimiento mDNS |
@@ -143,7 +143,7 @@ Sin dependencias de interfaz ni de plataforma.
 | Núcleo en Rust compartido | La parte delicada se escribe y prueba una sola vez |
 | Crate puente separado | Los detalles de flutter_rust_bridge no contaminan el núcleo |
 | Dos llaves (maestra y de bóveda) | Cambiar la contraseña maestra y usar huella sin recifrar entradas |
-| Borrado de memoria garantizado solo dentro de `vault-core` | El núcleo guarda secretos y texto plano en `SecretString`/`Zeroizing` y evita reasignaciones que dejen copias; fuera del núcleo es de mejor esfuerzo, porque Dart no permite borrar sus cadenas. Lo mismo vale para los búferes de cruce de flutter_rust_bridge y de `StandardMessageCodec` (canales de Kotlin), para la copia que la fachada entrega al revelar una contraseña o unas notas, y para la copia de la llave de bóveda que entrega para el Keystore. Excepción documentada: las copias internas de `nucleo-matcher` y `strsim` durante la búsqueda (datos de búsqueda, no secretos) |
+| Borrado de memoria garantizado solo dentro de `vault-core` | El núcleo guarda secretos y texto plano en `SecretString`/`Zeroizing` y evita reasignaciones que dejen copias; fuera del núcleo es de mejor esfuerzo, porque Dart no permite borrar sus cadenas. Lo mismo vale para los búferes de cruce de flutter_rust_bridge y de `StandardMessageCodec` (canales de Kotlin), para la copia que la fachada entrega al revelar una contraseña o unas notas, y para la copia de la llave de bóveda que entrega para el Keystore. Excepciones documentadas: (1) las copias internas de `nucleo-matcher` y `strsim` durante la búsqueda (datos de búsqueda, no secretos); (2) el búfer interno del iterador `nfc()` de `unicode-normalization` (hasta 4 caracteres en la pila) con el grupo de caracteres que se está componiendo, solo con contraseñas maestras que no están en NFC o que contienen marcas combinantes o jamo (ASCII y letras precompuestas no pasan por él). Se acepta porque las otras opciones eran una primitiva propia con tablas Unicode o dejar la #57 sin resolver; si la crate ofrece borrar ese búfer, se revisa |
 | Entrada cifrada en dos partes | Búsqueda rápida sin exponer contraseñas en memoria |
 | Fecha de modificación y marca de eliminada | Preparan la sincronización futura sin migrar datos |
 | Noise (`snow`) | Protocolo estudiado para el intercambio de llaves y el canal cifrado |
