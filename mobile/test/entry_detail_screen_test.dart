@@ -352,7 +352,8 @@ void main() {
       expect(find.byType(SelectableText), findsNothing);
       expect(
         tester.widget<Text>(find.text(fakePassword)).style?.fontFamily,
-        'monospace',
+        // `SecretText` usa JetBrains Mono (antes, la `monospace` del sistema).
+        'JetBrainsMono',
       );
 
       await tapAndPump(tester, hidePassword);

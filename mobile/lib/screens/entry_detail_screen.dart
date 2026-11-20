@@ -7,10 +7,12 @@ import '../src/rust/api/error.dart';
 import '../src/rust/api/session.dart';
 import '../theme/button_styles.dart';
 import '../theme/colors.dart';
+import '../theme/extensions.dart';
 import '../theme/icons.dart';
 import '../theme/spacing.dart';
 import '../theme/text_scale.dart';
 import '../widgets/field_label.dart';
+import '../widgets/secret_text.dart';
 import '../widgets/tag_badge.dart';
 import 'entry_form_screen.dart';
 
@@ -449,38 +451,66 @@ class _EntryDetailScreenState extends State<EntryDetailScreen> {
   }
 
   Widget _damagedNotice(bool canEdit) {
-    return Padding(
-      padding: const EdgeInsets.only(top: 8),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Icon(Icons.warning_amber),
-              SizedBox(width: 8),
-              Expanded(
-                child: Text(
-                  'La contraseña y las notas de esta entrada están dañadas',
+    final theme = Theme.of(context);
+    final error = theme.colorScheme.error;
+    // Una tarjeta de `errorContainer` (`DESIGN.md` 7.5), como la de entradas
+    // dañadas de la lista.
+    return Material(
+      key: const Key('damaged-secret'),
+      color: BovedaColors.errorContainer,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(Radii.card),
+        side: BorderSide(color: error.withValues(alpha: 0.38)),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(Space.s14),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Icon(
+                  BovedaIcons.triangleAlert,
+                  size: IconSizes.control,
+                  color: error,
                 ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 8),
-          Row(
-            children: [
-              FilledButton(
-                onPressed: canEdit ? () => _openForm(repair: true) : null,
-                child: const Text('Reparar'),
-              ),
-              const SizedBox(width: 8),
-              TextButton(
-                onPressed: canEdit ? _confirmDelete : null,
-                child: const Text('Eliminar'),
-              ),
-            ],
-          ),
-        ],
+                const SizedBox(width: Space.sm),
+                Expanded(
+                  child: Text(
+                    'La contraseña y las notas de esta entrada están dañadas',
+                    style: theme.textTheme.bodyMedium?.copyWith(
+                      color: theme.colorScheme.onSurface,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: Space.md),
+            Wrap(
+              spacing: Space.sm,
+              runSpacing: Space.sm,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              children: [
+                FilledButton(
+                  style: FilledButton.styleFrom(
+                    backgroundColor: BovedaColors.surfaceElevated,
+                    foregroundColor: BovedaColors.textPrimary,
+                    disabledBackgroundColor: BovedaColors.surfaceElevated,
+                    disabledForegroundColor: BovedaColors.textDisabled,
+                  ),
+                  onPressed: canEdit ? () => _openForm(repair: true) : null,
+                  child: const Text('Reparar'),
+                ),
+                TextButton(
+                  style: TextButton.styleFrom(foregroundColor: error),
+                  onPressed: canEdit ? _confirmDelete : null,
+                  child: const Text('Eliminar'),
+                ),
+              ],
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -490,41 +520,58 @@ class _EntryDetailScreenState extends State<EntryDetailScreen> {
     final notes = _notes;
     final passwordBusy =
         _passwordState == _Reveal.loading || _copyingPassword || _deleting;
+    final styles =
+        Theme.of(context).extension<BovedaText>() ?? BovedaText.standard;
+    final revealed = _passwordState == _Reveal.shown && password != null;
     return [
       _Field(
         label: 'Contraseña',
-        action: Row(
-          mainAxisSize: MainAxisSize.min,
+        // Revelada, la contraseña ocupa todo el ancho y las acciones van
+        // debajo; oculta, a su derecha.
+        actionBelow: revealed,
+        // `Wrap`: con letra grande los dos botones no caben en una línea.
+        action: Wrap(
+          spacing: Space.sm,
+          runSpacing: Space.sm,
+          alignment: WrapAlignment.end,
+          crossAxisAlignment: WrapCrossAlignment.center,
           children: [
             TextButton(
               key: const Key('copy-password'),
+              style: secondaryActionStyle(),
               onPressed: passwordBusy ? null : _copyPassword,
               child: const Text('Copiar'),
             ),
             if (_passwordState == _Reveal.shown)
               TextButton(
+                style: secondaryActionStyle(),
                 onPressed: passwordBusy ? null : _hidePassword,
                 child: const Text('Ocultar'),
               )
             else
               TextButton(
+                style: secondaryActionStyle(),
                 onPressed: passwordBusy ? null : _revealPassword,
                 child: const Text('Mostrar'),
               ),
           ],
         ),
         child: switch (_passwordState) {
-          _Reveal.shown when password != null => Text(
-            password,
-            style: const TextStyle(fontFamily: 'monospace'),
-          ),
+          _Reveal.shown when password != null => SecretText(text: password),
           _Reveal.failed => const _RevealFailed(),
           // Ocho puntos fijos: no delatan el largo. El lector de pantalla
           // dice "Contraseña oculta" en lugar de ocho veces "punto".
           _ => Semantics(
             container: true,
             label: 'Contraseña oculta',
-            child: const ExcludeSemantics(child: Text('••••••••')),
+            child: ExcludeSemantics(
+              child: Text(
+                '••••••••',
+                style: styles.secret.copyWith(
+                  color: Theme.of(context).colorScheme.onSurfaceVariant,
+                ),
+              ),
+            ),
           ),
         },
       ),
@@ -532,10 +579,12 @@ class _EntryDetailScreenState extends State<EntryDetailScreen> {
         label: 'Notas',
         action: _notesState == _Reveal.shown
             ? TextButton(
+                style: secondaryActionStyle(),
                 onPressed: _deleting ? null : _hideNotes,
                 child: const Text('Ocultar notas'),
               )
             : TextButton(
+                style: secondaryActionStyle(),
                 onPressed: _notesState == _Reveal.loading || _deleting
                     ? null
                     : _revealNotes,
@@ -553,11 +602,20 @@ class _EntryDetailScreenState extends State<EntryDetailScreen> {
 
 /// Una fila del detalle: etiqueta, contenido y, a la derecha, su acción.
 class _Field extends StatelessWidget {
-  const _Field({required this.label, required this.child, this.action});
+  const _Field({
+    required this.label,
+    required this.child,
+    this.action,
+    this.actionBelow = false,
+  });
 
   final String label;
   final Widget child;
   final Widget? action;
+
+  /// Pone la acción debajo del valor aunque el texto no sea grande (la
+  /// contraseña revelada ocupa todo el ancho).
+  final bool actionBelow;
 
   @override
   Widget build(BuildContext context) {
@@ -584,7 +642,7 @@ class _Field extends StatelessWidget {
             ? content
             // Con letra grande la acción pasa debajo del valor: a su lado lo
             // dejaría una columna muy estrecha.
-            : isLargeText(context)
+            : (actionBelow || isLargeText(context))
             ? Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
