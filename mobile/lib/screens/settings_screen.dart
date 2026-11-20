@@ -162,7 +162,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
     required String subtitle,
     required VoidCallback onTap,
   }) {
-    final secondary = Theme.of(context).colorScheme.onSurfaceVariant;
     return ListTile(
       key: key,
       tileColor: BovedaColors.surface2,
@@ -173,7 +172,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
       leading: Icon(icon),
       title: Text(title),
       subtitle: Text(subtitle),
-      trailing: Icon(BovedaIcons.chevronRight, color: secondary),
+      // Sin color propio: el `ListTile` lo apaga con la fila desactivada.
+      trailing: const Icon(BovedaIcons.chevronRight),
       enabled: !_busy,
       onTap: _busy ? null : onTap,
     );

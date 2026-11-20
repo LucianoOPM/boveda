@@ -48,6 +48,21 @@ Future<void> pumpSettings(
   );
 }
 
+/// Color con el que se pinta la flecha de la derecha de una fila.
+Color? _chevronColor(WidgetTester tester, Finder tile) => tester
+    .widget<RichText>(
+      find.descendant(
+        of: find.descendant(
+          of: tile,
+          matching: find.byIcon(BovedaIcons.chevronRight),
+        ),
+        matching: find.byType(RichText),
+      ),
+    )
+    .text
+    .style
+    ?.color;
+
 Future<void> settle(WidgetTester tester) async {
   for (var i = 0; i < 10; i++) {
     await tester.pump();
@@ -117,13 +132,7 @@ void main() {
       findsOneWidget,
     );
     for (final tile in [exportTile, importTile]) {
-      final chevron = tester.widget<Icon>(
-        find.descendant(
-          of: tile,
-          matching: find.byIcon(BovedaIcons.chevronRight),
-        ),
-      );
-      expect(chevron.color, BovedaColors.textSecondary);
+      expect(_chevronColor(tester, tile), BovedaColors.textSecondary);
     }
     // Ya no queda ningún ícono de Material.
     expect(find.byIcon(Icons.upload_file), findsNothing);
@@ -167,6 +176,8 @@ void main() {
 
     for (final tile in [exportTile, importTile]) {
       expect(tester.widget<ListTile>(tile).enabled, isFalse);
+      // La flecha se apaga igual que el ícono de la izquierda.
+      expect(_chevronColor(tester, tile), isNot(BovedaColors.textSecondary));
     }
     done.complete(true);
     await settle(tester);
