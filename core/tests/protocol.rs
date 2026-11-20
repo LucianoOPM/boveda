@@ -905,3 +905,514 @@ fn confirm_fails_if_the_phone_sends_something_during_the_dialog() {
     assert!(connection.confirm().is_err());
     drop(stream);
 }
+
+// ---------------------------------------------------------------------------
+// Envío con Noise IK (#96): los dos extremos en el mismo proceso, por
+// `TcpStream` en 127.0.0.1. Solo la API pública.
+// ---------------------------------------------------------------------------
+
+use vault_core::protocol::{
+    AwaitingResponse, MAX_SEND_FRAME_LEN, SendError, SendTimeouts, Sender, receive_send, send_to_pc,
+};
+
+/// La PC tiene la llave 1 (la de `pc_key()`) y el celular emparejado, la 2.
+fn paired_phone(key: &PublicKey) -> bool {
+    *key == secret_keys(2).public()
+}
+
+fn send_quick() -> SendTimeouts {
+    SendTimeouts {
+        step: Duration::from_millis(500),
+        total: Duration::from_secs(4),
+        ack_wait: Duration::from_secs(2),
+    }
+}
+
+fn connected() -> (TcpStream, TcpStream) {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let client = TcpStream::connect(listener.local_addr().unwrap()).unwrap();
+    let (server, _) = listener.accept().unwrap();
+    (client, server)
+}
+
+fn phone_sends(
+    client: TcpStream,
+    text: String,
+    cancel: CancelToken,
+    timeouts: SendTimeouts,
+) -> JoinHandle<Result<AckOutcome, SendError>> {
+    thread::spawn(move || {
+        send_to_pc(
+            client,
+            &secret_keys(2),
+            &pc_key(),
+            &send(&text),
+            &cancel,
+            &timeouts,
+        )
+    })
+}
+
+/// El celular a mano: manda la trama 1 y lee la 2 (la que contesta la PC).
+fn phone_handshake(client: &mut TcpStream) -> (AwaitingResponse, Vec<u8>) {
+    let (waiting, first) = Sender::new(&secret_keys(2), &pc_key())
+        .unwrap()
+        .first_message()
+        .unwrap();
+    client.write_all(&framed(&first)).unwrap();
+    (waiting, read_exact_frame(client))
+}
+
+#[test]
+fn send_succeeds_and_phone_gets_copied() {
+    let (client, server) = connected();
+    let phone = phone_sends(client, "hunter2 ñ".into(), CancelToken::new(), send_quick());
+    let incoming = receive_send(
+        server,
+        &secret_keys(1),
+        paired_phone,
+        &CancelToken::new(),
+        &send_quick(),
+    )
+    .unwrap();
+    assert_eq!(incoming.message().password().expose_secret(), "hunter2 ñ");
+    assert_eq!(incoming.peer(), secret_keys(2).public());
+    incoming.copied().unwrap();
+    assert_eq!(phone.join().unwrap().unwrap(), AckOutcome::Copied);
+}
+
+#[test]
+fn send_with_a_1024_byte_password_succeeds() {
+    let (client, server) = connected();
+    let password = "ñ".repeat(512);
+    assert_eq!(password.len(), 1024);
+    let phone = phone_sends(client, password.clone(), CancelToken::new(), send_quick());
+    let incoming = receive_send(
+        server,
+        &secret_keys(1),
+        paired_phone,
+        &CancelToken::new(),
+        &send_quick(),
+    )
+    .unwrap();
+    assert_eq!(incoming.message().password().expose_secret(), &password);
+    incoming.copied().unwrap();
+    assert_eq!(phone.join().unwrap().unwrap(), AckOutcome::Copied);
+}
+
+#[test]
+fn ack_failed_reaches_the_phone() {
+    let (client, server) = connected();
+    let phone = phone_sends(client, "x".into(), CancelToken::new(), send_quick());
+    let incoming = receive_send(
+        server,
+        &secret_keys(1),
+        paired_phone,
+        &CancelToken::new(),
+        &send_quick(),
+    )
+    .unwrap();
+    incoming.failed().unwrap();
+    assert_eq!(phone.join().unwrap().unwrap(), AckOutcome::Failed);
+}
+
+#[test]
+fn unpaired_phone_gets_closed_and_the_pc_writes_nothing() {
+    // A mano: ni un solo byte de la PC.
+    let (mut client, server) = connected();
+    let pc = thread::spawn(move || {
+        receive_send(
+            server,
+            &secret_keys(1),
+            |_| false,
+            &CancelToken::new(),
+            &send_quick(),
+        )
+        .err()
+    });
+    let (_, first) = Sender::new(&secret_keys(2), &pc_key())
+        .unwrap()
+        .first_message()
+        .unwrap();
+    client.write_all(&framed(&first)).unwrap();
+    assert!(read_until_close(client).is_empty());
+    assert_eq!(pc.join().unwrap(), Some(SendError::NotPaired));
+
+    // Con `send_to_pc`: el mismo `Closed` que un corte de red.
+    let (client, server) = connected();
+    let phone = phone_sends(client, "x".into(), CancelToken::new(), send_quick());
+    let result = receive_send(
+        server,
+        &secret_keys(1),
+        |_| false,
+        &CancelToken::new(),
+        &send_quick(),
+    );
+    assert!(matches!(result, Err(SendError::NotPaired)));
+    assert_eq!(phone.join().unwrap().err(), Some(SendError::Closed));
+}
+
+#[test]
+fn a_phone_unknown_to_the_pc_is_asked_with_its_authenticated_key() {
+    // La PC solo ve la llave que Noise autenticó, la del celular 3.
+    let (client, server) = connected();
+    let thief = thread::spawn(move || {
+        send_to_pc(
+            client,
+            &secret_keys(3),
+            &pc_key(),
+            &send("x"),
+            &CancelToken::new(),
+            &send_quick(),
+        )
+    });
+    let asked = Mutex::new(None);
+    let result = receive_send(
+        server,
+        &secret_keys(1),
+        |key| {
+            *asked.lock().unwrap() = Some(*key);
+            paired_phone(key)
+        },
+        &CancelToken::new(),
+        &send_quick(),
+    );
+    assert!(matches!(result, Err(SendError::NotPaired)));
+    assert_eq!(*asked.lock().unwrap(), Some(secret_keys(3).public()));
+    assert_eq!(thief.join().unwrap().err(), Some(SendError::Closed));
+}
+
+#[test]
+fn replayed_first_frame_gets_a_reply_but_never_a_message() {
+    // Sesión real: el celular legítimo envía y la PC entrega el mensaje. Un
+    // atacante en la red captura sus bytes: la trama 1 y la trama 3.
+    let (waiting, first) = Sender::new(&secret_keys(2), &pc_key())
+        .unwrap()
+        .first_message()
+        .unwrap();
+    let (mut client, server) = connected();
+    let real_pc = thread::spawn(move || {
+        let incoming = receive_send(
+            server,
+            &secret_keys(1),
+            paired_phone,
+            &CancelToken::new(),
+            &send_quick(),
+        )
+        .unwrap();
+        let text = incoming.message().password().expose_secret().to_string();
+        incoming.copied().unwrap();
+        text
+    });
+    client.write_all(&framed(&first)).unwrap();
+    let second = read_exact_frame(&mut client);
+    let (_, captured_third) = waiting.read_second(&second, &send("real")).unwrap();
+    client.write_all(&framed(&captured_third)).unwrap();
+    assert_eq!(real_pc.join().unwrap(), "real");
+
+    // El atacante reenvía la trama 1 a la PC: contesta (con una efímera nueva)...
+    let (mut attacker, server) = connected();
+    let pc = thread::spawn(move || {
+        receive_send(
+            server,
+            &secret_keys(1),
+            paired_phone,
+            &CancelToken::new(),
+            &send_quick(),
+        )
+        .err()
+    });
+    attacker.write_all(&framed(&first)).unwrap();
+    let replayed_second = read_exact_frame(&mut attacker);
+    assert_eq!(replayed_second.len(), 48);
+    assert_ne!(replayed_second, second);
+    // ...pero la trama 3 capturada no descifra con las llaves de esta sesión,
+    // y sin las llaves privadas del celular no puede armar otra.
+    attacker.write_all(&framed(&captured_third)).unwrap();
+    assert_eq!(pc.join().unwrap(), Some(SendError::Handshake));
+}
+
+#[test]
+fn send_frame_from_another_session_delivers_nothing() {
+    // Sesión A: el celular real completa su apretón de manos y cifra su mensaje.
+    let (mut client_a, server_a) = connected();
+    let pc_a = thread::spawn(move || {
+        receive_send(
+            server_a,
+            &secret_keys(1),
+            paired_phone,
+            &CancelToken::new(),
+            &send_quick(),
+        )
+        .err()
+    });
+    let (waiting, second) = phone_handshake(&mut client_a);
+    let (_, third_a) = waiting
+        .read_second(&second, &send("de la sesión A"))
+        .unwrap();
+    // Se retiene sin entregar; la sesión A termina por plazo.
+    // Sesión B: otra conexión de la PC recibe la trama capturada de A.
+    let (mut client_b, server_b) = connected();
+    let pc_b = thread::spawn(move || {
+        receive_send(
+            server_b,
+            &secret_keys(1),
+            paired_phone,
+            &CancelToken::new(),
+            &send_quick(),
+        )
+        .err()
+    });
+    let (_, _second_b) = phone_handshake(&mut client_b);
+    client_b.write_all(&framed(&third_a)).unwrap();
+    assert_eq!(pc_b.join().unwrap(), Some(SendError::Handshake));
+    drop(client_a);
+    assert!(pc_a.join().unwrap().is_some());
+}
+
+#[test]
+fn altered_send_frame_delivers_nothing() {
+    for position in [0usize, 30, 1] {
+        let (mut client, server) = connected();
+        let pc = thread::spawn(move || {
+            receive_send(
+                server,
+                &secret_keys(1),
+                paired_phone,
+                &CancelToken::new(),
+                &send_quick(),
+            )
+            .err()
+        });
+        let (waiting, second) = phone_handshake(&mut client);
+        let (_, mut third) = waiting.read_second(&second, &send("hola")).unwrap();
+        let position = position.min(third.len() - 1);
+        third[position] ^= 0x01;
+        client.write_all(&framed(&third)).unwrap();
+        assert_eq!(pc.join().unwrap(), Some(SendError::Handshake));
+    }
+}
+
+#[test]
+fn late_send_expires_with_short_timeouts_and_delivers_nothing() {
+    let (mut client, server) = connected();
+    let timeouts = SendTimeouts {
+        step: Duration::from_secs(2),
+        total: Duration::from_millis(600),
+        ack_wait: Duration::from_secs(1),
+    };
+    let pc = thread::spawn(move || {
+        receive_send(
+            server,
+            &secret_keys(1),
+            paired_phone,
+            &CancelToken::new(),
+            &timeouts,
+        )
+        .err()
+    });
+    let (waiting, second) = phone_handshake(&mut client);
+    let (_, third) = waiting.read_second(&second, &send("tarde")).unwrap();
+    thread::sleep(Duration::from_millis(900));
+    let _ = client.write_all(&framed(&third));
+    assert_eq!(pc.join().unwrap(), Some(SendError::Expired));
+}
+
+#[test]
+fn oversized_and_zero_length_frames_are_rejected() {
+    let limit = u16::try_from(MAX_SEND_FRAME_LEN + 1).unwrap().to_be_bytes();
+    for (header, expected) in [
+        ([0u8, 0], SendError::Protocol(ProtocolError::Malformed)),
+        (limit, SendError::FrameTooLarge),
+        ([0xFF, 0xFF], SendError::FrameTooLarge),
+    ] {
+        let (mut client, server) = connected();
+        let pc = thread::spawn(move || {
+            receive_send(
+                server,
+                &secret_keys(1),
+                paired_phone,
+                &CancelToken::new(),
+                &send_quick(),
+            )
+            .err()
+        });
+        let _ = phone_handshake(&mut client);
+        // Solo el encabezado: no hay cuerpo que leer ni memoria que reservar.
+        client.write_all(&header).unwrap();
+        assert_eq!(pc.join().unwrap(), Some(expected));
+    }
+}
+
+#[test]
+fn phone_disconnecting_mid_send_closes_the_pc() {
+    let (mut client, server) = connected();
+    let pc = thread::spawn(move || {
+        receive_send(
+            server,
+            &secret_keys(1),
+            paired_phone,
+            &CancelToken::new(),
+            &send_quick(),
+        )
+        .err()
+    });
+    let (waiting, second) = phone_handshake(&mut client);
+    let (_, third) = waiting.read_second(&second, &send("hola")).unwrap();
+    // La mitad de la trama 3 y se corta.
+    client
+        .write_all(&framed(&third)[..third.len() / 2])
+        .unwrap();
+    drop(client);
+    assert_eq!(pc.join().unwrap(), Some(SendError::Closed));
+}
+
+#[test]
+fn pc_disconnecting_mid_send_closes_the_phone() {
+    let (client, server) = connected();
+    let phone = phone_sends(client, "hola".into(), CancelToken::new(), send_quick());
+    let mut server = server;
+    // La PC lee la trama 1, contesta con basura a medias y cierra.
+    let _ = read_exact_frame(&mut server);
+    server.write_all(&[0, 48, 1, 2, 3]).unwrap();
+    drop(server);
+    assert_eq!(phone.join().unwrap().err(), Some(SendError::Closed));
+}
+
+#[test]
+fn second_send_in_the_same_connection_is_not_processed() {
+    let (mut client, server) = connected();
+    let pc = thread::spawn(move || {
+        let incoming = receive_send(
+            server,
+            &secret_keys(1),
+            paired_phone,
+            &CancelToken::new(),
+            &send_quick(),
+        )
+        .unwrap();
+        let text = incoming.message().password().expose_secret().to_string();
+        incoming.copied().unwrap();
+        text
+    });
+    let (waiting, second) = phone_handshake(&mut client);
+    let (_, third) = waiting.read_second(&second, &send("uno")).unwrap();
+    // El mensaje y, pegado, una trama más (aquí, una copia del mismo mensaje).
+    let mut both = framed(&third);
+    both.extend_from_slice(&framed(&third));
+    client.write_all(&both).unwrap();
+    // La PC entrega exactamente uno y cierra.
+    assert_eq!(pc.join().unwrap(), "uno");
+    // El celular recibe, como mucho, la confirmación del primero (cerrar con
+    // datos sin leer puede llegar como reinicio y perderla: ambas son válidas).
+    let received = read_until_close(client);
+    assert!(received.is_empty() || received.len() == 2 + 19);
+}
+
+#[test]
+fn pc_with_another_private_key_never_gets_the_password() {
+    // El celular conoce la llave 1; quien contesta tiene la 4.
+    let (client, server) = connected();
+    let phone = phone_sends(
+        client,
+        "no debe llegar".into(),
+        CancelToken::new(),
+        send_quick(),
+    );
+    let result = receive_send(
+        server,
+        &secret_keys(4),
+        |_| true,
+        &CancelToken::new(),
+        &send_quick(),
+    );
+    assert!(matches!(result, Err(SendError::Handshake)));
+    assert_eq!(phone.join().unwrap().err(), Some(SendError::Closed));
+}
+
+#[test]
+fn forged_second_frame_is_peer_not_authentic_and_phone_sends_nothing_more() {
+    let (client, mut server) = connected();
+    let phone = phone_sends(
+        client,
+        "no debe salir".into(),
+        CancelToken::new(),
+        send_quick(),
+    );
+    let _first = read_exact_frame(&mut server);
+    // Una "PC" que no tiene la llave privada contesta con 48 bytes inventados.
+    server.write_all(&framed(&[0x42; 48])).unwrap();
+    assert_eq!(
+        phone.join().unwrap().err(),
+        Some(SendError::PeerNotAuthentic)
+    );
+    // Nada más sale del celular: solo el cierre.
+    assert!(read_until_close(server).is_empty());
+}
+
+#[test]
+fn cancel_is_effective_on_both_sides() {
+    // PC: un cliente que conecta y no manda nada.
+    let (_client, server) = connected();
+    let cancel = CancelToken::new();
+    let token = cancel.clone();
+    let pc = thread::spawn(move || {
+        let started = Instant::now();
+        let result = receive_send(
+            server,
+            &secret_keys(1),
+            paired_phone,
+            &cancel,
+            &SendTimeouts::default(),
+        );
+        (result.err(), started.elapsed())
+    });
+    thread::sleep(Duration::from_millis(100));
+    token.cancel();
+    let (error, elapsed) = pc.join().unwrap();
+    assert_eq!(error, Some(SendError::Cancelled));
+    assert!(elapsed < Duration::from_secs(1));
+
+    // Celular: una PC que acepta y no contesta.
+    let (client, _server) = connected();
+    let cancel = CancelToken::new();
+    let token = cancel.clone();
+    let phone = phone_sends(client, "x".into(), cancel, SendTimeouts::default());
+    thread::sleep(Duration::from_millis(100));
+    let started = Instant::now();
+    token.cancel();
+    assert_eq!(phone.join().unwrap().err(), Some(SendError::Cancelled));
+    assert!(started.elapsed() < Duration::from_secs(1));
+}
+
+#[test]
+fn password_never_appears_in_debug_or_errors() {
+    let secret = "CENTINELA-contraseña-0451";
+    let (client, server) = connected();
+    let phone = phone_sends(client, secret.into(), CancelToken::new(), send_quick());
+    let incoming = receive_send(
+        server,
+        &secret_keys(1),
+        paired_phone,
+        &CancelToken::new(),
+        &send_quick(),
+    )
+    .unwrap();
+    let shown = format!("{:?} {:?}", incoming.message(), incoming.peer());
+    assert!(!shown.contains(secret) && !shown.contains("0451"));
+    incoming.copied().unwrap();
+    phone.join().unwrap().unwrap();
+
+    for error in [
+        SendError::NotPaired,
+        SendError::Expired,
+        SendError::Handshake,
+        SendError::PeerNotAuthentic,
+        SendError::FrameTooLarge,
+        SendError::Closed,
+        SendError::Timeout,
+        SendError::Cancelled,
+    ] {
+        assert!(!format!("{error} {error:?}").contains(secret));
+    }
+}

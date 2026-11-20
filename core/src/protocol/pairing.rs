@@ -644,14 +644,21 @@ pub fn serve_pairing<S: TimedStream>(
         let refusal = lock(session)?.note_malformed(Instant::now());
         return Err(PairingError::Refused(refusal));
     }
-    let first = read_frame_body(&mut stream, len, deadline, step, cancel)?;
+    let first = read_frame_body(&mut stream, len, MAX_FRAME_LEN, deadline, step, cancel)?;
     let third = lock(session)?
         .accept_first(Instant::now(), &first)
         .map_err(PairingError::Refused)?;
 
-    write_frame(&mut stream, third.second_message(), deadline, step, cancel)?;
+    write_frame(
+        &mut stream,
+        third.second_message(),
+        MAX_FRAME_LEN,
+        deadline,
+        step,
+        cancel,
+    )?;
     let len = read_frame_header(&mut stream, deadline, step, cancel)?;
-    let frame = read_frame_body(&mut stream, len, deadline, step, cancel)?;
+    let frame = read_frame_body(&mut stream, len, MAX_FRAME_LEN, deadline, step, cancel)?;
 
     let now = Instant::now();
     let pending = third
@@ -701,12 +708,26 @@ impl<S: TimedStream> PendingConnection<S> {
         ensure_peer_open(&mut stream)?;
         match pending.accept(Instant::now())? {
             Decision::Accepted { device, frame } => {
-                write_frame(&mut stream, &frame, Instant::now() + step, step, &cancel)?;
+                write_frame(
+                    &mut stream,
+                    &frame,
+                    MAX_FRAME_LEN,
+                    Instant::now() + step,
+                    step,
+                    &cancel,
+                )?;
                 Ok(device)
             }
             Decision::TimedOut { frame } => {
                 // El celular merece enterarse; si no se puede, da igual.
-                let _ = write_frame(&mut stream, &frame, Instant::now() + step, step, &cancel);
+                let _ = write_frame(
+                    &mut stream,
+                    &frame,
+                    MAX_FRAME_LEN,
+                    Instant::now() + step,
+                    step,
+                    &cancel,
+                );
                 Err(PairingError::ConfirmationTimeout)
             }
         }
@@ -721,7 +742,14 @@ impl<S: TimedStream> PendingConnection<S> {
             cancel,
         } = self;
         let frame = pending.reject()?;
-        write_frame(&mut stream, &frame, Instant::now() + step, step, &cancel)
+        write_frame(
+            &mut stream,
+            &frame,
+            MAX_FRAME_LEN,
+            Instant::now() + step,
+            step,
+            &cancel,
+        )
     }
 }
 
@@ -745,11 +773,11 @@ pub fn pair_with_pc<S: TimedStream>(
     let step = timeouts.step;
 
     let (awaiting, first) = Initiator::new(identity, offer, name)?.first_message()?;
-    write_frame(&mut stream, &first, deadline, step, cancel)?;
+    write_frame(&mut stream, &first, MAX_FRAME_LEN, deadline, step, cancel)?;
     let len = read_frame_header(&mut stream, deadline, step, cancel)?;
-    let second = read_frame_body(&mut stream, len, deadline, step, cancel)?;
+    let second = read_frame_body(&mut stream, len, MAX_FRAME_LEN, deadline, step, cancel)?;
     let (reply, third) = awaiting.read_second(&second)?;
-    write_frame(&mut stream, &third, deadline, step, cancel)?;
+    write_frame(&mut stream, &third, MAX_FRAME_LEN, deadline, step, cancel)?;
 
     let wait = timeouts.reply_wait;
     let reply_deadline = Instant::now() + wait;
@@ -759,8 +787,15 @@ pub fn pair_with_pc<S: TimedStream>(
     };
     let len =
         read_frame_header(&mut stream, reply_deadline, wait, cancel).map_err(to_confirmation)?;
-    let frame =
-        read_frame_body(&mut stream, len, reply_deadline, wait, cancel).map_err(to_confirmation)?;
+    let frame = read_frame_body(
+        &mut stream,
+        len,
+        MAX_FRAME_LEN,
+        reply_deadline,
+        wait,
+        cancel,
+    )
+    .map_err(to_confirmation)?;
     reply.read_reply(&frame)
 }
 

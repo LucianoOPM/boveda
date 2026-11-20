@@ -590,7 +590,15 @@ fn shared_session() -> Arc<Mutex<PairingSession>> {
 fn put(stream: &mut Duplex, frame: &[u8]) {
     let cancel = CancelToken::new();
     let far = Instant::now() + Duration::from_secs(5);
-    write_frame(stream, frame, far, Duration::from_secs(5), &cancel).unwrap();
+    write_frame(
+        stream,
+        frame,
+        MAX_FRAME_LEN,
+        far,
+        Duration::from_secs(5),
+        &cancel,
+    )
+    .unwrap();
 }
 
 /// Lee una trama completa de un extremo.
@@ -599,7 +607,7 @@ fn take(stream: &mut Duplex) -> Result<Frame, PairingError> {
     let far = Instant::now() + Duration::from_secs(5);
     let step = Duration::from_secs(5);
     let len = read_frame_header(stream, far, step, &cancel)?;
-    read_frame_body(stream, len, far, step, &cancel)
+    read_frame_body(stream, len, MAX_FRAME_LEN, far, step, &cancel)
 }
 
 fn serve(
