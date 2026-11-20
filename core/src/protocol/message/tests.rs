@@ -447,3 +447,219 @@ fn pairing_offer_encode_buffer_does_not_reallocate() {
         assert_eq!(bytes.capacity(), bytes.len());
     }
 }
+
+// --- SendMessage y Ack ---
+
+fn send(text: &str) -> Result<SendMessage> {
+    SendMessage::new(SecretString::from(text))
+}
+
+/// `versión | tipo | ttl | contraseña` armado a mano; la contraseña lleva su
+/// longitud como varint de uno o dos bytes.
+fn raw_send(ttl: u8, password: &[u8]) -> Vec<u8> {
+    let mut bytes = vec![PROTOCOL_VERSION, 2, ttl];
+    let len = password.len();
+    if len < 128 {
+        bytes.push(len as u8);
+    } else {
+        bytes.push((len & 0x7f) as u8 | 0x80);
+        bytes.push((len >> 7) as u8);
+    }
+    bytes.extend_from_slice(password);
+    bytes
+}
+
+#[test]
+fn send_message_roundtrip() {
+    let message = send("clave-secreta").unwrap();
+    let decoded = SendMessage::decode(&message.encode().unwrap()).unwrap();
+    assert_eq!(decoded.ttl_secs(), 30);
+    assert_eq!(decoded.password().expose_secret(), "clave-secreta");
+}
+
+#[test]
+fn send_message_wire_bytes() {
+    assert_eq!(
+        send("clave").unwrap().encode().unwrap().as_slice(),
+        &[1, 2, 30, 5, b'c', b'l', b'a', b'v', b'e']
+    );
+    assert_eq!(
+        send("\u{e9}").unwrap().encode().unwrap().as_slice(),
+        &[1, 2, 30, 2, 0xC3, 0xA9]
+    );
+}
+
+#[test]
+fn new_sets_ttl_to_30() {
+    assert_eq!(send("x").unwrap().ttl_secs(), SEND_TTL_SECS);
+    assert_eq!(SEND_TTL_SECS, 30);
+}
+
+#[test]
+fn decode_rejects_any_ttl_but_30() {
+    for ttl in [0u8, 1, 29, 31, 255] {
+        assert_eq!(
+            SendMessage::decode(&raw_send(ttl, b"clave")).err(),
+            Some(ProtocolError::InvalidField(InvalidField::Ttl)),
+            "ttl {ttl}"
+        );
+    }
+    assert!(SendMessage::decode(&raw_send(30, b"clave")).is_ok());
+}
+
+#[test]
+fn empty_password_is_rejected() {
+    assert_eq!(
+        send("").err(),
+        Some(ProtocolError::InvalidField(InvalidField::PasswordEmpty))
+    );
+    assert_eq!(
+        SendMessage::decode(&[1, 2, 30, 0]).err(),
+        Some(ProtocolError::InvalidField(InvalidField::PasswordEmpty))
+    );
+}
+
+#[test]
+fn password_of_1024_bytes_is_accepted_and_1025_rejected() {
+    let ok = "a".repeat(1024);
+    let encoded = send(&ok).unwrap().encode().unwrap();
+    assert!(encoded.len() < MAX_MESSAGE_LEN);
+    let decoded = SendMessage::decode(&encoded).unwrap();
+    assert_eq!(decoded.password().expose_secret().len(), 1024);
+
+    let too_long = "a".repeat(1025);
+    assert_eq!(
+        send(&too_long).err(),
+        Some(ProtocolError::InvalidField(InvalidField::PasswordTooLong))
+    );
+    assert_eq!(
+        SendMessage::decode(&raw_send(30, too_long.as_bytes())).err(),
+        Some(ProtocolError::InvalidField(InvalidField::PasswordTooLong))
+    );
+    // El límite se cuenta en bytes, no en caracteres: 513 de 2 bytes pasan de 1024.
+    assert_eq!(
+        send(&"\u{e9}".repeat(513)).err(),
+        Some(ProtocolError::InvalidField(InvalidField::PasswordTooLong))
+    );
+}
+
+#[test]
+fn unicode_passwords_are_unchanged() {
+    let texts = [
+        "  con espacios  ",
+        "\u{e9}",
+        "e\u{301}",
+        "🔐 emoji",
+        "a\u{301}\u{302}\u{303}",
+        "a\0b",
+        "\t\n",
+    ];
+    for text in texts {
+        let decoded = SendMessage::decode(&send(text).unwrap().encode().unwrap()).unwrap();
+        assert_eq!(
+            decoded.password().expose_secret().as_bytes(),
+            text.as_bytes()
+        );
+    }
+    // NFC y NFD de la misma palabra siguen siendo distintas.
+    let nfc = SendMessage::decode(&send("\u{e9}").unwrap().encode().unwrap()).unwrap();
+    let nfd = SendMessage::decode(&send("e\u{301}").unwrap().encode().unwrap()).unwrap();
+    assert_ne!(
+        nfc.password().expose_secret().as_bytes(),
+        nfd.password().expose_secret().as_bytes()
+    );
+}
+
+#[test]
+fn send_message_truncated_prefixes_fail() {
+    let bytes = send("clave larga").unwrap().encode().unwrap();
+    for len in 0..bytes.len() {
+        let error = SendMessage::decode(&bytes[..len]).err().unwrap();
+        assert!(
+            matches!(error, ProtocolError::Truncated | ProtocolError::Malformed),
+            "prefijo de {len} bytes: {error:?}"
+        );
+    }
+}
+
+#[test]
+fn send_message_trailing_bytes_are_rejected() {
+    let mut bytes = send("clave").unwrap().encode().unwrap().to_vec();
+    bytes.push(0);
+    assert_eq!(
+        SendMessage::decode(&bytes).err(),
+        Some(ProtocolError::TrailingBytes)
+    );
+}
+
+#[test]
+fn send_message_rejects_other_kinds_and_versions() {
+    let mut bytes = send("clave").unwrap().encode().unwrap().to_vec();
+    bytes[1] = 3;
+    assert_eq!(
+        SendMessage::decode(&bytes).err(),
+        Some(ProtocolError::UnexpectedKind(3))
+    );
+    bytes[1] = 2;
+    bytes[0] = 7;
+    assert_eq!(
+        SendMessage::decode(&bytes).err(),
+        Some(ProtocolError::UnsupportedVersion(7))
+    );
+}
+
+#[test]
+fn send_message_with_invalid_utf8_is_malformed() {
+    assert_eq!(
+        SendMessage::decode(&[1, 2, 30, 2, 0xff, 0xfe]).err(),
+        Some(ProtocolError::Malformed)
+    );
+}
+
+#[test]
+fn send_message_debug_hides_the_password() {
+    let debug = format!("{:?}", send("contraseña-reconocible").unwrap());
+    assert!(!debug.contains("reconocible"), "{debug}");
+    assert!(debug.contains("30"), "{debug}");
+}
+
+#[test]
+fn send_message_is_zeroize_on_drop() {
+    assert_zeroize_on_drop::<SendMessage>();
+}
+
+#[test]
+fn send_message_encode_buffer_does_not_reallocate() {
+    let bytes = send(&"k".repeat(1000)).unwrap().encode().unwrap();
+    assert_eq!(bytes.capacity(), bytes.len());
+}
+
+#[test]
+fn ack_roundtrip_and_wire_bytes() {
+    for (outcome, byte) in [(AckOutcome::Copied, 0u8), (AckOutcome::Failed, 1)] {
+        let encoded = Ack::new(outcome).encode().unwrap();
+        assert_eq!(encoded.as_slice(), &[1, 3, byte]);
+        assert_eq!(Ack::decode(&encoded).unwrap().outcome(), outcome);
+    }
+}
+
+#[test]
+fn ack_rejects_bad_input() {
+    assert_eq!(
+        Ack::decode(&[1, 3, 9]).err(),
+        Some(ProtocolError::Malformed)
+    );
+    assert_eq!(Ack::decode(&[1, 3]).err(), Some(ProtocolError::Truncated));
+    assert_eq!(
+        Ack::decode(&[1, 3, 0, 0]).err(),
+        Some(ProtocolError::TrailingBytes)
+    );
+    assert_eq!(
+        Ack::decode(&[1, 2, 0]).err(),
+        Some(ProtocolError::UnexpectedKind(2))
+    );
+    assert_eq!(
+        Ack::decode(&[2, 3, 0]).err(),
+        Some(ProtocolError::UnsupportedVersion(2))
+    );
+}

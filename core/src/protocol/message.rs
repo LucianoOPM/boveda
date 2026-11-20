@@ -5,13 +5,10 @@
 //! tamaño, la versión y el tipo antes de leer el cuerpo, y rechaza los bytes
 //! que sobren (`postcard::from_bytes` los ignoraría).
 
-// Hasta que los mensajes (oferta, envío y confirmación) usen estas piezas.
-#![allow(dead_code)]
-
 use std::fmt;
 use std::net::SocketAddr;
 
-use secrecy::{ExposeSecret, ExposeSecretMut, SecretBox};
+use secrecy::{ExposeSecret, ExposeSecretMut, SecretBox, SecretString};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use zeroize::{ZeroizeOnDrop, Zeroizing};
 
@@ -243,6 +240,124 @@ fn validate_address(address: &SocketAddr) -> Result<()> {
         return Err(ProtocolError::InvalidField(InvalidField::Address));
     }
     Ok(())
+}
+
+/// Envío de una contraseña a la PC.
+///
+/// El tiempo de vida es **relativo**: 30 s desde que la PC recibe el mensaje,
+/// sin hora, porque los relojes de los dos equipos no coinciden. Quien borra
+/// el portapapeles a los 30 s es la PC (#98); este campo solo lo declara.
+///
+/// Los bytes de la contraseña no se modifican nunca: sin recortar, sin
+/// normalizar a NFC, sin quitar caracteres de control. Su `Debug` solo muestra
+/// el tiempo de vida.
+#[derive(Serialize, Deserialize)]
+pub struct SendMessage {
+    ttl_secs: u8,
+    #[serde(with = "secret_str")]
+    password: SecretString,
+}
+
+// La garantía la da `SecretString`, que se borra al soltarse. Este marcador
+// solo la hace visible en el tipo.
+impl ZeroizeOnDrop for SendMessage {}
+
+impl SendMessage {
+    /// Arma el envío con el tiempo de vida de 30 s. La contraseña va **por
+    /// valor**, sin copiarla; debe medir de 1 a 1024 bytes UTF-8.
+    pub fn new(password: SecretString) -> Result<Self> {
+        let message = Self {
+            ttl_secs: SEND_TTL_SECS,
+            password,
+        };
+        message.validate()?;
+        Ok(message)
+    }
+
+    /// Tiempo de vida en segundos (siempre 30 en la versión 1).
+    pub fn ttl_secs(&self) -> u8 {
+        self.ttl_secs
+    }
+
+    /// La contraseña.
+    pub fn password(&self) -> &SecretString {
+        &self.password
+    }
+
+    /// Codifica el mensaje (`versión | tipo | cuerpo`) en un búfer de
+    /// capacidad exacta que se borra al soltarse.
+    pub fn encode(&self) -> Result<Zeroizing<Vec<u8>>> {
+        encode_body(Kind::Send, self)
+    }
+
+    /// Decodifica y valida un envío. Si algo falla, la contraseña ya
+    /// decodificada se suelta y se borra.
+    pub fn decode(bytes: &[u8]) -> Result<Self> {
+        let message: Self = decode_body(Kind::Send, bytes)?;
+        message.validate()?;
+        Ok(message)
+    }
+
+    fn validate(&self) -> Result<()> {
+        if self.ttl_secs != SEND_TTL_SECS {
+            return Err(ProtocolError::InvalidField(InvalidField::Ttl));
+        }
+        match self.password.expose_secret().len() {
+            0 => Err(ProtocolError::InvalidField(InvalidField::PasswordEmpty)),
+            len if len > MAX_PASSWORD_BYTES => {
+                Err(ProtocolError::InvalidField(InvalidField::PasswordTooLong))
+            }
+            _ => Ok(()),
+        }
+    }
+}
+
+impl fmt::Debug for SendMessage {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("SendMessage")
+            .field("ttl_secs", &self.ttl_secs)
+            .finish_non_exhaustive()
+    }
+}
+
+/// Resultado de un envío, según la PC.
+///
+/// El rechazo de un dispositivo no emparejado ocurre en el apretón de manos
+/// (#96), no en un mensaje.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum AckOutcome {
+    /// La contraseña quedó en el portapapeles.
+    Copied,
+    /// La PC no pudo escribir en el portapapeles.
+    Failed,
+}
+
+/// Confirmación que la PC devuelve tras un envío.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Ack {
+    outcome: AckOutcome,
+}
+
+impl Ack {
+    /// Arma una confirmación.
+    pub fn new(outcome: AckOutcome) -> Self {
+        Self { outcome }
+    }
+
+    /// Resultado del envío.
+    pub fn outcome(&self) -> AckOutcome {
+        self.outcome
+    }
+
+    /// Codifica la confirmación (`versión | tipo | resultado`).
+    pub fn encode(&self) -> Result<Zeroizing<Vec<u8>>> {
+        encode_body(Kind::Ack, self)
+    }
+
+    /// Decodifica una confirmación.
+    pub fn decode(bytes: &[u8]) -> Result<Self> {
+        decode_body(Kind::Ack, bytes)
+    }
 }
 
 /// Serialización de un `SecretString` para `#[serde(with = "secret_str")]`.

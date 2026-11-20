@@ -9,3 +9,7 @@ mod message;
 
 pub use error::{InvalidField, ProtocolError, Result};
 pub use identity::{Fingerprint, KeyPair, PublicKey};
+pub use message::{
+    Ack, AckOutcome, MAX_MESSAGE_LEN, MAX_PAIRING_OFFER_LEN, MAX_PASSWORD_BYTES, PAIRING_CODE_LEN,
+    PROTOCOL_VERSION, PairingCode, PairingOffer, SEND_TTL_SECS, SendMessage,
+};
