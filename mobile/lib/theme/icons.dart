@@ -23,4 +23,9 @@ abstract final class BovedaIcons {
   /// `trash-2` de Lucide.
   static const trash = IconData(0xe18e, fontFamily: _family);
   static const chevronLeft = IconData(0xe06e, fontFamily: _family);
+  static const download = IconData(0xe0b2, fontFamily: _family);
+
+  /// `refresh-cw` de Lucide.
+  static const refresh = IconData(0xe145, fontFamily: _family);
+  static const chevronRight = IconData(0xe06f, fontFamily: _family);
 }

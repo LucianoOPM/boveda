@@ -5,6 +5,10 @@ import '../services/backup_files.dart';
 import '../services/biometric_service.dart';
 import '../src/rust/api/error.dart';
 import '../src/rust/api/session.dart';
+import '../theme/colors.dart';
+import '../theme/extensions.dart';
+import '../theme/icons.dart';
+import '../theme/spacing.dart';
 import '../widgets/password_field.dart';
 
 /// Resultado del flujo de importar un respaldo (#44).
@@ -214,11 +218,51 @@ class _RestoreDialogState extends State<RestoreDialog> {
     }
   }
 
+  /// La advertencia de que el respaldo reemplaza la bóveda actual: una
+  /// tarjeta `warningContainer` con ícono, como el aviso del primer uso.
+  Widget _warning() {
+    final theme = Theme.of(context);
+    final status = theme.extension<StatusColors>() ?? StatusColors.standard;
+    return Material(
+      key: const Key('restore-warning'),
+      color: BovedaColors.warningContainer,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(Radii.control),
+        side: BorderSide(color: status.warning.withValues(alpha: 0.38)),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(Space.md),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Icon(
+              BovedaIcons.triangleAlert,
+              size: IconSizes.control,
+              color: status.warning,
+            ),
+            const SizedBox(width: Space.sm),
+            Expanded(
+              child: Text(
+                'Reemplaza la bóveda actual.',
+                style: theme.textTheme.bodyMedium?.copyWith(
+                  color: theme.colorScheme.onSurface,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return PopScope(
       canPop: !_busy,
       child: AlertDialog(
+        // Con letra grande o el teclado abierto en una pantalla baja el
+        // contenido se desplaza en vez de desbordar.
+        scrollable: true,
         title: Text(
           widget.replacesVault ? 'Importar respaldo' : 'Restaurar respaldo',
         ),
@@ -227,8 +271,8 @@ class _RestoreDialogState extends State<RestoreDialog> {
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             if (widget.replacesVault) ...[
-              const Text('Reemplaza la bóveda actual.'),
-              const SizedBox(height: 16),
+              _warning(),
+              const SizedBox(height: Space.lg),
             ],
             PasswordField(
               key: const Key('restore-password'),

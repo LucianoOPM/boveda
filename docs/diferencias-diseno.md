@@ -12,8 +12,6 @@ Al llevar una pantalla del diseño a Flutter se trabaja sobre lo que la app ya t
 - **App hoy** es lo que hace el código en `dev`.
 - **Qué haría falta** es lo mínimo que habría que construir; la especificación (`docs/especificacion.md`) manda sobre el diseño.
 
-Pantallas todavía sin restilizar (sus diferencias se agregarán cuando se hagan): Ajustes y diálogo de importar.
-
 ## General
 
 Son las decisiones que `DESIGN.md` (sección 15) da por hechas y que cambian la especificación o el comportamiento.
@@ -87,3 +85,18 @@ Son las decisiones que `DESIGN.md` (sección 15) da por hechas y que cambian la 
 | Los campos obligatorios dicen "Obligatorio" en su texto de ayuda desde el principio (`DESIGN.md` 7.6). | Sin texto de ayuda; los errores "El servicio es obligatorio" y "La contraseña es obligatoria" salen del núcleo al guardar y se muestran en su campo. | Agregar la ayuda "Obligatorio" a Servicio y a la contraseña de una entrada nueva o en reparación (en las dos la contraseña es obligatoria). |
 | Botón del generador junto al campo de contraseña, que abre `EntropyGenerator` en una hoja (etapa 4). | No hay generador. | Todo el generador (D5 y la etapa 4). |
 | El aviso de reparación no está dibujado (ni el board ni `DESIGN.md` 7.6 lo describen). | Un aviso con el texto "La contraseña y las notas de esta entrada están dañadas. Escribe una contraseña nueva para repararla.", en una tarjeta `errorContainer` como las demás entradas dañadas. | Dibujarlo en el diseño. |
+
+## Ajustes y diálogo de importar
+
+| Diseño | App hoy | Qué haría falta |
+| --- | --- | --- |
+| Encabezados de sección en `meta` y color de acento: SEGURIDAD, RESPALDOS, APARIENCIA y DISPOSITIVOS (`DESIGN.md` 7.9). | Dos filas sueltas, sin agrupar ni rotular. | Agrupar las filas bajo sus encabezados cuando haya más de dos secciones con contenido. |
+| Título grande "Ajustes" dentro del cuerpo. | "Ajustes" solo en la barra superior. | Mover el título al cuerpo junto con la barra de navegación (D3). |
+| "Bloqueo automático" con su valor ("Tras 1 minuto"). | La app bloquea por inactividad con un tiempo fijo (`defaultAutoLockTimeout`, 5 minutos) y no hay forma de elegirlo (etapa 4). | Pantalla o selector del tiempo y guardar la elección. |
+| "Huella" con su estado ("Activada"). | La huella se activa en la oferta tras el primer uso y se usa en el desbloqueo; Ajustes no la muestra ni permite apagarla. | Fila con interruptor que active y desactive la huella. |
+| "Cambiar contraseña maestra". | El núcleo tiene `change_master_password`, pero la fachada de `mobile/rust` no lo expone y no hay pantalla (etapa 4). | Exponerlo en la fachada y una pantalla para pedir la actual y la nueva. |
+| Selector de acento con cuatro muestras (D2). | Cyber Lime fijo. | Ver D2 en General. |
+| "Dispositivos": "PC emparejada" con el nombre de la PC (etapa 3). | No hay emparejamiento. | Todo el emparejamiento por QR (etapa 3). |
+| Barra de navegación flotante (D3). | Ajustes se abre desde el engranaje del encabezado. | Ver D3 en General. |
+| Texto de la advertencia del diálogo: "Esto reemplazará tu bóveda actual por la del respaldo." (`DESIGN.md` 7.9). | "Reemplaza la bóveda actual." (también es el subtítulo de la fila "Importar respaldo"). | Cambiar el texto; hoy lo buscan las pruebas de `backup_gate_test.dart`. |
+| Íconos de las filas: `download` (exportar) y `refresh-cw` (importar), con una flecha a la derecha. | Se adoptaron los del diseño. La flecha es solo decoración: las dos filas abren el selector de archivos o un diálogo, no otra pantalla. El de exportar antes era una flecha de subir (`upload_file`). | Nada; si la flecha confunde, se quita. |

@@ -53,6 +53,8 @@ void main() {
       'lib/screens/entry_form_screen.dart',
       'lib/widgets/tags_field.dart',
       'lib/widgets/labeled_field.dart',
+      'lib/screens/settings_screen.dart',
+      'lib/screens/restore_dialog.dart',
     ];
     final offenders = [
       for (final path in migrated)

@@ -4,6 +4,9 @@ import '../services/auto_lock.dart';
 import '../services/backup_files.dart';
 import '../services/biometric_service.dart';
 import '../src/rust/api/session.dart';
+import '../theme/colors.dart';
+import '../theme/icons.dart';
+import '../theme/spacing.dart';
 import 'restore_dialog.dart';
 
 /// Avisa algo al usuario cuando la pantalla que lo origina ya no está (un
@@ -149,27 +152,54 @@ class _SettingsScreenState extends State<SettingsScreen> {
     }
   }
 
+  /// Una fila de Ajustes (`docs/DESIGN.md`, 7.9): un `ListTile` con aspecto de
+  /// tarjeta, el ícono de Lucide a la izquierda y una flecha decorativa a la
+  /// derecha. Conserva su `Key`, sus textos, su `enabled` y su acción.
+  Widget _tile({
+    required Key key,
+    required IconData icon,
+    required String title,
+    required String subtitle,
+    required VoidCallback onTap,
+  }) {
+    return ListTile(
+      key: key,
+      tileColor: BovedaColors.surface2,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(Radii.card),
+        side: const BorderSide(color: BovedaColors.borderCard),
+      ),
+      leading: Icon(icon),
+      title: Text(title),
+      subtitle: Text(subtitle),
+      // Sin color propio: el `ListTile` lo apaga con la fila desactivada.
+      trailing: const Icon(BovedaIcons.chevronRight),
+      enabled: !_busy,
+      onTap: _busy ? null : onTap,
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(title: const Text('Ajustes')),
       body: ListView(
+        padding: const EdgeInsets.all(Space.lg),
         children: [
-          ListTile(
+          _tile(
             key: const Key('settings-export'),
-            leading: const Icon(Icons.upload_file),
-            title: const Text('Exportar respaldo'),
-            subtitle: const Text('Guarda una copia cifrada de la bóveda'),
-            enabled: !_busy,
-            onTap: _busy ? null : _export,
+            icon: BovedaIcons.download,
+            title: 'Exportar respaldo',
+            subtitle: 'Guarda una copia cifrada de la bóveda',
+            onTap: _export,
           ),
-          ListTile(
+          const SizedBox(height: Space.s10),
+          _tile(
             key: const Key('settings-import'),
-            leading: const Icon(Icons.download),
-            title: const Text('Importar respaldo'),
-            subtitle: const Text('Reemplaza la bóveda actual'),
-            enabled: !_busy,
-            onTap: _busy ? null : _import,
+            icon: BovedaIcons.refresh,
+            title: 'Importar respaldo',
+            subtitle: 'Reemplaza la bóveda actual',
+            onTap: _import,
           ),
         ],
       ),
