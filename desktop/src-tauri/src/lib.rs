@@ -10,6 +10,8 @@ mod autostart;
 pub mod clipboard;
 #[cfg(windows)]
 pub mod dpapi;
+#[cfg(windows)]
+pub mod protected_file;
 mod tray;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
