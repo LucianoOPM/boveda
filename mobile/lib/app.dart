@@ -13,6 +13,7 @@ import 'screens/unlock_screen.dart';
 import 'services/auto_lock.dart';
 import 'services/backup_files.dart';
 import 'services/biometric_service.dart';
+import 'services/biometric_unlock.dart';
 import 'src/rust/api/session.dart';
 import 'theme/theme.dart';
 import 'widgets/strength_indicator.dart';
@@ -162,6 +163,11 @@ class _VaultGateState extends State<VaultGate> {
   /// pantalla de desbloqueo está activando la huella con la casilla.
   bool _openWhileLocked = false;
 
+  /// Se espera la huella con la que se reactiva la del respaldo importado:
+  /// la bóveda ya está abierta aunque el estado sea `checking`, así que un
+  /// bloqueo sí debe aplicarse (#86).
+  bool _reenablingBiometric = false;
+
   late final AppLifecycleListener _lifecycle;
 
   /// Temporizador de inactividad; solo corre con la bóveda en pantalla.
@@ -310,14 +316,47 @@ class _VaultGateState extends State<VaultGate> {
   /// desbloqueada. Quita Ajustes y lo apilado, monta pantallas nuevas y sigue
   /// el camino de crear (oferta de la huella o pantalla principal), con el
   /// total de dañadas para el aviso.
-  void _onImported(int damaged) {
+  ///
+  /// Si la huella estaba activa ([reenableBiometric]), se activa de nuevo con
+  /// la llave de la bóveda importada y se entra directo; si el usuario cancela
+  /// o falla, sigue la oferta de siempre (#86).
+  Future<void> _onImported(
+    int damaged, {
+    bool reenableBiometric = false,
+  }) async {
     if (!mounted) return;
     _removeStackedRoutes(Navigator.of(context));
     setState(() {
       _epoch++;
       _state = VaultGateState.checking;
     });
-    _afterCreate(damaged: damaged);
+    if (reenableBiometric) {
+      final epoch = _epoch;
+      _reenablingBiometric = true;
+      final enabled = await _reenableBiometric();
+      // Un bloqueo durante la huella ya montó el desbloqueo (y apagó la
+      // marca): no se monta nada encima ni se toca la de otra importación
+      // más nueva.
+      if (!mounted || epoch != _epoch) return;
+      _reenablingBiometric = false;
+      if (enabled) {
+        _enterUnlocked(VaultGateState.unlocked, damagedEntries: damaged);
+        return;
+      }
+    }
+    await _afterCreate(damaged: damaged);
+  }
+
+  /// Activa la huella con la llave de la bóveda recién importada. `false` si
+  /// el dispositivo ya no la admite, el usuario cancela o algo falla.
+  Future<bool> _reenableBiometric() async {
+    try {
+      if (!await widget.biometric.isAvailable()) return false;
+      final outcome = await enableBiometric(widget.session, widget.biometric);
+      return outcome == EnableOutcome.enabled;
+    } catch (_) {
+      return false;
+    }
   }
 
   /// La importación falló desde Ajustes: la fachada dejó la bóveda bloqueada
@@ -356,6 +395,8 @@ class _VaultGateState extends State<VaultGate> {
     }
     final shouldLock = switch (_state) {
       VaultGateState.unlocked || VaultGateState.offerBiometric => true,
+      // Esperando la huella con la bóveda ya abierta (#86).
+      VaultGateState.checking => _reenablingBiometric,
       VaultGateState.locked => _openWhileLocked,
       _ => false,
     };
@@ -398,6 +439,7 @@ class _VaultGateState extends State<VaultGate> {
     _idle = null;
     _clearAway();
     _openWhileLocked = false;
+    _reenablingBiometric = false;
     unawaited(
       Future.sync(widget.session.lock).then((_) {}, onError: (Object _) {}),
     );

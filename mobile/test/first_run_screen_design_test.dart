@@ -51,7 +51,7 @@ Future<void> pumpScreen(
         files: FakeBackupFiles(),
         onCreated: () {},
         onAlreadyExists: () {},
-        onRestored: (_) {},
+        onRestored: (_, {bool reenableBiometric = false}) {},
       ),
     ),
   );

@@ -18,7 +18,7 @@ Exportar e importar el respaldo cifrado desde la app con el selector de archivos
 - Exportar desde el emulador a una carpeta elegida e importar ese archivo de vuelta recupera todas las entradas.
 - En un emulador limpio, "Restaurar un respaldo" desde el primer uso recupera todas las entradas y sus contraseñas.
 - Importar con la contraseña incorrecta, un archivo que no es una bóveda o una versión no soportada deja la bóveda actual intacta y muestra el error.
-- Tras importar, la huella queda desactivada hasta volver a activarla.
+- Tras importar, la huella queda desactivada. Desde Ajustes, si estaba activa, se reactiva sola con la llave de la bóveda importada (#86, `2026-11-19-huella-tras-importar-design.md`); si no estaba activa, o el usuario cancela la huella, se ofrece activarla.
 - No quedan temporales después de exportar o importar, con éxito o con error.
 - Pruebas de widgets con el puente simulado.
 - `flutter analyze` y `flutter test` pasan; CI en verde.
@@ -47,7 +47,7 @@ Verificado con la guía oficial del SAF (`developer.android.com/training/data-st
 3. **Limpieza de temporales:** los crea solo Kotlin, en `noBackupFilesDir/backup-tmp/`; `MainActivity.onCreate` la vacía antes de que Flutter arranque (ninguna operación puede estar en curso). Cada flujo borra el suyo en un `finally`, y Kotlin también lo borra antes de responder si la copia falla a medias.
 4. **Convivencia con el bloqueo:** `runWithoutAutoLock` (sección propia).
 5. **Errores al importar desde Ajustes (opción a):** la bóveda actual está desbloqueada y la importación fallida la deja bloqueada en Rust; tras cualquier error, la interfaz se bloquea y la pantalla de desbloqueo muestra el motivo. En el primer uso no hay bóveda abierta, así que el error se muestra en el mismo diálogo. La alternativa (b), validar el respaldo sin soltar la bóveda, es la #69 y no entra aquí.
-6. **Tras importar con éxito:** se llama a `biometric.disable()` (borra la copia y la llave del Keystore, que protegían la bóveda anterior) y solo después se ofrece activar la huella.
+6. **Tras importar con éxito:** se llama a `biometric.disable()` (borra la copia y la llave del Keystore, que protegían la bóveda anterior) y solo después se ofrece activar la huella. Desde Ajustes, si estaba activa antes de importar, `VaultGate` la reactiva sola en lugar de ofrecerla (#86).
 7. **Entrada a Ajustes:** un engranaje a la derecha de la búsqueda, que apila `SettingsScreen` en el `Navigator` raíz.
 
 ## Componentes
@@ -150,7 +150,7 @@ Avisar antes de usarlo y cerrarlo al terminar (emulador, `adb` y Gradle).
 | --- | --- | --- |
 | 1 | Exportar a Descargas y a una carpeta propia | El archivo existe con el nombre propuesto; abre como SQLite (`node:sqlite` sobre una copia) |
 | 2 | Exportar con un nombre que ya existe | El sistema agrega "(1)" |
-| 3 | Importar ese archivo con la contraseña correcta | Todas las entradas, con sus contraseñas; la oferta de la huella |
+| 3 | Importar ese archivo con la contraseña correcta | Todas las entradas, con sus contraseñas; la oferta de la huella (o, desde Ajustes con la huella activa, reactivada sola) |
 | 4 | Importar con la contraseña incorrecta | Desbloqueo con el motivo; la bóveda sigue abriendo con la contraseña actual |
 | 5 | Importar un archivo que no es una bóveda (un `.txt`) | Desbloqueo con "El archivo no es una bóveda." |
 | 6 | Importar un archivo de más de 20 MiB | "El archivo es demasiado grande…"; sin temporales |

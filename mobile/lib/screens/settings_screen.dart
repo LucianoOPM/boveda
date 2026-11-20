@@ -36,7 +36,7 @@ class SettingsScreen extends StatefulWidget {
   final BiometricService biometric;
 
   /// La bóveda quedó reemplazada y desbloqueada, con el total de dañadas.
-  final ValueChanged<int> onImported;
+  final ImportedCallback onImported;
 
   /// La importación falló: `VaultGate` bloquea y muestra el motivo.
   final ValueChanged<String> onImportFailed;
@@ -119,8 +119,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
     // desbloqueo, con la contraseña que vale ahora.
     final visible = _visible;
     switch (result) {
-      case RestoreImported(:final damagedEntries) when visible:
-        widget.onImported(damagedEntries);
+      case RestoreImported(:final damagedEntries, :final reenableBiometric)
+          when visible:
+        widget.onImported(damagedEntries, reenableBiometric: reenableBiometric);
       case RestoreImported():
         widget.onNotice(
           'Se importó el respaldo. Desbloquea con la contraseña del respaldo.',

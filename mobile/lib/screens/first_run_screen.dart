@@ -52,7 +52,7 @@ class FirstRunScreen extends StatefulWidget {
 
   /// Se llama cuando un respaldo quedó importado y desbloqueado, con el total
   /// de entradas dañadas.
-  final ValueChanged<int> onRestored;
+  final ImportedCallback onRestored;
 
   @override
   State<FirstRunScreen> createState() => _FirstRunScreenState();
@@ -155,8 +155,8 @@ class _FirstRunScreenState extends State<FirstRunScreen> {
     if (!mounted) return;
     setState(() => _restoring = false);
     switch (result) {
-      case RestoreImported(:final damagedEntries):
-        widget.onRestored(damagedEntries);
+      case RestoreImported(:final damagedEntries, :final reenableBiometric):
+        widget.onRestored(damagedEntries, reenableBiometric: reenableBiometric);
       case RestorePickFailed(:final message):
         setState(() => _error = message);
       case RestoreImportFailed() || null:
