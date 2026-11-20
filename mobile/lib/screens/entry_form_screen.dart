@@ -4,7 +4,13 @@ import 'package:flutter/material.dart';
 import '../src/rust/api/entries.dart';
 import '../src/rust/api/error.dart';
 import '../src/rust/api/session.dart';
+import '../theme/button_styles.dart';
+import '../theme/colors.dart';
+import '../theme/icons.dart';
+import '../theme/spacing.dart';
+import '../theme/text_scale.dart';
 import '../widgets/activity_text_field.dart';
+import '../widgets/labeled_field.dart';
 import '../widgets/password_field.dart';
 import '../widgets/tags_field.dart';
 
@@ -508,23 +514,26 @@ class _EntryFormScreenState extends State<EntryFormScreen> {
     int? maxLines = 1,
     bool copyable = true,
   }) {
-    return ActivityTextField(
-      key: key,
-      copyable: copyable,
-      controller: controller,
-      focusNode: _focus[field],
+    // La etiqueta va encima, en mayúsculas, y el lector de pantalla lee la
+    // original (`LabeledField`); el campo ya no lleva `labelText`.
+    return LabeledField(
+      label: label,
       enabled: enabled,
-      onChanged: (_) => _changed(field),
-      textInputAction: textInputAction,
-      keyboardType: keyboardType,
-      textCapitalization: textCapitalization,
-      autocorrect: false,
-      enableIMEPersonalizedLearning: false,
-      minLines: minLines,
-      maxLines: maxLines,
-      decoration: InputDecoration(
-        labelText: label,
-        errorText: _errorFor(field),
+      child: ActivityTextField(
+        key: key,
+        copyable: copyable,
+        controller: controller,
+        focusNode: _focus[field],
+        enabled: enabled,
+        onChanged: (_) => _changed(field),
+        textInputAction: textInputAction,
+        keyboardType: keyboardType,
+        textCapitalization: textCapitalization,
+        autocorrect: false,
+        enableIMEPersonalizedLearning: false,
+        minLines: minLines,
+        maxLines: maxLines,
+        decoration: InputDecoration(errorText: _errorFor(field)),
       ),
     );
   }
@@ -532,8 +541,10 @@ class _EntryFormScreenState extends State<EntryFormScreen> {
   Widget _passwordSection(bool enabled) {
     if (!_showPassword) {
       return _closedSection(
+        const Key('password-closed'),
         'Contraseña: sin cambios',
         TextButton(
+          style: secondaryActionStyle(),
           onPressed: enabled
               ? () => setState(() => _passwordOpen = true)
               : null,
@@ -569,16 +580,37 @@ class _EntryFormScreenState extends State<EntryFormScreen> {
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           _closedSection(
+            const Key('notes-closed'),
             'Notas: sin cambios',
             TextButton(
+              style: secondaryActionStyle(),
               onPressed: enabled && !_loadingNotes ? _loadNotes : null,
               child: const Text('Editar notas'),
             ),
           ),
           if (_notesLoadFailed)
-            Text(
-              'No se pudieron cargar las notas. Intenta de nuevo.',
-              style: TextStyle(color: Theme.of(context).colorScheme.error),
+            Padding(
+              padding: const EdgeInsets.only(top: Space.sm),
+              child: Row(
+                key: const Key('notes-load-failed'),
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Icon(
+                    BovedaIcons.triangleAlert,
+                    size: IconSizes.inline + 2,
+                    color: Theme.of(context).colorScheme.error,
+                  ),
+                  const SizedBox(width: Space.sm),
+                  Expanded(
+                    child: Text(
+                      'No se pudieron cargar las notas. Intenta de nuevo.',
+                      style: TextStyle(
+                        color: Theme.of(context).colorScheme.error,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
             ),
         ],
       );
@@ -610,12 +642,40 @@ class _EntryFormScreenState extends State<EntryFormScreen> {
 
   /// Una sección del secreto sin abrir: su estado y el botón que la abre,
   /// que no cierra el teclado.
-  Widget _closedSection(String text, Widget button) {
-    return Row(
-      children: [
-        Expanded(child: Text(text)),
-        TextFieldTapRegion(child: button),
-      ],
+  Widget _closedSection(Key key, String text, Widget button) {
+    final label = Text(text, style: Theme.of(context).textTheme.bodyMedium);
+    return Container(
+      key: key,
+      constraints: const BoxConstraints(minHeight: 52),
+      padding: const EdgeInsets.symmetric(
+        horizontal: Space.lg,
+        vertical: Space.sm,
+      ),
+      decoration: BoxDecoration(
+        color: BovedaColors.surface1,
+        borderRadius: BorderRadius.circular(Radii.control),
+        border: Border.all(color: BovedaColors.outline),
+      ),
+      // Con letra grande el botón pasa debajo del texto: a su lado lo dejaría
+      // una columna muy estrecha.
+      child: isLargeText(context)
+          ? Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                label,
+                const SizedBox(height: Space.sm),
+                Align(
+                  alignment: Alignment.centerRight,
+                  child: TextFieldTapRegion(child: button),
+                ),
+              ],
+            )
+          : Row(
+              children: [
+                Expanded(child: label),
+                TextFieldTapRegion(child: button),
+              ],
+            ),
     );
   }
 

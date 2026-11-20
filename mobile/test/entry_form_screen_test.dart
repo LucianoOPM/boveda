@@ -839,11 +839,17 @@ void main() {
       await pumpForm(tester, editing: gmail);
       await tester.tap(service);
       await tester.pump();
+      // Con las etiquetas encima el formulario es más alto: hay que
+      // desplazarse hasta los botones antes de tocarlos.
+      await tester.ensureVisible(editNotes);
+      await tester.pump();
       await tester.tap(editNotes);
       await tester.pump();
       expect(saveEnabled(tester), isFalse);
       expect(fieldHasFocus(tester, service), isTrue);
 
+      await tester.ensureVisible(saveButton);
+      await tester.pump();
       await tester.tap(saveButton);
       await tester.pump();
       expect(fieldHasFocus(tester, service), isTrue);
