@@ -3,6 +3,8 @@
 // `unlock_screen_test.dart`.
 
 import 'dart:async';
+import 'dart:typed_data';
+import 'dart:ui' show Tristate;
 
 import 'package:boveda/screens/unlock_screen.dart';
 import 'package:boveda/services/biometric_service.dart';
@@ -243,6 +245,36 @@ void main() {
     expect(find.byTooltip('Usar huella'), findsOneWidget);
     // El texto de siempre, debajo del círculo.
     expect(find.text('Usar huella'), findsOneWidget);
+  });
+
+  testWidgets('el botón de huella se anuncia como botón y sigue al estado', (
+    tester,
+  ) async {
+    final handle = tester.ensureSemantics();
+    final pending = Completer<Uint8List>();
+    biometric
+      ..enabled = true
+      ..available = true
+      ..onUnlock = () async =>
+          throw const BiometricException(BiometricFailure.canceled);
+    await pumpScreen(tester);
+    await drain(tester);
+
+    var flags = tester.getSemantics(find.byKey(biometricKey)).flagsCollection;
+    expect(flags.isButton, isTrue);
+    expect(flags.isEnabled, Tristate.isTrue);
+
+    // Con una huella en curso el botón sigue siendo botón, pero desactivado.
+    biometric.onUnlock = () => pending.future;
+    await tester.tap(find.byKey(biometricKey));
+    await tester.pump();
+
+    flags = tester.getSemantics(find.byKey(biometricKey)).flagsCollection;
+    expect(flags.isButton, isTrue);
+    expect(flags.isEnabled, Tristate.isFalse);
+    pending.completeError(const BiometricException(BiometricFailure.canceled));
+    await drain(tester);
+    handle.dispose();
   });
 
   testWidgets('con texto al 200 % a 360 dp no hay desbordes', (tester) async {

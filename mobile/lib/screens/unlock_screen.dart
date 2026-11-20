@@ -594,21 +594,28 @@ class _UnlockScreenState extends State<UnlockScreen> {
                         child: SizedBox.square(
                           key: const Key('unlock-biometric'),
                           dimension: 64,
-                          child: Material(
-                            color: BovedaColors.surfaceElevated,
-                            shape: CircleBorder(
-                              side: BorderSide(color: accentColors.border),
-                            ),
-                            child: InkWell(
-                              customBorder: const CircleBorder(),
-                              onTap: _busy ? null : _unlockWithBiometric,
-                              child: Center(
-                                child: Icon(
-                                  BovedaIcons.fingerprint,
-                                  size: 28,
-                                  color: _busy
-                                      ? BovedaColors.textDisabled
-                                      : accent,
+                          // `InkWell` solo agrega la acción de tocar: sin esto
+                          // el lector de pantalla no lo anuncia como botón ni
+                          // como desactivado (era un `OutlinedButton`).
+                          child: Semantics(
+                            button: true,
+                            enabled: !_busy,
+                            child: Material(
+                              color: BovedaColors.surfaceElevated,
+                              shape: CircleBorder(
+                                side: BorderSide(color: accentColors.border),
+                              ),
+                              child: InkWell(
+                                customBorder: const CircleBorder(),
+                                onTap: _busy ? null : _unlockWithBiometric,
+                                child: Center(
+                                  child: Icon(
+                                    BovedaIcons.fingerprint,
+                                    size: 28,
+                                    color: _busy
+                                        ? BovedaColors.textDisabled
+                                        : accent,
+                                  ),
                                 ),
                               ),
                             ),
