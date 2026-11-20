@@ -289,7 +289,7 @@ fn import_future_version_keeps_dest() {
     let dir = tempfile::tempdir().unwrap();
     let (backup, _) = make_backup(dir.path());
     raw(&backup)
-        .execute("UPDATE header SET format_version = 3", [])
+        .execute("UPDATE header SET format_version = 4", [])
         .unwrap();
     let dest = dir.path().join("boveda.db");
     make_current(&dest);
@@ -298,7 +298,7 @@ fn import_future_version_keeps_dest() {
         &backup,
         &dest,
         "respaldo-maestra",
-        Error::UnsupportedFormatVersion(3),
+        Error::UnsupportedFormatVersion(4),
     );
 }
 
@@ -728,7 +728,7 @@ fn import_fails_while_dest_is_open() {
 // --- Respaldos del formato 1 (#34) ---------------------------------------
 
 #[test]
-fn import_v1_backup_installs_v2_with_one_derivation() {
+fn import_v1_backup_installs_v3_with_one_derivation() {
     let (_dir, backup) = fixture_v1_copy();
     let (_dir2, dest) = temp_path();
     let backup_before = fs::read(&backup).unwrap();
@@ -740,15 +740,204 @@ fn import_v1_backup_installs_v2_with_one_derivation() {
 
     assert!(report.corrupt.is_empty());
     assert_eq!(vault.entries().unwrap().len(), 3);
-    assert_eq!(vault.storage.read_header().unwrap().format_version(), 2);
-    // El verificador instalado corresponde a la llave en memoria.
+    assert_eq!(vault.storage.read_header().unwrap().format_version(), 3);
+    // El verificador instalado corresponde a la llave en memoria. Se comprueba
+    // en el archivo ANTES de `export_vault_key`, que repara en silencio un
+    // `key_check` dañado y taparía un verificador mal escrito.
+    assert_installed_key_check_is_v3(&vault);
     let key = vault.export_vault_key().unwrap();
     vault.lock();
     vault.unlock_with_key(key).unwrap();
     drop(vault);
+    assert_eq!(pairing_row_counts(&dest), (0, 0));
     // El respaldo original no cambió: sigue siendo v1.
     assert_eq!(fs::read(&backup).unwrap(), backup_before);
     assert!(!sibling(&dest, IMPORT_SUFFIX).exists());
+}
+
+/// El `key_check` guardado en el archivo se autentica con la llave en memoria
+/// y la versión 3, y no con la 2.
+fn assert_installed_key_check_is_v3(vault: &Vault) {
+    let header = vault.storage.read_header().unwrap();
+    let key = &vault.unlocked().unwrap().key;
+    assert_eq!(header.verify_key(key), Ok(()));
+    assert_eq!(
+        crate::crypto::keys::verify_key_check(key, 2, header.key_check().unwrap()),
+        Err(Error::WrongVaultKey)
+    );
+}
+
+// --- Respaldos de los formatos 2 y 3: sin identidad ni PCs (#93) -----------
+//
+// La garantía es lógica: la bóveda instalada no tiene filas en `identity` ni
+// en `paired_pcs`. No se afirma que los bytes cifrados de la identidad
+// desaparezcan físicamente del archivo.
+
+/// Rellena `identity` (1 fila) y `paired_pcs` (2 filas) de un respaldo v3 con
+/// blobs de longitud válida; no hace falta que se puedan descifrar.
+fn fill_pairing(path: &Path) {
+    raw(path)
+        .execute_batch(
+            "INSERT INTO identity (id, identity_schema_version, data) VALUES (1, 1, zeroblob(72));
+             INSERT INTO paired_pcs (id, pc_schema_version, data) VALUES (randomblob(16), 1, zeroblob(80));
+             INSERT INTO paired_pcs (id, pc_schema_version, data) VALUES (randomblob(16), 1, zeroblob(80));",
+        )
+        .unwrap();
+    assert_eq!(pairing_row_counts(path), (1, 2));
+}
+
+#[test]
+fn import_v3_backup_discards_identity_and_pcs() {
+    let dir = tempfile::tempdir().unwrap();
+    let (backup, entries) = make_backup(dir.path());
+    fill_pairing(&backup);
+    let backup_before = fs::read(&backup).unwrap();
+    let dest = dir.path().join("boveda.db");
+
+    let (vault, report) = Vault::import(&backup, &dest, &password("respaldo-maestra")).unwrap();
+    assert!(report.corrupt.is_empty());
+    assert_eq!(ids_and_services(&vault), entries);
+    assert_eq!(vault.storage.read_header().unwrap().format_version(), 3);
+    drop(vault);
+
+    assert_eq!(pairing_row_counts(&dest), (0, 0));
+    // El respaldo original no se toca y la copia temporal no queda.
+    assert_eq!(fs::read(&backup).unwrap(), backup_before);
+    assert_eq!(pairing_row_counts(&backup), (1, 2));
+    assert!(!sibling(&dest, IMPORT_SUFFIX).exists());
+}
+
+/// Un respaldo manipulado con `TRIGGER ... RAISE(IGNORE)` hace que el
+/// `DELETE` no borre nada y no falle: la importación debe comprobar que las
+/// dos tablas quedaron vacías y, si no, no instalar nada.
+#[test]
+fn import_with_a_trigger_that_ignores_the_delete_installs_nothing() {
+    let triggers = [
+        (
+            "identity",
+            "CREATE TRIGGER keep_identity BEFORE DELETE ON identity \
+             BEGIN SELECT RAISE(IGNORE); END;",
+        ),
+        (
+            "paired_pcs",
+            "CREATE TRIGGER keep_pcs BEFORE DELETE ON paired_pcs \
+             BEGIN SELECT RAISE(IGNORE); END;",
+        ),
+    ];
+    for (label, sql) in triggers {
+        let dir = tempfile::tempdir().unwrap();
+        let (backup, _) = make_backup(dir.path());
+        fill_pairing(&backup);
+        raw(&backup).execute_batch(sql).unwrap();
+
+        let existing = dir.path().join("actual.db");
+        make_current(&existing);
+        let before = fs::read(&existing).unwrap();
+        let err = Vault::import(&backup, &existing, &password("respaldo-maestra"))
+            .err()
+            .unwrap();
+        assert_eq!(err, Error::Storage(StorageErrorKind::Corrupt), "{label}");
+        assert_eq!(fs::read(&existing).unwrap(), before, "{label}");
+        assert!(!sibling(&existing, IMPORT_SUFFIX).exists(), "{label}");
+
+        let missing = dir.path().join("nueva.db");
+        let err = Vault::import(&backup, &missing, &password("respaldo-maestra"))
+            .err()
+            .unwrap();
+        assert_eq!(err, Error::Storage(StorageErrorKind::Corrupt), "{label}");
+        assert!(!missing.exists(), "{label}");
+        assert!(!sibling(&missing, IMPORT_SUFFIX).exists(), "{label}");
+    }
+}
+
+#[test]
+fn import_discards_a_real_identity_and_a_new_one_is_different() {
+    let dir = tempfile::tempdir().unwrap();
+    let origin = dir.path().join("origen.db");
+    let mut source =
+        Vault::create_with_params(&origin, &password("respaldo-maestra"), KdfParams::MIN).unwrap();
+    add_sample(&mut source, "gmail");
+    let old = *source
+        .ensure_identity()
+        .unwrap()
+        .private_key()
+        .expose_secret();
+    let backup = dir.path().join("respaldo.db");
+    source.export(&backup).unwrap();
+    assert_eq!(pairing_row_counts(&backup), (1, 0));
+
+    let dest = dir.path().join("boveda.db");
+    let (mut vault, _) = Vault::import(&backup, &dest, &password("respaldo-maestra")).unwrap();
+    // Ausente (no dañada) y sin generar una nueva al importar.
+    assert!(matches!(vault.identity(), Ok(None)));
+    assert_eq!(pairing_row_counts(&dest), (0, 0));
+    // La identidad nueva se crea al emparejar y no es la del respaldo.
+    let new = *vault
+        .ensure_identity()
+        .unwrap()
+        .private_key()
+        .expose_secret();
+    assert_ne!(new, old);
+}
+
+#[test]
+fn import_v2_backup_installs_v3_with_empty_identity_and_pcs() {
+    let (_dir, backup) = fixture_v2_copy();
+    let (_dir2, dest) = temp_path();
+    let backup_before = fs::read(&backup).unwrap();
+
+    DERIVE_CALLS.with(|c| c.set(0));
+    let (mut vault, report) =
+        Vault::import(&backup, &dest, &password(FIXTURE_V2_PASSWORD)).unwrap();
+    assert_eq!(DERIVE_CALLS.with(|c| c.get()), 1);
+
+    assert!(report.corrupt.is_empty());
+    assert_eq!(vault.entries().unwrap().len(), 3);
+    assert_eq!(vault.storage.read_header().unwrap().format_version(), 3);
+    // El `key_check` instalado es el de la versión 3 y corresponde a la llave
+    // (se comprueba en el archivo antes de `export_vault_key`, que lo repararía).
+    assert_installed_key_check_is_v3(&vault);
+    let key = vault.export_vault_key().unwrap();
+    vault.lock();
+    vault.unlock_with_key(key).unwrap();
+    drop(vault);
+    assert_eq!(pairing_row_counts(&dest), (0, 0));
+    assert_eq!(fs::read(&backup).unwrap(), backup_before);
+    assert!(!sibling(&dest, IMPORT_SUFFIX).exists());
+}
+
+/// Si el borrado falla, no se instala nada: ni sobre una bóveda existente ni
+/// donde no había ninguna. El `TRIGGER` está en el respaldo (v3), así que
+/// también está en la copia temporal.
+#[test]
+fn import_failed_discard_installs_nothing() {
+    let dir = tempfile::tempdir().unwrap();
+    let (backup, _) = make_backup(dir.path());
+    fill_pairing(&backup);
+    raw(&backup)
+        .execute_batch(
+            "CREATE TRIGGER no_delete BEFORE DELETE ON paired_pcs \
+             BEGIN SELECT RAISE(ABORT, 'x'); END;",
+        )
+        .unwrap();
+
+    let existing = dir.path().join("actual.db");
+    make_current(&existing);
+    let before = fs::read(&existing).unwrap();
+    let err = Vault::import(&backup, &existing, &password("respaldo-maestra"))
+        .err()
+        .unwrap();
+    assert!(matches!(err, Error::Storage(_)), "{err:?}");
+    assert_eq!(fs::read(&existing).unwrap(), before);
+    assert!(!sibling(&existing, IMPORT_SUFFIX).exists());
+
+    let missing = dir.path().join("nueva.db");
+    let err = Vault::import(&backup, &missing, &password("respaldo-maestra"))
+        .err()
+        .unwrap();
+    assert!(matches!(err, Error::Storage(_)), "{err:?}");
+    assert!(!missing.exists());
+    assert!(!sibling(&missing, IMPORT_SUFFIX).exists());
 }
 
 #[test]

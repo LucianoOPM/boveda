@@ -36,7 +36,7 @@ boveda/
 │   │   ├── lib.rs
 │   │   ├── error.rs        # tipo Error (thiserror), sin secretos
 │   │   ├── crypto/         # kdf.rs (Argon2), keys.rs, aead.rs, normalize.rs (NFC)
-│   │   ├── vault/          # mod.rs (API), header.rs, entry.rs, storage.rs, backup.rs, password.rs
+│   │   ├── vault/          # mod.rs (API), header.rs, entry.rs, storage.rs, backup.rs, password.rs, identity.rs, paired_pc.rs
 │   │   ├── search.rs
 │   │   └── protocol/       # identity.rs, pairing.rs, message.rs, transport.rs
 │   └── tests/
@@ -106,7 +106,7 @@ Los miembros del workspace se agregan conforme existen: `core` en la etapa 1, `m
 | Módulo | Responsabilidad |
 | --- | --- |
 | `crypto/` | Argon2id (`kdf.rs`, sobre la contraseña maestra en NFC); normalizar la contraseña maestra a NFC con una copia que se borra (`normalize.rs`); generar la llave de bóveda, derivar la llave maestra y cifrar o descifrar con ella la llave de bóveda, y crear y comprobar el verificador `key_check` (`keys.rs`); cifrar y descifrar cada parte de una entrada con XChaCha20-Poly1305 y su dato autenticado (`aead.rs`) |
-| `vault/` | API de la bóveda (`mod.rs`, estructura `Vault`); cabecera (formato 2, con `key_check`): codificarla como dato autenticado, leerla y validarla, y armar la v2 al desbloquear una v1 (`header.rs`); modelo de entrada (`entry.rs`) y entrada cifrada (`entry/sealed.rs`), almacenamiento SQLite con lápidas para las eliminadas y la migración de la cabecera v1 a v2 (`storage.rs`), respaldos: exportar con `VACUUM INTO` e importar validando una copia temporal (`backup.rs`), regla de la contraseña maestra: longitud mínima y fortaleza (`password.rs`) |
+| `vault/` | API de la bóveda (`mod.rs`, estructura `Vault`); cabecera (formato 3; con `key_check` desde la v2): codificarla como dato autenticado con la versión de la cabecera (`HEADER_VERSION`, independiente de `format_version`), leerla y validarla, y armar la v2 al desbloquear una v1 (`header.rs`); identidad del celular, la llave privada X25519 cifrada con la llave de bóveda (`identity.rs`); PCs emparejadas, cifradas con su propio dato autenticado (`paired_pc.rs`); modelo de entrada (`entry.rs`) y entrada cifrada (`entry/sealed.rs`), almacenamiento SQLite con lápidas para las eliminadas, las tablas `identity` y `paired_pcs` (v3) y las migraciones v1→v2 y v2→v3 (`storage.rs`), respaldos: exportar con `VACUUM INTO` e importar validando una copia temporal, que se migra a v3 y se deja sin identidad ni PCs antes del renombrado (`backup.rs`), regla de la contraseña maestra: longitud mínima y fortaleza (`password.rs`) |
 | `search.rs` | Búsqueda tolerante a errores sobre los datos de búsqueda |
 | `protocol/` | Identidades X25519, emparejamiento y envío con Noise (`snow`), descubrimiento mDNS |
 

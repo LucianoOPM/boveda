@@ -1,5 +1,7 @@
 use super::*;
-use vault_core::vault::{Error as E, InvalidEntryField as F, StorageErrorKind as S};
+use vault_core::vault::{
+    Error as E, InvalidEntryField as F, InvalidPairedPcField as P, StorageErrorKind as S,
+};
 
 #[test]
 fn maps_every_core_error() {
@@ -22,6 +24,14 @@ fn maps_every_core_error() {
         (E::WrongVaultKey, VaultError::WrongVaultKey),
         (E::AlreadyExists, VaultError::AlreadyExists),
         (E::PasswordTooShort, VaultError::PasswordTooShort),
+        // Mapeo provisional de la #93: la fachada todavía no expone la
+        // identidad ni las PCs; la #102 define el definitivo.
+        (E::CorruptIdentity, VaultError::StorageCorrupt),
+        (E::CorruptPairedPc, VaultError::StorageCorrupt),
+        (E::PairedPcNotFound, VaultError::EntryNotFound),
+        (E::PairedPcExists, VaultError::AlreadyExists),
+        (E::InvalidPairedPc(P::NameEmpty), VaultError::StorageOther),
+        (E::InvalidPairedPc(P::NameTooLong), VaultError::StorageOther),
         (E::Storage(S::Io), VaultError::StorageIo),
         (E::Storage(S::Busy), VaultError::StorageBusy),
         (E::Storage(S::Corrupt), VaultError::StorageCorrupt),

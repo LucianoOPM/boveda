@@ -18,15 +18,23 @@ use crate::crypto::keys::{self, VAULT_KEY_LEN, VaultKey};
 mod backup;
 pub(crate) mod entry;
 pub(crate) mod header;
+mod identity;
+mod paired_pc;
 mod password;
 pub(crate) mod storage;
 #[cfg(test)]
 pub(crate) mod test_support;
 
-pub use crate::error::{Error, InvalidEntryField, Result, StorageErrorKind};
+pub use crate::error::{Error, InvalidEntryField, InvalidPairedPcField, Result, StorageErrorKind};
 use entry::sealed::SealedEntry;
 pub use entry::{EntryId, SearchData, Secret};
-use header::VaultHeader;
+use header::{FORMAT_VERSION, FORMAT_VERSION_V2, VaultHeader};
+pub use identity::{IDENTITY_KEY_LEN, Identity};
+use paired_pc::PC_SCHEMA_VERSION;
+pub use paired_pc::{
+    NewPairedPc, PAIRED_PC_ID_LEN, PAIRED_PC_NAME_MAX_BYTES, PUBLIC_KEY_LEN, PairedPc, PairedPcId,
+    PairedPcUpdate, PairedPcs,
+};
 use password::require_master_password;
 pub use password::{
     MIN_MASTER_PASSWORD_CHARS, PasswordStrength, STRONG_MASTER_PASSWORD_CHARS, password_strength,
@@ -182,29 +190,35 @@ impl Vault {
     /// secretos no se descifran aquí; uno dañado aparece al usar
     /// [`Vault::reveal`]. Si falla, la bóveda sigue bloqueada.
     ///
-    /// Sobre una bóveda de la versión de formato 1, la migra a la 2 antes de
-    /// cargar las entradas, con una sola derivación de Argon2id y en una
-    /// transacción: abrir no modifica el archivo, pero desbloquear una
-    /// versión 1 sí. Si la migración falla, devuelve el error de
-    /// almacenamiento, la bóveda sigue bloqueada y el archivo sigue siendo
-    /// de la versión 1. Sobre una versión 2 no escribe nada.
+    /// Sobre una bóveda de una versión de formato anterior, la migra a la 3
+    /// antes de cargar las entradas (la 1 pasa por la 2): abrir no modifica
+    /// el archivo, pero desbloquear una versión 1 o 2 sí. Cada paso es una
+    /// transacción y la derivación de Argon2id ocurre una sola vez. Si un
+    /// paso falla, devuelve el error de almacenamiento y la bóveda sigue
+    /// bloqueada; el archivo queda en la última versión confirmada (una v1 que
+    /// migró a v2 y falló en la v3 queda en una v2 válida). Sobre una versión
+    /// 3 no escribe nada.
     ///
     /// Si otra conexión migró la cabecera mientras esta derivaba, no se
     /// sobrescribe: se vuelve a derivar contra la cabecera actual (una
     /// segunda derivación), y si esa conexión cambió la contraseña el
-    /// resultado es [`Error::WrongPassword`], con el archivo ya en la
-    /// versión 2.
+    /// resultado es [`Error::WrongPassword`], con el archivo ya migrado por
+    /// la otra conexión.
     pub fn unlock(&mut self, password: &SecretString) -> Result<UnlockReport> {
         if self.unlocked.is_some() {
             return Err(Error::AlreadyUnlocked);
         }
-        let (key, upgraded) = self.storage.read_header()?.unlock_upgrading(password)?;
-        self.finish_unlock(password, key, upgraded)
+        let header = self.storage.read_header()?;
+        let version = header.format_version();
+        let (key, upgraded) = header.unlock_upgrading(password)?;
+        self.finish_unlock(password, key, version, upgraded)
     }
 
     /// Segunda mitad de [`Vault::unlock`], después de derivar: migra si
-    /// hace falta y carga las entradas. Separada para que las pruebas
-    /// puedan intercalar otra `Vault` entre la derivación y la migración.
+    /// hace falta y carga las entradas. `version` es la versión de formato de
+    /// la cabecera que se leyó antes de derivar. Separada para que las
+    /// pruebas puedan intercalar otra `Vault` entre la derivación y la
+    /// migración.
     ///
     /// Si otra conexión migró la cabecera mientras esta derivaba
     /// ([`Migration::NotNeeded`]), no se sobrescribe nada: se vuelve a leer
@@ -215,17 +229,27 @@ impl Vault {
         &mut self,
         password: &SecretString,
         key: VaultKey,
+        version: u16,
         upgraded: Option<VaultHeader>,
     ) -> Result<UnlockReport> {
-        let key = match upgraded {
-            Some(header) => match self.storage.migrate_header(&header)? {
-                Migration::Done => key,
-                // La llave derivada de la cabecera vieja se suelta (y se
-                // borra); vale la que abre la cabecera actual.
-                Migration::NotNeeded => self.storage.read_header()?.unlock(password)?,
-            },
-            None => key,
-        };
+        let mut key = key;
+        // La llave ya se verificó contra la cabecera actual (segunda
+        // derivación): no hace falta repetirla en el paso siguiente.
+        let mut rederived = false;
+        if let Some(header) = upgraded
+            && self.storage.migrate_header(&header)? == Migration::NotNeeded
+        {
+            // La llave derivada de la cabecera vieja se suelta (y se
+            // borra); vale la que abre la cabecera actual.
+            key = self.storage.read_header()?.unlock(password)?;
+            rederived = true;
+        }
+        if version < FORMAT_VERSION {
+            let key_check = keys::seal_key_check(&key, FORMAT_VERSION)?;
+            if self.storage.migrate_v2_to_v3(&key_check)? == Migration::NotNeeded && !rederived {
+                key = self.storage.read_header()?.unlock(password)?;
+            }
+        }
         let (unlocked, report) = Self::load_entries(&self.storage, key)?;
         self.unlocked = Some(unlocked);
         Ok(report)
@@ -577,6 +601,12 @@ impl Vault {
     /// bóveda de la versión de formato 1 dan [`Error::WrongVaultKey`], y la
     /// bóveda sigue bloqueada.
     ///
+    /// Una bóveda de la versión 2 se migra a la 3 después de verificar la
+    /// llave (una llave equivocada no escribe nada): la migración no necesita
+    /// la contraseña porque no toca `encrypted_key`. Una v3 a la que se le
+    /// bajó `format_version` a mano la rechaza `key_check`, que autentica la
+    /// versión 3.
+    ///
     /// Recibe la llave por valor: si falla, se descarta y se borra de
     /// memoria al soltarse. Quien llama no la recupera: para reintentar,
     /// debe pedirla de nuevo al Keystore.
@@ -584,10 +614,175 @@ impl Vault {
         if self.unlocked.is_some() {
             return Err(Error::AlreadyUnlocked);
         }
-        self.storage.read_header()?.verify_key(&key)?;
+        let header = self.storage.read_header()?;
+        self.finish_unlock_with_key(key, &header)
+    }
+
+    /// Segunda mitad de [`Vault::unlock_with_key`], después de leer la
+    /// cabecera: verifica la llave, migra una v2 y carga las entradas.
+    /// Separada para que las pruebas puedan intercalar otra `Vault` entre la
+    /// lectura de la cabecera y la migración.
+    fn finish_unlock_with_key(
+        &mut self,
+        key: SecretBox<[u8; VAULT_KEY_LEN]>,
+        header: &VaultHeader,
+    ) -> Result<UnlockReport> {
+        header.verify_key(&key)?;
+        if header.format_version() == FORMAT_VERSION_V2 {
+            let key_check = keys::seal_key_check(&key, FORMAT_VERSION)?;
+            if self.storage.migrate_v2_to_v3(&key_check)? == Migration::NotNeeded {
+                // Otra conexión migró antes: se verifica contra la cabecera
+                // actual (v3), no contra la leída.
+                self.storage.read_header()?.verify_key(&key)?;
+            }
+        }
         let (unlocked, report) = Self::load_entries(&self.storage, key)?;
         self.unlocked = Some(unlocked);
         Ok(report)
+    }
+
+    /// La identidad del celular (llave privada X25519), o `None` si todavía
+    /// no hay ninguna: una bóveda sin identidad es válida, y la identidad se
+    /// crea de forma perezosa, al emparejar ([`Vault::ensure_identity`]).
+    ///
+    /// **Ausente y dañada son distintas**: una fila que no se puede leer
+    /// (no se autentica, versión de estructura desconocida o forma
+    /// inesperada) da [`Error::CorruptIdentity`], nunca `Ok(None)`. Exige la
+    /// bóveda desbloqueada. No se carga al desbloquear, así que una identidad
+    /// dañada nunca impide abrir la bóveda ni las entradas.
+    pub fn identity(&self) -> Result<Option<Identity>> {
+        let key = &self.unlocked()?.key;
+        match self.storage.get_identity()? {
+            None => Ok(None),
+            Some(stored) => identity::open(key, stored.version, &stored.sealed).map(Some),
+        }
+    }
+
+    /// La identidad del celular; si no hay ninguna, la crea. Exige la bóveda
+    /// desbloqueada.
+    ///
+    /// Solo crea cuando la identidad está **ausente**. Si existe pero está
+    /// dañada devuelve [`Error::CorruptIdentity`] sin sobrescribirla: las PCs
+    /// ya emparejadas conocen esa llave. Si otra conexión la crea entre la
+    /// lectura y la escritura, devuelve la de esa conexión.
+    pub fn ensure_identity(&mut self) -> Result<Identity> {
+        if let Some(identity) = self.identity()? {
+            return Ok(identity);
+        }
+        let identity = identity::generate()?;
+        self.store_identity(identity)
+    }
+
+    /// Guarda `identity` si no hay ninguna fila y la devuelve; si ya había una
+    /// (otra conexión), devuelve esa.
+    fn store_identity(&mut self, identity: Identity) -> Result<Identity> {
+        let sealed = identity::seal(&self.unlocked()?.key, &identity)?;
+        if self
+            .storage
+            .insert_identity(identity::IDENTITY_SCHEMA_VERSION, &sealed)?
+        {
+            return Ok(identity);
+        }
+        // Ya existía una fila: se lee en vez de sobrescribirla.
+        self.identity()?
+            .ok_or(Error::Storage(StorageErrorKind::Corrupt))
+    }
+
+    /// Las PCs emparejadas, con las filas dañadas aparte: una PC dañada no
+    /// impide leer las demás ni abrir la bóveda. Exige la bóveda desbloqueada.
+    /// No se guardan en la caché de `Unlocked`: se leen del disco cada vez.
+    pub fn paired_pcs(&self) -> Result<PairedPcs> {
+        let key = &self.unlocked()?.key;
+        let listing = self.storage.list_paired_pcs()?;
+        let mut valid = Vec::with_capacity(listing.rows.len());
+        let mut corrupt = listing.corrupt;
+        for stored in listing.rows {
+            match paired_pc::open(key, stored.id, stored.version, &stored.sealed) {
+                Ok(pc) => valid.push(pc),
+                Err(_) => corrupt.push(stored.id),
+            }
+        }
+        Ok(PairedPcs {
+            valid,
+            corrupt,
+            unidentified_corrupt: listing.unidentified_corrupt,
+        })
+    }
+
+    /// Empareja una PC nueva y devuelve su identificador.
+    ///
+    /// El nombre se recorta y debe tener de 1 a 128 bytes
+    /// ([`Error::InvalidPairedPc`]). Una llave pública que ya está en la
+    /// lista da [`Error::PairedPcExists`] (las filas dañadas no cuentan: no
+    /// se pueden leer). `paired_at` sale del reloj ([`Error::Clock`] si no
+    /// es válido). Exige la bóveda desbloqueada.
+    pub fn add_paired_pc(&mut self, new: NewPairedPc) -> Result<PairedPcId> {
+        self.unlocked()?;
+        let name = paired_pc::validate_name(&new.name)?;
+        let now = now_millis()?;
+        if self
+            .paired_pcs()?
+            .valid
+            .iter()
+            .any(|pc| pc.public_key() == &new.public_key)
+        {
+            return Err(Error::PairedPcExists);
+        }
+        let pc = paired_pc::PairedPc::new(
+            PairedPcId::generate()?,
+            new.public_key,
+            name,
+            new.last_ip,
+            now,
+            None,
+        );
+        let sealed = paired_pc::seal(&self.unlocked()?.key, &pc)?;
+        self.storage
+            .insert_paired_pc(pc.id(), PC_SCHEMA_VERSION, &sealed)?;
+        Ok(pc.id())
+    }
+
+    /// Cambia el nombre y o la última IP de una PC. Una IP nueva también fija
+    /// `last_seen_at` con la hora actual. Un nombre no válido da
+    /// [`Error::InvalidPairedPc`] sin escribir; un id inexistente,
+    /// [`Error::PairedPcNotFound`]; una fila dañada, [`Error::CorruptPairedPc`]
+    /// sin escribir. Exige la bóveda desbloqueada.
+    pub fn update_paired_pc(&mut self, id: PairedPcId, update: PairedPcUpdate) -> Result<()> {
+        self.unlocked()?;
+        let name = update
+            .name
+            .as_deref()
+            .map(paired_pc::validate_name)
+            .transpose()?;
+        let now = match update.last_ip {
+            Some(_) => Some(now_millis()?),
+            None => None,
+        };
+        let stored = self
+            .storage
+            .get_paired_pc(id)?
+            .ok_or(Error::PairedPcNotFound)?;
+        let key = &self.unlocked()?.key;
+        let mut pc = paired_pc::open(key, id, stored.version, &stored.sealed)?;
+        pc.apply(name, update.last_ip, now);
+        let sealed = paired_pc::seal(key, &pc)?;
+        self.storage
+            .update_paired_pc(id, PC_SCHEMA_VERSION, &sealed)
+    }
+
+    /// Quita una PC emparejada, también una fila dañada. Un `DELETE` real,
+    /// sin lápida. Un id inexistente da [`Error::PairedPcNotFound`]. Exige la
+    /// bóveda desbloqueada.
+    pub fn remove_paired_pc(&mut self, id: PairedPcId) -> Result<()> {
+        self.unlocked()?;
+        self.storage.delete_paired_pc(id)
+    }
+
+    /// Fija una identidad conocida. Solo para pruebas y para generar la
+    /// bóveda de ejemplo.
+    #[cfg(test)]
+    pub(crate) fn set_identity_for_test(&mut self, key: [u8; 32]) -> Result<()> {
+        self.store_identity(Identity::from_bytes(key)).map(|_| ())
     }
 
     fn unlocked(&self) -> Result<&Unlocked> {

@@ -12,7 +12,7 @@ use zeroize::{ZeroizeOnDrop, Zeroizing};
 
 use crate::error::{Error, InvalidEntryField, Result};
 
-mod flavor;
+pub(crate) mod flavor;
 mod raw;
 pub(crate) mod sealed;
 

@@ -88,10 +88,6 @@ fn altering_header_fields_makes_unlock_fail() {
     let (header, _) = new_header();
     let mut altered_headers = Vec::new();
 
-    let mut version = header.clone();
-    version.format_version += 1;
-    altered_headers.push(("versión", version));
-
     let mut memory = header.clone();
     memory.params.memory_kib += 1024;
     altered_headers.push(("memoria", memory));
@@ -149,8 +145,8 @@ fn from_parts_rejects_unknown_version_algorithm_or_params() {
     };
 
     assert_eq!(
-        rebuild(3, 1, KdfParams::MIN),
-        Some(Error::UnsupportedFormatVersion(3))
+        rebuild(4, 1, KdfParams::MIN),
+        Some(Error::UnsupportedFormatVersion(4))
     );
     assert_eq!(
         rebuild(2, 0, KdfParams::MIN),
@@ -186,11 +182,64 @@ fn rekey_keeps_vault_key() {
 }
 
 #[test]
-fn new_header_is_v2_with_valid_key_check() {
+fn new_header_is_v3_with_valid_key_check() {
     let (header, key) = new_header();
-    assert_eq!(header.format_version(), 2);
+    assert_eq!(header.format_version(), 3);
     assert!(header.key_check().is_some());
     assert_eq!(header.verify_key(&key), Ok(()));
+    // `key_check` autentica la versión 3: con la 2 no se autentica.
+    let check = *header.key_check().unwrap();
+    assert_eq!(
+        keys::verify_key_check(&key, 2, &check),
+        Err(Error::WrongVaultKey)
+    );
+}
+
+#[test]
+fn header_aad_version_is_1_for_v1_and_2_from_v2_on() {
+    assert_eq!(header_aad_version(1), 1);
+    assert_eq!(header_aad_version(2), 2);
+    assert_eq!(header_aad_version(3), 2);
+    assert_eq!(header_aad_version(4), 2);
+    assert_eq!(HEADER_VERSION, 2);
+}
+
+#[test]
+fn v2_associated_data_bytes_are_unchanged() {
+    // Una cabecera v2 existente debe seguir abriendo: su dato autenticado
+    // lleva la versión 2, como antes de la v3.
+    let (header, _) = new_header();
+    let v2 = VaultHeader::from_parts(
+        FORMAT_VERSION_V2,
+        1,
+        header.params(),
+        *header.salt(),
+        header.encrypted_key().clone(),
+        header.key_check().copied(),
+    )
+    .unwrap();
+    assert_eq!(v2.associated_data(), header.associated_data());
+    assert_eq!(v2.associated_data()[0..2], [0x02, 0x00]);
+}
+
+#[test]
+fn format_version_is_not_part_of_the_encrypted_key_associated_data() {
+    // Decisión 1 de la #93: la versión del dato autenticado es la de la
+    // cabecera, no `format_version`. Cambiar la versión de formato de una v3
+    // no hace fallar `unlock`; lo cubre `key_check`, que autentica la 3.
+    let (header, vault_key) = new_header();
+    let downgraded = VaultHeader::from_parts(
+        FORMAT_VERSION_V2,
+        1,
+        header.params(),
+        *header.salt(),
+        header.encrypted_key().clone(),
+        header.key_check().copied(),
+    )
+    .unwrap();
+    let unlocked = downgraded.unlock(&password("correcta")).unwrap();
+    assert_eq!(unlocked.expose_secret(), vault_key.expose_secret());
+    assert_eq!(downgraded.verify_key(&vault_key), Err(Error::WrongVaultKey));
 }
 
 #[test]
@@ -224,6 +273,7 @@ fn from_parts_versions_and_key_check_presence() {
     };
 
     assert!(rebuild(2, Some(check)).is_ok());
+    assert!(rebuild(3, Some(check)).is_ok());
     let v1 = rebuild(1, None).unwrap();
     assert_eq!(v1.format_version(), 1);
     assert_eq!(v1.key_check(), None);
@@ -237,8 +287,12 @@ fn from_parts_versions_and_key_check_presence() {
         Some(Error::Storage(StorageErrorKind::Corrupt))
     );
     assert_eq!(
-        rebuild(3, Some(check)).err(),
-        Some(Error::UnsupportedFormatVersion(3))
+        rebuild(3, None).err(),
+        Some(Error::Storage(StorageErrorKind::Corrupt))
+    );
+    assert_eq!(
+        rebuild(4, Some(check)).err(),
+        Some(Error::UnsupportedFormatVersion(4))
     );
 }
 
@@ -254,9 +308,27 @@ fn v1_header(vault_key: &VaultKey, password_text: &str) -> VaultHeader {
 }
 
 #[test]
-fn unlock_upgrading_v2_returns_no_new_header() {
+fn unlock_upgrading_v3_returns_no_new_header() {
     let (header, vault_key) = new_header();
     let (key, upgraded) = header.unlock_upgrading(&password("correcta")).unwrap();
+    assert_eq!(key.expose_secret(), vault_key.expose_secret());
+    assert!(upgraded.is_none());
+}
+
+#[test]
+fn unlock_upgrading_v2_returns_no_new_header() {
+    // La v2→v3 no vuelve a cifrar `encrypted_key`: la hace `Storage`.
+    let (header, vault_key) = new_header();
+    let v2 = VaultHeader::from_parts(
+        FORMAT_VERSION_V2,
+        1,
+        header.params(),
+        *header.salt(),
+        header.encrypted_key().clone(),
+        header.key_check().copied(),
+    )
+    .unwrap();
+    let (key, upgraded) = v2.unlock_upgrading(&password("correcta")).unwrap();
     assert_eq!(key.expose_secret(), vault_key.expose_secret());
     assert!(upgraded.is_none());
 }

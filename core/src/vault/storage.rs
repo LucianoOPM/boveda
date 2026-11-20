@@ -1,5 +1,6 @@
 //! Almacenamiento SQLite de la bóveda: una tabla de cabecera con una sola
-//! fila y una tabla de entradas.
+//! fila, una tabla de entradas y, desde la versión 3, `identity` (una sola
+//! fila) y `paired_pcs`.
 //!
 //! Este módulo solo mueve bytes y fechas: no cifra, no descifra y no conoce
 //! la llave. Tampoco lee el reloj: cada escritura recibe la hora (`now`, en
@@ -23,7 +24,8 @@ use rusqlite::{Connection, ErrorCode, OpenFlags, TransactionBehavior, params};
 
 use super::entry::sealed::SealedEntry;
 use super::entry::{ENTRY_ID_LEN, EntryId};
-use super::header::{FORMAT_VERSION, FORMAT_VERSION_V1, VaultHeader};
+use super::header::{FORMAT_VERSION, FORMAT_VERSION_V1, FORMAT_VERSION_V2, VaultHeader};
+use super::paired_pc::{PAIRED_PC_ID_LEN, PairedPcId};
 use crate::crypto::aead::EncryptedPart;
 use crate::crypto::kdf::{KdfParams, SALT_LEN};
 use crate::crypto::keys::{ENCRYPTED_KEY_LEN, EncryptedKey, KEY_CHECK_LEN, NONCE_LEN};
@@ -55,8 +57,49 @@ macro_rules! header_v2_columns {
     };
 }
 
-/// Esquema de la versión de formato 2. El de la versión 1 (sin `key_check`)
-/// está en la especificación y en `tests/fixtures/vault-v1.db`.
+/// Columnas de la tabla `identity` de la versión de formato 3. Las usan
+/// `SCHEMA` y la migración desde la versión 2, así que el texto es el mismo.
+macro_rules! identity_columns {
+    () => {
+        "(
+    id                      INTEGER PRIMARY KEY CHECK (id = 1),
+    identity_schema_version INTEGER NOT NULL,
+    data                    BLOB NOT NULL CHECK (length(data) = 72)
+) STRICT"
+    };
+}
+
+/// Columnas de la tabla `paired_pcs` de la versión de formato 3. Ver
+/// [`identity_columns`].
+macro_rules! paired_pcs_columns {
+    () => {
+        "(
+    id                BLOB PRIMARY KEY NOT NULL CHECK (length(id) = 16),
+    pc_schema_version INTEGER NOT NULL,
+    data              BLOB NOT NULL CHECK (length(data) >= 40)
+) STRICT, WITHOUT ROWID"
+    };
+}
+
+/// Las dos tablas que agrega la versión de formato 3. Las crean `SCHEMA` y
+/// la migración desde la versión 2.
+macro_rules! pairing_tables {
+    () => {
+        concat!(
+            "CREATE TABLE identity ",
+            identity_columns!(),
+            ";
+CREATE TABLE paired_pcs ",
+            paired_pcs_columns!(),
+            ";
+",
+        )
+    };
+}
+
+/// Esquema de la versión de formato 3. El de la versión 1 (sin `key_check`)
+/// está en la especificación y en `tests/fixtures/vault-v1.db`; la versión 2
+/// es la 3 sin `identity` ni `paired_pcs`.
 ///
 /// `"header"` va entre comillas para coincidir con lo que deja
 /// `ALTER TABLE ... RENAME` en la migración desde la versión 1: SQLite
@@ -79,16 +122,19 @@ CREATE TABLE entries (
     CHECK ((deleted = 0 AND search IS NOT NULL AND secret IS NOT NULL)
         OR (deleted = 1 AND search IS NULL AND secret IS NULL))
 ) STRICT, WITHOUT ROWID;
-"
+",
+    pairing_tables!(),
 );
 
-/// Resultado de [`Storage::migrate_header`].
+/// Resultado de [`Storage::migrate_header`] (v1→v2) y de
+/// [`Storage::migrate_v2_to_v3`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Migration {
-    /// La cabecera era de la versión 1 y quedó en la 2.
+    /// La cabecera estaba en la versión de origen y quedó en la siguiente
+    /// (1→2 o 2→3).
     Done,
-    /// La cabecera ya no era de la versión 1 al abrir la transacción (otra
-    /// conexión la migró): no se tocó nada.
+    /// La cabecera ya no estaba en la versión de origen al abrir la
+    /// transacción (otra conexión la migró): no se tocó nada.
     NotNeeded,
 }
 
@@ -231,9 +277,9 @@ impl Storage {
         let version =
             u16::try_from(version).map_err(|_| Error::Storage(StorageErrorKind::Corrupt))?;
         // La versión 1 no tiene la columna `key_check`: cada versión conocida
-        // tiene su consulta.
+        // tiene su consulta. La tabla `header` es la misma en la 2 y la 3.
         let sql = match version {
-            FORMAT_VERSION => {
+            FORMAT_VERSION | FORMAT_VERSION_V2 => {
                 "SELECT format_version, kdf_algorithm, kdf_memory_kib, kdf_iterations, \
                  kdf_parallelism, salt, key_nonce, encrypted_key, key_check \
                  FROM header WHERE id = 1"
@@ -288,7 +334,7 @@ impl Storage {
     }
 
     /// Reemplaza la única fila de la cabecera (al cambiar la contraseña
-    /// maestra). La cabecera debe ser de la versión actual, con `key_check`.
+    /// maestra). La cabecera debe tener `key_check` (versión 2 o 3).
     pub(crate) fn replace_header(&mut self, header: &VaultHeader) -> Result<()> {
         let key_check = current_key_check(header)?;
         let tx = self
@@ -360,18 +406,7 @@ impl Storage {
             .conn
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(map_sqlite_error)?;
-        let current: i64 = tx
-            .query_row(
-                "SELECT format_version FROM header WHERE id = 1",
-                [],
-                |row| row.get(0),
-            )
-            // Sin fila de cabecera no hay bóveda: el mismo error que en
-            // `read_header`.
-            .map_err(|e| match e {
-                rusqlite::Error::QueryReturnedNoRows => Error::Storage(StorageErrorKind::Corrupt),
-                other => map_sqlite_error(other),
-            })?;
+        let current = stored_format_version(&tx)?;
         if current != i64::from(FORMAT_VERSION_V1) {
             // Al soltar `tx` sin confirmar, SQLite revierte (no hubo cambios).
             return Ok(Migration::NotNeeded);
@@ -393,11 +428,224 @@ impl Storage {
                 |row| Ok((row.get(0)?, row.get(1)?)),
             )
             .map_err(map_sqlite_error)?;
-        if (version, key_check_len) != (i64::from(FORMAT_VERSION), KEY_CHECK_LEN as i64) {
+        if (version, key_check_len) != (i64::from(FORMAT_VERSION_V2), KEY_CHECK_LEN as i64) {
             return Err(Error::Storage(StorageErrorKind::Corrupt));
         }
         tx.commit().map_err(map_sqlite_error)?;
         Ok(Migration::Done)
+    }
+
+    /// Migra la bóveda de la versión 2 a la 3 (#93): crea `identity` y
+    /// `paired_pcs` y deja `format_version = 3` con el `key_check` de la
+    /// versión 3 (`key_check`, que arma quien llama con la llave de bóveda).
+    ///
+    /// Una sola transacción `IMMEDIATE`. Nunca toca `encrypted_key`, la sal ni
+    /// los parámetros: la tabla `header` no cambia, así que no hay que
+    /// volver a cifrar nada y la migración sirve también cuando solo se tiene
+    /// la llave de bóveda. Tampoco puede revertir un cambio de contraseña de
+    /// otra conexión.
+    ///
+    /// Antes de tocar nada, ya con el candado de escritura, vuelve a leer
+    /// `format_version`: si ya es la 3 (otra conexión migró), no escribe y
+    /// devuelve [`Migration::NotNeeded`]; si no es la 2 ni la 3, o ya existe
+    /// alguna de las dos tablas (una v3 degradada a mano), da
+    /// `Storage(Corrupt)` y se revierte sin escribir.
+    pub(crate) fn migrate_v2_to_v3(
+        &mut self,
+        key_check: &[u8; KEY_CHECK_LEN],
+    ) -> Result<Migration> {
+        let tx = self
+            .conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(map_sqlite_error)?;
+        let current = stored_format_version(&tx)?;
+        if current == i64::from(FORMAT_VERSION) {
+            // Al soltar `tx` sin confirmar, SQLite revierte (no hubo cambios).
+            return Ok(Migration::NotNeeded);
+        }
+        if current != i64::from(FORMAT_VERSION_V2) {
+            return Err(Error::Storage(StorageErrorKind::Corrupt));
+        }
+        upgrade_v2_to_v3(&tx, key_check)?;
+        tx.commit().map_err(map_sqlite_error)?;
+        Ok(Migration::Done)
+    }
+
+    /// Prepara la copia temporal de una importación (#93), en una sola
+    /// transacción `IMMEDIATE`: la migra a la versión 3 si hace falta y le
+    /// borra la identidad y las PCs emparejadas.
+    ///
+    /// `from_v2` es el `key_check` de la versión 3 si la copia validada era de
+    /// la versión 1 o 2 (la 1 ya pasó a la 2): entonces espera la versión 2 y
+    /// la migra. `None` si era de la versión 3: espera la 3. Si la versión que
+    /// lee dentro de la transacción no es la esperada, la copia cambió después
+    /// de validarla y da `Storage(Corrupt)` sin escribir nada: no se instala
+    /// algo distinto de lo validado.
+    ///
+    /// La limpieza es lógica: la bóveda instalada no tiene filas en
+    /// `identity` ni en `paired_pcs`. No promete que los bytes cifrados
+    /// desaparezcan del archivo. Si algo falla, la transacción se revierte.
+    pub(crate) fn prepare_import_copy(
+        &mut self,
+        from_v2: Option<&[u8; KEY_CHECK_LEN]>,
+    ) -> Result<()> {
+        let tx = self
+            .conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(map_sqlite_error)?;
+        let current = stored_format_version(&tx)?;
+        match from_v2 {
+            Some(key_check) => {
+                if current != i64::from(FORMAT_VERSION_V2) {
+                    return Err(Error::Storage(StorageErrorKind::Corrupt));
+                }
+                upgrade_v2_to_v3(&tx, key_check)?;
+            }
+            None => {
+                if current != i64::from(FORMAT_VERSION) {
+                    return Err(Error::Storage(StorageErrorKind::Corrupt));
+                }
+            }
+        }
+        tx.execute_batch("DELETE FROM identity; DELETE FROM paired_pcs;")
+            .map_err(map_sqlite_error)?;
+        // Un respaldo manipulado puede traer un `TRIGGER ... RAISE(IGNORE)`
+        // que hace que el `DELETE` no borre nada y tampoco falle: se comprueba
+        // que de verdad quedaron vacías, y si no, no se instala nada.
+        let remaining: i64 = tx
+            .query_row(
+                "SELECT (SELECT count(*) FROM identity) + (SELECT count(*) FROM paired_pcs)",
+                [],
+                |row| row.get(0),
+            )
+            .map_err(map_sqlite_error)?;
+        if remaining != 0 {
+            return Err(Error::Storage(StorageErrorKind::Corrupt));
+        }
+        tx.commit().map_err(map_sqlite_error)
+    }
+
+    /// La identidad guardada, o `None` si no hay fila (identidad ausente).
+    ///
+    /// Una versión de estructura fuera de `u16` o una columna con otro tipo
+    /// dan [`Error::CorruptIdentity`]: una fila que existe pero no se puede
+    /// leer no es una identidad ausente. Descifrarla corresponde a quien
+    /// llama, que tiene la llave.
+    pub(crate) fn get_identity(&self) -> Result<Option<StoredIdentity>> {
+        let row = self.conn.query_row(
+            "SELECT identity_schema_version, data FROM identity WHERE id = 1",
+            [],
+            |row| Ok((row.get::<_, i64>(0)?, row.get::<_, Vec<u8>>(1)?)),
+        );
+        match row {
+            Ok((version, data)) => Ok(Some(StoredIdentity {
+                version: u16::try_from(version).map_err(|_| Error::CorruptIdentity)?,
+                sealed: EncryptedPart::from_bytes(data),
+            })),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) if is_conversion_error(&e) => Err(Error::CorruptIdentity),
+            Err(e) => Err(map_sqlite_error(e)),
+        }
+    }
+
+    /// Guarda la identidad si todavía no hay ninguna. Devuelve `false` y no
+    /// escribe nada si ya existía una fila (válida o dañada): nunca la
+    /// sobrescribe, ni siquiera si otra conexión la creó entre la lectura y
+    /// esta escritura.
+    pub(crate) fn insert_identity(&mut self, version: u16, data: &EncryptedPart) -> Result<bool> {
+        let changed = self.write(
+            "INSERT OR IGNORE INTO identity (id, identity_schema_version, data) \
+             VALUES (1, ?1, ?2)",
+            params![version, data.as_bytes()],
+        )?;
+        Ok(changed == 1)
+    }
+
+    /// Todas las filas de `paired_pcs`: las legibles (todavía cifradas) y las
+    /// dañadas, por separado. Una fila con un id que no mide 16 bytes o con
+    /// columnas de otro tipo no impide leer las demás.
+    pub(crate) fn list_paired_pcs(&self) -> Result<PcListing> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT id, pc_schema_version, data FROM paired_pcs ORDER BY id")
+            .map_err(map_sqlite_error)?;
+        let rows = stmt.query_map([], read_pc_row).map_err(map_sqlite_error)?;
+
+        let mut listing = PcListing {
+            rows: Vec::new(),
+            corrupt: Vec::new(),
+            unidentified_corrupt: 0,
+        };
+        for outcome in rows {
+            match outcome.map_err(map_sqlite_error)? {
+                PcRowOutcome::Valid(pc) => listing.rows.push(pc),
+                PcRowOutcome::Corrupt(id) => listing.corrupt.push(id),
+                PcRowOutcome::Unidentified => listing.unidentified_corrupt += 1,
+            }
+        }
+        Ok(listing)
+    }
+
+    /// La PC `id`, o `None` si no hay fila. Una fila que existe pero tiene
+    /// columnas ilegibles da [`Error::CorruptPairedPc`], no `None`.
+    pub(crate) fn get_paired_pc(&self, id: PairedPcId) -> Result<Option<StoredPc>> {
+        let row = self.conn.query_row(
+            "SELECT id, pc_schema_version, data FROM paired_pcs WHERE id = ?1",
+            [id.as_bytes().as_slice()],
+            read_pc_row,
+        );
+        match row {
+            Ok(PcRowOutcome::Valid(pc)) => Ok(Some(pc)),
+            Ok(PcRowOutcome::Corrupt(_) | PcRowOutcome::Unidentified) => {
+                Err(Error::CorruptPairedPc)
+            }
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(map_sqlite_error(e)),
+        }
+    }
+
+    /// Agrega una PC. Un id ya usado es un error de almacenamiento y no
+    /// escribe nada.
+    pub(crate) fn insert_paired_pc(
+        &mut self,
+        id: PairedPcId,
+        version: u16,
+        data: &EncryptedPart,
+    ) -> Result<()> {
+        self.write(
+            "INSERT INTO paired_pcs (id, pc_schema_version, data) VALUES (?1, ?2, ?3)",
+            params![id.as_bytes().as_slice(), version, data.as_bytes()],
+        )
+        .map(|_| ())
+    }
+
+    /// Reemplaza los datos de una PC. Sin fila con ese id, da
+    /// [`Error::PairedPcNotFound`].
+    pub(crate) fn update_paired_pc(
+        &mut self,
+        id: PairedPcId,
+        version: u16,
+        data: &EncryptedPart,
+    ) -> Result<()> {
+        match self.write(
+            "UPDATE paired_pcs SET pc_schema_version = ?1, data = ?2 WHERE id = ?3",
+            params![version, data.as_bytes(), id.as_bytes().as_slice()],
+        )? {
+            0 => Err(Error::PairedPcNotFound),
+            _ => Ok(()),
+        }
+    }
+
+    /// Quita una PC (también una fila dañada). Un `DELETE` real: sin lápida.
+    /// Sin fila con ese id, da [`Error::PairedPcNotFound`].
+    pub(crate) fn delete_paired_pc(&mut self, id: PairedPcId) -> Result<()> {
+        match self.write(
+            "DELETE FROM paired_pcs WHERE id = ?1",
+            params![id.as_bytes().as_slice()],
+        )? {
+            0 => Err(Error::PairedPcNotFound),
+            _ => Ok(()),
+        }
     }
 
     /// Copia consistente y compacta de la bóveda en `dest` con `VACUUM INTO`.
@@ -570,6 +818,60 @@ impl Storage {
     }
 }
 
+/// Identidad leída del archivo, todavía cifrada.
+pub(crate) struct StoredIdentity {
+    pub(crate) version: u16,
+    pub(crate) sealed: EncryptedPart,
+}
+
+/// PC emparejada leída del archivo, todavía cifrada.
+pub(crate) struct StoredPc {
+    pub(crate) id: PairedPcId,
+    pub(crate) version: u16,
+    pub(crate) sealed: EncryptedPart,
+}
+
+/// Resultado de listar las PCs: las filas legibles y las dañadas.
+pub(crate) struct PcListing {
+    pub(crate) rows: Vec<StoredPc>,
+    /// Filas dañadas con un id válido de 16 bytes.
+    pub(crate) corrupt: Vec<PairedPcId>,
+    /// Filas dañadas sin un id válido.
+    pub(crate) unidentified_corrupt: usize,
+}
+
+/// Lo que se obtuvo de una fila de `paired_pcs`.
+enum PcRowOutcome {
+    Valid(StoredPc),
+    Corrupt(PairedPcId),
+    Unidentified,
+}
+
+/// Lee una fila de `paired_pcs` (`id`, versión, `data`). Los errores de
+/// conversión son daños de la fila, no del archivo: se convierten en
+/// `Corrupt` o `Unidentified` y su valor se descarta. Los demás errores se
+/// propagan.
+fn read_pc_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<PcRowOutcome> {
+    let id = match row.get::<_, Vec<u8>>(0) {
+        Ok(bytes) => match <[u8; PAIRED_PC_ID_LEN]>::try_from(bytes) {
+            Ok(bytes) => PairedPcId::from_bytes(bytes),
+            Err(_) => return Ok(PcRowOutcome::Unidentified),
+        },
+        Err(e) if is_conversion_error(&e) => return Ok(PcRowOutcome::Unidentified),
+        Err(e) => return Err(e),
+    };
+    let fields = (|| Ok((row.get::<_, u16>(1)?, row.get::<_, Vec<u8>>(2)?)))();
+    match fields {
+        Ok((version, data)) => Ok(PcRowOutcome::Valid(StoredPc {
+            id,
+            version,
+            sealed: EncryptedPart::from_bytes(data),
+        })),
+        Err(e) if is_conversion_error(&e) => Ok(PcRowOutcome::Corrupt(id)),
+        Err(e) => Err(e),
+    }
+}
+
 /// Entrada viva leída del archivo.
 #[derive(Debug)]
 pub(crate) struct StoredEntry {
@@ -687,11 +989,73 @@ impl HeaderTable {
     }
 }
 
-/// `key_check` de una cabecera de la versión actual. Una cabecera sin él
+/// `format_version` guardada en la cabecera. Sin fila no hay bóveda: da
+/// `Storage(Corrupt)`, como `read_header`.
+fn stored_format_version(conn: &Connection) -> Result<i64> {
+    conn.query_row(
+        "SELECT format_version FROM header WHERE id = 1",
+        [],
+        |row| row.get(0),
+    )
+    .map_err(|e| match e {
+        rusqlite::Error::QueryReturnedNoRows => Error::Storage(StorageErrorKind::Corrupt),
+        other => map_sqlite_error(other),
+    })
+}
+
+/// Pasos de la migración de la versión 2 a la 3 dentro de la transacción de
+/// quien llama: crea las dos tablas (que no deben existir) y sube
+/// `format_version` con el nuevo `key_check`. La versión de origen ya la
+/// comprobó quien llama.
+fn upgrade_v2_to_v3(conn: &Connection, key_check: &[u8; KEY_CHECK_LEN]) -> Result<()> {
+    const COUNT_PAIRING_TABLES: &str = "SELECT count(*) FROM sqlite_schema \
+         WHERE type = 'table' AND name IN ('identity', 'paired_pcs')";
+    let corrupt = || Error::Storage(StorageErrorKind::Corrupt);
+
+    let existing: i64 = conn
+        .query_row(COUNT_PAIRING_TABLES, [], |row| row.get(0))
+        .map_err(map_sqlite_error)?;
+    if existing != 0 {
+        return Err(corrupt());
+    }
+    conn.execute_batch(pairing_tables!())
+        .map_err(map_sqlite_error)?;
+    let changed = conn
+        .execute(
+            "UPDATE header SET format_version = ?1, key_check = ?2 \
+             WHERE id = 1 AND format_version = ?3",
+            params![FORMAT_VERSION, key_check.as_slice(), FORMAT_VERSION_V2],
+        )
+        .map_err(map_sqlite_error)?;
+    if changed != 1 {
+        return Err(corrupt());
+    }
+
+    let (version, key_check_len): (i64, i64) = conn
+        .query_row(
+            "SELECT format_version, length(key_check) FROM header WHERE id = 1",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .map_err(map_sqlite_error)?;
+    let tables: i64 = conn
+        .query_row(COUNT_PAIRING_TABLES, [], |row| row.get(0))
+        .map_err(map_sqlite_error)?;
+    if (version, key_check_len, tables) != (i64::from(FORMAT_VERSION), KEY_CHECK_LEN as i64, 2) {
+        return Err(corrupt());
+    }
+    Ok(())
+}
+
+/// `key_check` de una cabecera de la versión 2 o 3. Una cabecera sin él
 /// (de la versión 1) no se puede escribir: da `Storage(Corrupt)`.
 fn current_key_check(header: &VaultHeader) -> Result<&[u8; KEY_CHECK_LEN]> {
     match header.key_check() {
-        Some(key_check) if header.format_version() == FORMAT_VERSION => Ok(key_check),
+        Some(key_check)
+            if matches!(header.format_version(), FORMAT_VERSION_V2 | FORMAT_VERSION) =>
+        {
+            Ok(key_check)
+        }
         _ => Err(Error::Storage(StorageErrorKind::Corrupt)),
     }
 }

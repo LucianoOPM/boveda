@@ -217,3 +217,80 @@ mod props {
         }
     }
 }
+
+// --- Cifrado con dato autenticado propio (#93) ---
+
+const AD: &[u8] = b"boveda-prueba|dato";
+
+#[test]
+fn seal_with_ad_round_trips() {
+    let sealed = seal_with_ad(&key(1), AD, b"hola").unwrap();
+    assert_eq!(sealed.as_bytes().len(), 24 + 4 + 16);
+    let plain = open_with_ad(&key(1), AD, &sealed).unwrap();
+    assert_eq!(plain.as_slice(), b"hola");
+}
+
+#[test]
+fn open_with_ad_rejects_other_associated_data() {
+    let sealed = seal_with_ad(&key(1), AD, b"hola").unwrap();
+    assert_eq!(
+        open_with_ad(&key(1), b"boveda-prueba|otro", &sealed).err(),
+        Some(Error::CorruptEntry)
+    );
+}
+
+#[test]
+fn open_with_ad_rejects_other_key() {
+    let sealed = seal_with_ad(&key(1), AD, b"hola").unwrap();
+    assert_eq!(
+        open_with_ad(&key(2), AD, &sealed).err(),
+        Some(Error::CorruptEntry)
+    );
+}
+
+#[test]
+fn open_with_ad_rejects_every_flipped_byte() {
+    let sealed = seal_with_ad(&key(1), AD, b"hola").unwrap();
+    for i in 0..sealed.as_bytes().len() {
+        let mut bytes = sealed.as_bytes().to_vec();
+        bytes[i] ^= 0x01;
+        assert_eq!(
+            open_with_ad(&key(1), AD, &EncryptedPart::from_bytes(bytes)).err(),
+            Some(Error::CorruptEntry),
+            "byte {i}"
+        );
+    }
+}
+
+#[test]
+fn open_with_ad_rejects_short_input() {
+    let short = EncryptedPart::from_bytes(vec![0; MIN_SEALED_LEN - 1]);
+    assert_eq!(
+        open_with_ad(&key(1), AD, &short).err(),
+        Some(Error::CorruptEntry)
+    );
+}
+
+#[test]
+fn two_seals_with_ad_use_different_nonces() {
+    let first = seal_with_ad(&key(1), AD, b"igual").unwrap();
+    let second = seal_with_ad(&key(1), AD, b"igual").unwrap();
+    assert_ne!(
+        &first.as_bytes()[..NONCE_LEN],
+        &second.as_bytes()[..NONCE_LEN]
+    );
+}
+
+#[test]
+fn seal_part_and_seal_with_ad_are_interchangeable() {
+    // `seal_part` es `seal_with_ad` con el dato autenticado de la entrada: el
+    // formato en disco de las entradas no cambia.
+    let ad = associated_data(&ID, V, Part::Secret);
+    let by_ad = seal_with_ad(&key(1), &ad, b"hola").unwrap();
+    let plain = open_part(&key(1), &ID, V, Part::Secret, &by_ad).unwrap();
+    assert_eq!(plain.as_slice(), b"hola");
+
+    let by_part = seal(b"hola");
+    let plain = open_with_ad(&key(1), &ad, &by_part).unwrap();
+    assert_eq!(plain.as_slice(), b"hola");
+}

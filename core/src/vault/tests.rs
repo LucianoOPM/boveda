@@ -1,6 +1,7 @@
 //! Pruebas unitarias de la API `Vault` (`vault/mod.rs`).
 
 use std::fs;
+use std::net::IpAddr;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, UNIX_EPOCH};
 
@@ -1124,7 +1125,7 @@ fn fill_fixture(vault: &mut Vault) {
 /// Crea la bóveda de ejemplo `name` en `core/tests/fixtures/` con
 /// `KdfParams::MIN`. Si el archivo ya existe, falla a propósito con
 /// `AlreadyExists` sin tocarlo.
-fn generate_fixture(name: &str, fixture_password: &str) {
+fn generate_fixture(name: &str, fixture_password: &str) -> Vault {
     // Ruta absoluta, como exigen las reglas de rutas (`SQLITE_USE_URI`).
     let path = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("tests/fixtures")
@@ -1134,6 +1135,7 @@ fn generate_fixture(name: &str, fixture_password: &str) {
     let mut vault =
         Vault::create_with_params(&path, &password(fixture_password), KdfParams::MIN).unwrap();
     fill_fixture(&mut vault);
+    vault
 }
 
 /// Generó `core/tests/fixtures/vault-v1.db`, la bóveda de ejemplo del
@@ -1149,12 +1151,8 @@ fn generate_fixture(name: &str, fixture_password: &str) {
 #[test]
 #[ignore = "registro: generó vault-v1.db con el formato 1; ya no lo reproduce"]
 fn generate_fixture_v1() {
-    generate_fixture("vault-v1.db", FIXTURE_V1_PASSWORD);
+    drop(generate_fixture("vault-v1.db", FIXTURE_V1_PASSWORD));
 }
-
-/// Contraseña de prueba de `core/tests/fixtures/vault-v2.db`. Se repite en
-/// `core/tests/vault.rs`, que no ve el código `cfg(test)` del crate.
-const FIXTURE_V2_PASSWORD: &str = "prueba-bóveda-v2";
 
 /// Genera `core/tests/fixtures/vault-v2.db`, la bóveda de ejemplo del
 /// formato 2, con el mismo contenido que la del formato 1.
@@ -1168,13 +1166,53 @@ const FIXTURE_V2_PASSWORD: &str = "prueba-bóveda-v2";
 #[test]
 #[ignore = "solo al introducir una versión de formato nueva"]
 fn generate_fixture_v2() {
-    generate_fixture("vault-v2.db", FIXTURE_V2_PASSWORD);
+    drop(generate_fixture("vault-v2.db", FIXTURE_V2_PASSWORD));
+}
+
+/// Genera `core/tests/fixtures/vault-v3.db`, la bóveda de ejemplo del
+/// formato 3: el mismo contenido que las anteriores, una identidad fija
+/// (`[7u8; 32]`) y dos PCs emparejadas.
+///
+/// Se ejecutó una sola vez:
+/// `cargo test -p vault-core --lib -- --ignored --exact vault::tests::generate_fixture_v3`
+///
+/// Nunca con `--ignored` sin filtro: también correría los demás generadores.
+#[test]
+#[ignore = "solo al introducir una versión de formato nueva"]
+fn generate_fixture_v3() {
+    let mut vault = generate_fixture("vault-v3.db", FIXTURE_V3_PASSWORD);
+    vault.set_identity_for_test([0x07; 32]).unwrap();
+
+    // Una PC con IP (y por eso con fecha de la última vez) y otra sin IP.
+    let desktop = vault
+        .add_paired_pc(NewPairedPc {
+            public_key: [0x11; 32],
+            name: "Escritorio".to_owned(),
+            last_ip: None,
+        })
+        .unwrap();
+    vault
+        .update_paired_pc(
+            desktop,
+            PairedPcUpdate {
+                name: None,
+                last_ip: Some("192.168.1.50".parse().unwrap()),
+            },
+        )
+        .unwrap();
+    vault
+        .add_paired_pc(NewPairedPc {
+            public_key: [0x22; 32],
+            name: "Portátil".to_owned(),
+            last_ip: None,
+        })
+        .unwrap();
 }
 
 // --- Migración del formato 1 al 2 (#34) ----------------------------------
 
 #[test]
-fn unlock_migrates_v1_with_one_derivation() {
+fn unlock_migrates_v1_to_v3_with_one_derivation() {
     let (_dir, path) = fixture_v1_copy();
     let mut vault = Vault::open(&path).unwrap();
     assert_eq!(vault.storage.read_header().unwrap().format_version(), 1);
@@ -1187,25 +1225,33 @@ fn unlock_migrates_v1_with_one_derivation() {
     assert_eq!(report.unidentified_corrupt, 0);
     assert_eq!(vault.entries().unwrap().len(), 3);
     let header = vault.storage.read_header().unwrap();
-    assert_eq!(header.format_version(), 2);
+    assert_eq!(header.format_version(), 3);
     assert_eq!(header.verify_key(&vault.unlocked().unwrap().key), Ok(()));
+    drop(vault);
+    assert_eq!(pairing_row_counts(&path), (0, 0));
 }
 
 #[test]
-fn migrated_schema_equals_created_schema() {
-    let (_dir, migrated) = fixture_v1_copy();
-    let mut vault = Vault::open(&migrated).unwrap();
-    vault.unlock(&password(FIXTURE_V1_PASSWORD)).unwrap();
-    drop(vault);
-
+fn migrated_schema_equals_created_schema_from_v1_and_from_v2() {
     let (_dir2, created) = temp_path();
     drop(Vault::create_with_params(&created, &password("p-de-prueba-12"), KdfParams::MIN).unwrap());
 
-    assert_eq!(schema_of(&migrated), schema_of(&created));
-    let integrity: String = raw(&migrated)
-        .query_row("PRAGMA integrity_check", [], |row| row.get(0))
-        .unwrap();
-    assert_eq!(integrity, "ok");
+    let (_dir1, from_v1) = fixture_v1_copy();
+    let (_dir_2, from_v2) = fixture_v2_copy();
+    for (path, pw) in [
+        (&from_v1, FIXTURE_V1_PASSWORD),
+        (&from_v2, FIXTURE_V2_PASSWORD),
+    ] {
+        let mut vault = Vault::open(path).unwrap();
+        vault.unlock(&password(pw)).unwrap();
+        drop(vault);
+
+        assert_eq!(schema_of(path), schema_of(&created));
+        let integrity: String = raw(path)
+            .query_row("PRAGMA integrity_check", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(integrity, "ok");
+    }
 }
 
 #[test]
@@ -1288,13 +1334,211 @@ fn wrong_password_on_v1_writes_nothing() {
 }
 
 #[test]
-fn v2_unlock_writes_nothing() {
+fn v3_unlock_writes_nothing() {
     let (_dir, path, mut vault) = new_vault();
+    assert_eq!(vault.storage.read_header().unwrap().format_version(), 3);
     vault.lock();
     let before = fs::read(&path).unwrap();
     relock(&mut vault);
     drop(vault);
     assert_eq!(fs::read(&path).unwrap(), before);
+}
+
+// --- Migración del formato 2 al 3 (#93) ----------------------------------
+
+/// Llave de bóveda de `vault-v2.db`, sacada de una copia desbloqueada con
+/// contraseña (lo que el Keystore habría guardado).
+fn fixture_v2_vault_key() -> SecretBox<[u8; 32]> {
+    let (_dir, path) = fixture_v2_copy();
+    let mut vault = Vault::open(&path).unwrap();
+    vault.unlock(&password(FIXTURE_V2_PASSWORD)).unwrap();
+    vault.export_vault_key().unwrap()
+}
+
+#[test]
+fn unlock_migrates_v2_to_v3_without_identity() {
+    let (_dir, path) = fixture_v2_copy();
+    let mut vault = Vault::open(&path).unwrap();
+    assert_eq!(vault.storage.read_header().unwrap().format_version(), 2);
+
+    DERIVE_CALLS.with(|c| c.set(0));
+    let report = vault.unlock(&password(FIXTURE_V2_PASSWORD)).unwrap();
+    assert_eq!(DERIVE_CALLS.with(|c| c.get()), 1);
+
+    assert!(report.corrupt.is_empty());
+    assert_eq!(vault.entries().unwrap().len(), 3);
+    let header = vault.storage.read_header().unwrap();
+    let key = &vault.unlocked().unwrap().key;
+    assert_eq!(header.format_version(), 3);
+    assert_eq!(header.verify_key(key), Ok(()));
+    // `key_check` quedó regenerado para la versión 3: con la 2 no se autentica.
+    assert_eq!(
+        crate::crypto::keys::verify_key_check(key, 2, header.key_check().unwrap()),
+        Err(Error::WrongVaultKey)
+    );
+    drop(vault);
+    assert_eq!(pairing_row_counts(&path), (0, 0));
+}
+
+#[test]
+fn unlock_with_key_migrates_v2_to_v3_and_keystore_copy_still_works() {
+    let key = fixture_v2_vault_key();
+    let (_dir, path) = fixture_v2_copy();
+    let mut vault = Vault::open(&path).unwrap();
+    assert_eq!(stored_version_of(&path), 2);
+
+    let report = vault.unlock_with_key(key).unwrap();
+    assert!(report.corrupt.is_empty());
+    assert_eq!(vault.entries().unwrap().len(), 3);
+    assert_eq!(stored_version_of(&path), 3);
+    assert_eq!(pairing_row_counts(&path), (0, 0));
+
+    // El `key_check` guardado es el de la versión 3 y corresponde a la llave,
+    // comprobado en el archivo SIN pasar por `export_vault_key`, que repara en
+    // silencio un verificador dañado y taparía uno mal escrito.
+    let header = vault.storage.read_header().unwrap();
+    let in_memory = &vault.unlocked().unwrap().key;
+    assert_eq!(header.verify_key(in_memory), Ok(()));
+    assert_eq!(
+        crate::crypto::keys::verify_key_check(in_memory, 2, header.key_check().unwrap()),
+        Err(Error::WrongVaultKey)
+    );
+
+    // La copia del Keystore sigue valiendo: la MISMA llave original (la que
+    // guardó el Keystore antes de migrar), sin pedirla de nuevo a la bóveda.
+    vault.lock();
+    assert!(vault.unlock_with_key(fixture_v2_vault_key()).is_ok());
+    // Y la contraseña sigue abriendo.
+    vault.lock();
+    assert!(vault.unlock(&password(FIXTURE_V2_PASSWORD)).is_ok());
+}
+
+#[test]
+fn unlock_with_key_on_v1_is_wrong_vault_key_and_writes_nothing() {
+    let (_dir, path) = fixture_v1_copy();
+    let mut vault = Vault::open(&path).unwrap();
+    let before = fs::read(&path).unwrap();
+    assert_eq!(
+        vault.unlock_with_key(fixture_v2_vault_key()).err(),
+        Some(Error::WrongVaultKey)
+    );
+    assert!(vault.is_locked());
+    drop(vault);
+    assert_eq!(fs::read(&path).unwrap(), before);
+}
+
+#[test]
+fn wrong_vault_key_on_v2_writes_nothing() {
+    let (_dir, path) = fixture_v2_copy();
+    let mut vault = Vault::open(&path).unwrap();
+    let before = fs::read(&path).unwrap();
+    assert_eq!(
+        vault.unlock_with_key(random_key()).err(),
+        Some(Error::WrongVaultKey)
+    );
+    assert!(vault.is_locked());
+    drop(vault);
+    assert_eq!(fs::read(&path).unwrap(), before);
+    assert_eq!(stored_version_of(&path), 2);
+}
+
+#[test]
+fn wrong_password_on_v2_writes_nothing() {
+    let (_dir, path) = fixture_v2_copy();
+    let mut vault = Vault::open(&path).unwrap();
+    let before = fs::read(&path).unwrap();
+    assert_eq!(
+        vault.unlock(&password("incorrecta")).err(),
+        Some(Error::WrongPassword)
+    );
+    drop(vault);
+    assert_eq!(fs::read(&path).unwrap(), before);
+}
+
+/// Si la v1→v2 se confirma y la v2→v3 falla, el archivo queda en una v2
+/// válida y la bóveda sigue bloqueada. Aquí la v2→v3 falla porque ya existe
+/// una tabla `identity` (el mismo caso que una v3 degradada a mano).
+#[test]
+fn v1_to_v2_committed_then_v2_to_v3_failed_leaves_valid_v2_locked() {
+    let (_dir, path) = fixture_v1_copy();
+    raw(&path)
+        .execute_batch("CREATE TABLE identity (x)")
+        .unwrap();
+    let mut vault = Vault::open(&path).unwrap();
+
+    let err = vault.unlock(&password(FIXTURE_V1_PASSWORD)).unwrap_err();
+    assert_eq!(err, Error::Storage(StorageErrorKind::Corrupt));
+    assert!(vault.is_locked());
+    drop(vault);
+
+    assert_eq!(stored_version_of(&path), 2);
+    let integrity: String = raw(&path)
+        .query_row("PRAGMA integrity_check", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(integrity, "ok");
+    // Sigue siendo una v2 válida que se puede abrir.
+    let storage = Storage::open_read_only(&path).unwrap();
+    assert_eq!(storage.read_header().unwrap().format_version(), 2);
+}
+
+// Degradación: una v3 con `format_version` bajado a 2 a mano.
+//
+// - Con la contraseña abre (`unlock` no lee `key_check` y el dato autenticado
+//   de `encrypted_key` lleva la versión de la cabecera, que no cambió); la
+//   migración v2→v3 encuentra las tablas ya creadas y falla limpio.
+// - Con la llave la rechaza `key_check`, que autentica la versión 3. Ese caso
+//   lo cubre `key_check`, no `encrypted_key`.
+
+/// Una v3 con `format_version = 2` y la llave de bóveda.
+fn downgraded_v3() -> (tempfile::TempDir, PathBuf, SecretBox<[u8; 32]>) {
+    let (dir, path, mut vault) = new_vault();
+    let key = vault.export_vault_key().unwrap();
+    drop(vault);
+    raw(&path)
+        .execute("UPDATE header SET format_version = 2", [])
+        .unwrap();
+    (dir, path, key)
+}
+
+#[test]
+fn downgraded_v3_to_v2_with_password_fails_cleanly() {
+    let (_dir, path, _key) = downgraded_v3();
+    let before = fs::read(&path).unwrap();
+    let mut vault = Vault::open(&path).unwrap();
+
+    let err = vault.unlock(&password("correcta-larga")).unwrap_err();
+    assert_eq!(err, Error::Storage(StorageErrorKind::Corrupt));
+    assert!(vault.is_locked());
+    drop(vault);
+    assert_eq!(fs::read(&path).unwrap(), before);
+}
+
+#[test]
+fn downgraded_v3_to_v2_with_key_is_wrong_vault_key() {
+    let (_dir, path, key) = downgraded_v3();
+    let before = fs::read(&path).unwrap();
+    let mut vault = Vault::open(&path).unwrap();
+
+    assert_eq!(vault.unlock_with_key(key).err(), Some(Error::WrongVaultKey));
+    assert!(vault.is_locked());
+    drop(vault);
+    assert_eq!(fs::read(&path).unwrap(), before);
+}
+
+#[test]
+fn open_and_read_only_open_never_modify_any_version() {
+    let (_dir1, v1) = fixture_v1_copy();
+    let (_dir2, v2) = fixture_v2_copy();
+    let (_dir3, v3, vault) = new_vault();
+    drop(vault);
+    let (_dir4, v3_fixture) = fixture_v3_copy();
+    for path in [&v1, &v2, &v3, &v3_fixture] {
+        let before = fs::read(path).unwrap();
+        drop(Vault::open(path).unwrap());
+        assert_eq!(fs::read(path).unwrap(), before, "open {path:?}");
+        Storage::open_read_only(path).unwrap().close().unwrap();
+        assert_eq!(fs::read(path).unwrap(), before, "solo lectura {path:?}");
+    }
 }
 
 // --- Desbloqueo con la llave de bóveda (#34) -----------------------------
@@ -1482,15 +1726,14 @@ fn failed_unlock_with_key_then_password_works() {
 
 // --- Migración concurrente (#34, hallazgo de la revisión) -----------------
 
-/// Ejecuta la primera mitad de `unlock` en `vault` (leer la cabecera v1 y
-/// derivar), como si estuviera a mitad de Argon2id.
-fn derive_for_unlock(vault: &Vault, pw: &str) -> (VaultKey, Option<VaultHeader>) {
-    vault
-        .storage
-        .read_header()
-        .unwrap()
-        .unlock_upgrading(&password(pw))
-        .unwrap()
+/// Ejecuta la primera mitad de `unlock` en `vault` (leer la cabecera y
+/// derivar), como si estuviera a mitad de Argon2id. Devuelve también la
+/// versión de formato que leyó.
+fn derive_for_unlock(vault: &Vault, pw: &str) -> (VaultKey, u16, Option<VaultHeader>) {
+    let header = vault.storage.read_header().unwrap();
+    let version = header.format_version();
+    let (key, upgraded) = header.unlock_upgrading(&password(pw)).unwrap();
+    (key, version, upgraded)
 }
 
 #[test]
@@ -1501,7 +1744,7 @@ fn concurrent_migration_does_not_revert_password_change() {
 
     // La A derivó con la cabecera v1; antes de que migre, la B migra y
     // cambia la contraseña.
-    let (key, upgraded) = derive_for_unlock(&a, FIXTURE_V1_PASSWORD);
+    let (key, version, upgraded) = derive_for_unlock(&a, FIXTURE_V1_PASSWORD);
     assert!(upgraded.is_some());
     b.unlock(&password(FIXTURE_V1_PASSWORD)).unwrap();
     b.change_master_password_with_params(
@@ -1514,7 +1757,7 @@ fn concurrent_migration_does_not_revert_password_change() {
 
     // La A termina: no sobrescribe la cabecera de la B.
     assert_eq!(
-        a.finish_unlock(&password(FIXTURE_V1_PASSWORD), key, upgraded)
+        a.finish_unlock(&password(FIXTURE_V1_PASSWORD), key, version, upgraded)
             .err(),
         Some(Error::WrongPassword)
     );
@@ -1536,13 +1779,72 @@ fn concurrent_migration_without_password_change_unlocks() {
     let mut a = Vault::open(&path).unwrap();
     let mut b = Vault::open(&path).unwrap();
 
-    let (key, upgraded) = derive_for_unlock(&a, FIXTURE_V1_PASSWORD);
+    let (key, version, upgraded) = derive_for_unlock(&a, FIXTURE_V1_PASSWORD);
     b.unlock(&password(FIXTURE_V1_PASSWORD)).unwrap();
     let check_from_b = b.storage.read_header().unwrap().key_check().copied();
     drop(b);
 
     let report = a
-        .finish_unlock(&password(FIXTURE_V1_PASSWORD), key, upgraded)
+        .finish_unlock(&password(FIXTURE_V1_PASSWORD), key, version, upgraded)
+        .unwrap();
+    assert!(report.corrupt.is_empty());
+    assert_eq!(a.entries().unwrap().len(), 3);
+    // La cabecera es la que escribió la B: la A no migró otra vez.
+    assert_eq!(
+        a.storage.read_header().unwrap().key_check().copied(),
+        check_from_b
+    );
+}
+
+#[test]
+fn concurrent_v2_to_v3_migration_does_not_revert_password_change() {
+    let (_dir, path) = fixture_v2_copy();
+    let mut a = Vault::open(&path).unwrap();
+    let mut b = Vault::open(&path).unwrap();
+
+    // La A derivó con la cabecera v2; antes de que migre, la B migra a v3 y
+    // cambia la contraseña.
+    let (key, version, upgraded) = derive_for_unlock(&a, FIXTURE_V2_PASSWORD);
+    assert_eq!((version, upgraded.is_none()), (2, true));
+    b.unlock(&password(FIXTURE_V2_PASSWORD)).unwrap();
+    b.change_master_password_with_params(
+        &password(FIXTURE_V2_PASSWORD),
+        &password("nueva-maestra"),
+        KdfParams::MIN,
+    )
+    .unwrap();
+    drop(b);
+
+    // La A termina: no migra otra vez ni revierte la contraseña nueva.
+    assert_eq!(
+        a.finish_unlock(&password(FIXTURE_V2_PASSWORD), key, version, upgraded)
+            .err(),
+        Some(Error::WrongPassword)
+    );
+    assert!(a.is_locked());
+
+    a.unlock(&password("nueva-maestra")).unwrap();
+    assert_eq!(a.entries().unwrap().len(), 3);
+    a.lock();
+    assert_eq!(
+        a.unlock(&password(FIXTURE_V2_PASSWORD)).err(),
+        Some(Error::WrongPassword)
+    );
+}
+
+#[test]
+fn concurrent_v2_to_v3_migration_without_password_change_unlocks() {
+    let (_dir, path) = fixture_v2_copy();
+    let mut a = Vault::open(&path).unwrap();
+    let mut b = Vault::open(&path).unwrap();
+
+    let (key, version, upgraded) = derive_for_unlock(&a, FIXTURE_V2_PASSWORD);
+    b.unlock(&password(FIXTURE_V2_PASSWORD)).unwrap();
+    let check_from_b = b.storage.read_header().unwrap().key_check().copied();
+    drop(b);
+
+    let report = a
+        .finish_unlock(&password(FIXTURE_V2_PASSWORD), key, version, upgraded)
         .unwrap();
     assert!(report.corrupt.is_empty());
     assert_eq!(a.entries().unwrap().len(), 3);
@@ -1814,4 +2116,720 @@ fn create_next_to_all_orphans() {
     let (_dir, dest) = orphans_next_to_new_path(true, true);
     assert!(sibling(&dest, "-journal").exists() && sibling(&dest, "-wal").exists());
     assert_create_ignores_orphans(&dest);
+}
+
+// --- Identidad perezosa (#93) ---------------------------------------------
+
+/// `data` de la fila de `identity`, tal como está en el archivo.
+fn identity_data(path: &Path) -> Vec<u8> {
+    raw(path)
+        .query_row("SELECT data FROM identity WHERE id = 1", [], |row| {
+            row.get(0)
+        })
+        .unwrap()
+}
+
+/// Invierte un bit del byte `index` de `identity.data`.
+fn flip_identity_byte(path: &Path, index: usize) {
+    let mut data = identity_data(path);
+    data[index] ^= 0x01;
+    raw(path)
+        .execute("UPDATE identity SET data = ?1 WHERE id = 1", [data])
+        .unwrap();
+}
+
+fn key_bytes(identity: &Identity) -> [u8; 32] {
+    *identity.private_key().expose_secret()
+}
+
+#[test]
+fn identity_is_none_on_a_new_vault() {
+    let (_dir, path, vault) = new_vault();
+    assert!(vault.identity().unwrap().is_none());
+    // Ausente no es un error y leerla no crea nada.
+    assert_eq!(pairing_row_counts(&path), (0, 0));
+}
+
+#[test]
+fn ensure_identity_creates_the_first_when_absent() {
+    let (_dir, path, mut vault) = new_vault();
+    let created = vault.ensure_identity().unwrap();
+    assert_eq!(pairing_row_counts(&path), (1, 0));
+    let read = vault.identity().unwrap().unwrap();
+    assert_eq!(key_bytes(&read), key_bytes(&created));
+}
+
+#[test]
+fn ensure_identity_creates_once_and_returns_the_same() {
+    let (_dir, path, mut vault) = new_vault();
+    let first = vault.ensure_identity().unwrap();
+    let data = identity_data(&path);
+    let second = vault.ensure_identity().unwrap();
+    assert_eq!(key_bytes(&first), key_bytes(&second));
+    // La segunda llamada no volvió a escribir.
+    assert_eq!(identity_data(&path), data);
+}
+
+#[test]
+fn identity_survives_lock_and_reopen() {
+    let (_dir, path, mut vault) = new_vault();
+    let created = vault.ensure_identity().unwrap();
+    vault.lock();
+    drop(vault);
+
+    let mut reopened = Vault::open(&path).unwrap();
+    reopened.unlock(&password("correcta-larga")).unwrap();
+    let read = reopened.identity().unwrap().unwrap();
+    assert_eq!(key_bytes(&read), key_bytes(&created));
+}
+
+#[test]
+fn identity_requires_the_vault_unlocked() {
+    let (_dir, _path, mut vault) = new_vault();
+    vault.ensure_identity().unwrap();
+    vault.lock();
+    assert_eq!(vault.identity().err(), Some(Error::Locked));
+    assert_eq!(vault.ensure_identity().err(), Some(Error::Locked));
+}
+
+#[test]
+fn absent_and_damaged_identity_are_distinct() {
+    let (_dir, path, mut vault) = new_vault();
+    assert!(matches!(vault.identity(), Ok(None)));
+    vault.ensure_identity().unwrap();
+    assert!(matches!(vault.identity(), Ok(Some(_))));
+    flip_identity_byte(&path, 30);
+    assert_eq!(vault.identity().err(), Some(Error::CorruptIdentity));
+}
+
+#[test]
+fn flipped_byte_in_identity_data_is_corrupt() {
+    let (_dir, path, mut vault) = new_vault();
+    vault.ensure_identity().unwrap();
+    let len = identity_data(&path).len();
+    assert_eq!(len, 72);
+    for index in [0, 23, 24, 40, 55, 56, 71] {
+        flip_identity_byte(&path, index);
+        assert_eq!(
+            vault.identity().err(),
+            Some(Error::CorruptIdentity),
+            "byte {index}"
+        );
+        flip_identity_byte(&path, index);
+        assert!(vault.identity().unwrap().is_some(), "restaurado {index}");
+    }
+}
+
+#[test]
+fn changed_identity_schema_version_is_corrupt() {
+    let (_dir, path, mut vault) = new_vault();
+    vault.ensure_identity().unwrap();
+    for version in ["2", "0", "70000", "-1"] {
+        raw(&path)
+            .execute(
+                &format!("UPDATE identity SET identity_schema_version = {version}"),
+                [],
+            )
+            .unwrap();
+        assert_eq!(
+            vault.identity().err(),
+            Some(Error::CorruptIdentity),
+            "versión {version}"
+        );
+    }
+}
+
+#[test]
+fn identity_data_of_the_wrong_length_is_corrupt() {
+    // El `CHECK` solo se aplica al escribir: un archivo alterado puede traer
+    // otra longitud. Se simula desactivando el `CHECK` en la conexión de la
+    // prueba.
+    let (_dir, path, mut vault) = new_vault();
+    vault.ensure_identity().unwrap();
+    let conn = raw(&path);
+    conn.execute_batch("PRAGMA ignore_check_constraints = ON")
+        .unwrap();
+    conn.execute("UPDATE identity SET data = zeroblob(10)", [])
+        .unwrap();
+    assert_eq!(vault.identity().err(), Some(Error::CorruptIdentity));
+}
+
+#[test]
+fn damaged_identity_does_not_block_unlock_or_entries() {
+    let (_dir, path, mut vault) = new_vault();
+    let id = add_sample(&mut vault, "banco");
+    vault.ensure_identity().unwrap();
+    flip_identity_byte(&path, 30);
+    vault.lock();
+    drop(vault);
+
+    let mut reopened = Vault::open(&path).unwrap();
+    let report = reopened.unlock(&password("correcta-larga")).unwrap();
+    assert!(report.corrupt.is_empty());
+    assert_eq!(reopened.entries().unwrap().len(), 1);
+    assert_eq!(revealed_password(&mut reopened, id), "clave-banco");
+    // Y con la llave de bóveda también.
+    let key = reopened.export_vault_key().unwrap();
+    reopened.lock();
+    assert!(reopened.unlock_with_key(key).is_ok());
+}
+
+#[test]
+fn ensure_identity_on_a_damaged_one_never_overwrites_it() {
+    let (_dir, path, mut vault) = new_vault();
+    vault.ensure_identity().unwrap();
+    flip_identity_byte(&path, 30);
+    let before = (
+        identity_data(&path),
+        raw(&path)
+            .query_row("SELECT identity_schema_version FROM identity", [], |r| {
+                r.get::<_, i64>(0)
+            })
+            .unwrap(),
+    );
+
+    assert_eq!(vault.ensure_identity().err(), Some(Error::CorruptIdentity));
+    assert_eq!(vault.ensure_identity().err(), Some(Error::CorruptIdentity));
+    vault.lock();
+    drop(vault);
+
+    // También tras reabrir.
+    let mut reopened = Vault::open(&path).unwrap();
+    reopened.unlock(&password("correcta-larga")).unwrap();
+    assert_eq!(
+        reopened.ensure_identity().err(),
+        Some(Error::CorruptIdentity)
+    );
+    let after = (
+        identity_data(&path),
+        raw(&path)
+            .query_row("SELECT identity_schema_version FROM identity", [], |r| {
+                r.get::<_, i64>(0)
+            })
+            .unwrap(),
+    );
+    assert_eq!(after, before);
+    assert_eq!(pairing_row_counts(&path).0, 1);
+}
+
+#[test]
+fn identity_is_not_plaintext_in_the_file() {
+    let (_dir, path, mut vault) = new_vault();
+    let identity = vault.ensure_identity().unwrap();
+    vault.lock();
+    drop(vault);
+    let bytes = fs::read(&path).unwrap();
+    assert!(!contains(&bytes, &key_bytes(&identity)));
+}
+
+#[test]
+fn identity_is_bound_to_the_vault_key() {
+    // La misma fila en otra bóveda (otra llave) no se autentica.
+    let (_dir, path, mut vault) = new_vault();
+    vault.ensure_identity().unwrap();
+    let data = identity_data(&path);
+
+    let (_dir2, other_path, mut other) = new_vault();
+    other.ensure_identity().unwrap();
+    raw(&other_path)
+        .execute("UPDATE identity SET data = ?1", [data])
+        .unwrap();
+    assert_eq!(other.identity().err(), Some(Error::CorruptIdentity));
+}
+
+#[test]
+fn set_identity_for_test_stores_the_given_key() {
+    let (_dir, path, mut vault) = new_vault();
+    vault.set_identity_for_test([7u8; 32]).unwrap();
+    assert_eq!(key_bytes(&vault.identity().unwrap().unwrap()), [7u8; 32]);
+    assert_eq!(pairing_row_counts(&path), (1, 0));
+}
+
+// --- PCs emparejadas (#93) ------------------------------------------------
+
+fn new_pc(byte: u8, name: &str) -> NewPairedPc {
+    NewPairedPc {
+        public_key: [byte; 32],
+        name: name.to_owned(),
+        last_ip: None,
+    }
+}
+
+fn find_pc(vault: &Vault, id: PairedPcId) -> PairedPc {
+    vault
+        .paired_pcs()
+        .unwrap()
+        .valid
+        .into_iter()
+        .find(|pc| pc.id() == id)
+        .unwrap()
+}
+
+fn ip(text: &str) -> IpAddr {
+    text.parse().unwrap()
+}
+
+/// `data` de la PC `id`, tal como está en el archivo.
+fn pc_data(path: &Path, id: PairedPcId) -> Vec<u8> {
+    raw(path)
+        .query_row(
+            "SELECT data FROM paired_pcs WHERE id = ?1",
+            [id.as_bytes().as_slice()],
+            |row| row.get(0),
+        )
+        .unwrap()
+}
+
+fn flip_pc_byte(path: &Path, id: PairedPcId, index: usize) {
+    let mut data = pc_data(path, id);
+    data[index] ^= 0x01;
+    raw(path)
+        .execute(
+            "UPDATE paired_pcs SET data = ?1 WHERE id = ?2",
+            rusqlite::params![data, id.as_bytes().as_slice()],
+        )
+        .unwrap();
+}
+
+#[test]
+fn add_list_update_remove_round_trip() {
+    let (_dir, path, mut vault) = new_vault();
+    assert!(vault.paired_pcs().unwrap().valid.is_empty());
+
+    let casa = vault.add_paired_pc(new_pc(1, "Casa")).unwrap();
+    let mut trabajo = new_pc(2, "Trabajo");
+    trabajo.last_ip = Some(ip("192.168.1.20"));
+    let trabajo = vault.add_paired_pc(trabajo).unwrap();
+
+    let listed = vault.paired_pcs().unwrap();
+    assert_eq!(listed.valid.len(), 2);
+    assert!(listed.corrupt.is_empty());
+    assert_eq!(listed.unidentified_corrupt, 0);
+    let casa_pc = find_pc(&vault, casa);
+    assert_eq!(casa_pc.public_key(), &[1; 32]);
+    assert_eq!(casa_pc.name(), "Casa");
+    assert_eq!(casa_pc.last_ip(), None);
+    assert!(casa_pc.paired_at() > 1_767_225_600_000);
+    assert_eq!(casa_pc.last_seen_at(), None);
+    assert_eq!(find_pc(&vault, trabajo).last_ip(), Some(ip("192.168.1.20")));
+
+    vault
+        .update_paired_pc(
+            casa,
+            PairedPcUpdate {
+                name: Some("Casa nueva".to_owned()),
+                last_ip: None,
+            },
+        )
+        .unwrap();
+    assert_eq!(find_pc(&vault, casa).name(), "Casa nueva");
+
+    vault.remove_paired_pc(casa).unwrap();
+    let left = vault.paired_pcs().unwrap().valid;
+    assert_eq!(left.len(), 1);
+    assert_eq!(left[0].id(), trabajo);
+    assert_eq!(pairing_row_counts(&path), (0, 1));
+}
+
+#[test]
+fn public_key_already_paired_is_rejected() {
+    let (_dir, path, mut vault) = new_vault();
+    vault.add_paired_pc(new_pc(1, "Casa")).unwrap();
+    let before = pc_row_snapshot(&path);
+    assert_eq!(
+        vault.add_paired_pc(new_pc(1, "Otro nombre")).err(),
+        Some(Error::PairedPcExists)
+    );
+    assert_eq!(pc_row_snapshot(&path), before);
+    assert_eq!(pairing_row_counts(&path), (0, 1));
+}
+
+/// Ids y datos de todas las filas de `paired_pcs`, ordenados.
+fn pc_row_snapshot(path: &Path) -> Vec<(Vec<u8>, Vec<u8>)> {
+    let conn = raw(path);
+    let mut stmt = conn
+        .prepare("SELECT id, data FROM paired_pcs ORDER BY id")
+        .unwrap();
+    stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+        .unwrap()
+        .collect::<rusqlite::Result<_>>()
+        .unwrap()
+}
+
+#[test]
+fn empty_blank_or_long_names_are_invalid() {
+    let (_dir, path, mut vault) = new_vault();
+    for name in ["", "   "] {
+        assert_eq!(
+            vault.add_paired_pc(new_pc(1, name)).err(),
+            Some(Error::InvalidPairedPc(InvalidPairedPcField::NameEmpty))
+        );
+    }
+    assert_eq!(
+        vault.add_paired_pc(new_pc(1, &"a".repeat(129))).err(),
+        Some(Error::InvalidPairedPc(InvalidPairedPcField::NameTooLong))
+    );
+    assert_eq!(pairing_row_counts(&path), (0, 0));
+    // 128 bytes se aceptan, y el nombre se recorta.
+    let id = vault.add_paired_pc(new_pc(1, &"a".repeat(128))).unwrap();
+    assert_eq!(find_pc(&vault, id).name().len(), 128);
+    let id = vault.add_paired_pc(new_pc(2, "  Casa  ")).unwrap();
+    assert_eq!(find_pc(&vault, id).name(), "Casa");
+}
+
+#[test]
+fn update_ip_sets_last_seen_at_and_keeps_the_rest() {
+    let (_dir, _path, mut vault) = new_vault();
+    let id = vault.add_paired_pc(new_pc(4, "Casa")).unwrap();
+    let before = find_pc(&vault, id);
+    assert_eq!(before.last_seen_at(), None);
+
+    vault
+        .update_paired_pc(
+            id,
+            PairedPcUpdate {
+                name: None,
+                last_ip: Some(ip("192.168.1.77")),
+            },
+        )
+        .unwrap();
+    let after = find_pc(&vault, id);
+    assert_eq!(after.last_ip(), Some(ip("192.168.1.77")));
+    assert!(after.last_seen_at().unwrap() >= before.paired_at());
+    assert_eq!(after.name(), "Casa");
+    assert_eq!(after.public_key(), before.public_key());
+    assert_eq!(after.paired_at(), before.paired_at());
+}
+
+#[test]
+fn update_without_ip_keeps_last_ip_and_last_seen_at() {
+    let (_dir, _path, mut vault) = new_vault();
+    let id = vault.add_paired_pc(new_pc(4, "Casa")).unwrap();
+    vault
+        .update_paired_pc(
+            id,
+            PairedPcUpdate {
+                name: None,
+                last_ip: Some(ip("10.0.0.5")),
+            },
+        )
+        .unwrap();
+    let seen = find_pc(&vault, id).last_seen_at();
+    vault
+        .update_paired_pc(
+            id,
+            PairedPcUpdate {
+                name: Some("Otro".to_owned()),
+                last_ip: None,
+            },
+        )
+        .unwrap();
+    let after = find_pc(&vault, id);
+    assert_eq!(after.last_ip(), Some(ip("10.0.0.5")));
+    assert_eq!(after.last_seen_at(), seen);
+    assert_eq!(after.name(), "Otro");
+}
+
+#[test]
+fn update_with_an_invalid_name_writes_nothing() {
+    let (_dir, path, mut vault) = new_vault();
+    let id = vault.add_paired_pc(new_pc(4, "Casa")).unwrap();
+    let before = pc_row_snapshot(&path);
+    assert_eq!(
+        vault
+            .update_paired_pc(
+                id,
+                PairedPcUpdate {
+                    name: Some("  ".to_owned()),
+                    last_ip: Some(ip("10.0.0.5")),
+                },
+            )
+            .err(),
+        Some(Error::InvalidPairedPc(InvalidPairedPcField::NameEmpty))
+    );
+    assert_eq!(pc_row_snapshot(&path), before);
+}
+
+#[test]
+fn update_and_remove_of_an_unknown_id_are_not_found() {
+    let (_dir, _path, mut vault) = new_vault();
+    let unknown = PairedPcId::from_bytes([9; 16]);
+    let update = PairedPcUpdate {
+        name: Some("x".to_owned()),
+        last_ip: None,
+    };
+    assert_eq!(
+        vault.update_paired_pc(unknown, update).err(),
+        Some(Error::PairedPcNotFound)
+    );
+    assert_eq!(
+        vault.remove_paired_pc(unknown).err(),
+        Some(Error::PairedPcNotFound)
+    );
+}
+
+#[test]
+fn paired_pcs_require_the_vault_unlocked() {
+    let (_dir, _path, mut vault) = new_vault();
+    let id = vault.add_paired_pc(new_pc(1, "Casa")).unwrap();
+    vault.lock();
+    assert_eq!(vault.paired_pcs().err(), Some(Error::Locked));
+    assert_eq!(
+        vault.add_paired_pc(new_pc(2, "x")).err(),
+        Some(Error::Locked)
+    );
+    assert_eq!(
+        vault
+            .update_paired_pc(
+                id,
+                PairedPcUpdate {
+                    name: None,
+                    last_ip: None
+                }
+            )
+            .err(),
+        Some(Error::Locked)
+    );
+    assert_eq!(vault.remove_paired_pc(id).err(), Some(Error::Locked));
+}
+
+#[test]
+fn paired_pcs_survive_lock_and_reopen() {
+    let (_dir, path, mut vault) = new_vault();
+    let id = vault.add_paired_pc(new_pc(1, "Casa")).unwrap();
+    vault.lock();
+    drop(vault);
+
+    let mut reopened = Vault::open(&path).unwrap();
+    reopened.unlock(&password("correcta-larga")).unwrap();
+    assert_eq!(find_pc(&reopened, id).name(), "Casa");
+}
+
+#[test]
+fn name_and_ip_are_not_plaintext_in_the_file() {
+    let (_dir, path, mut vault) = new_vault();
+    let mut pc = new_pc(1, "equipo-canario-xyz");
+    pc.last_ip = Some(ip("203.0.113.77"));
+    vault.add_paired_pc(pc).unwrap();
+    vault.lock();
+    drop(vault);
+    let bytes = fs::read(&path).unwrap();
+    assert!(!contains(&bytes, b"equipo-canario-xyz"));
+    assert!(!contains(&bytes, b"203.0.113.77"));
+    assert!(!contains(&bytes, &[203, 0, 113, 77]));
+}
+
+/// Cada daño deja la PC como dañada y no impide listar las demás, ni
+/// agregar, ni desbloquear.
+#[test]
+fn damaged_pc_rows_are_reported_and_do_not_hide_the_valid_ones() {
+    /// Cómo dañar la fila de la PC `bad` (la segunda es la buena).
+    type Damage = fn(&Path, PairedPcId, PairedPcId);
+    let damages: [(&str, Damage); 4] = [
+        ("un byte alterado", |path, bad, _| {
+            flip_pc_byte(path, bad, 30)
+        }),
+        ("versión fuera de u16", |path, bad, _| {
+            raw(path)
+                .execute(
+                    "UPDATE paired_pcs SET pc_schema_version = 70000 WHERE id = ?1",
+                    [bad.as_bytes().as_slice()],
+                )
+                .unwrap();
+        }),
+        ("movida a otro id", |path, bad, _| {
+            raw(path)
+                .execute(
+                    "UPDATE paired_pcs SET id = ?1 WHERE id = ?2",
+                    rusqlite::params![[0xEE_u8; 16].as_slice(), bad.as_bytes().as_slice()],
+                )
+                .unwrap();
+        }),
+        ("datos de la identidad", |path, bad, _| {
+            // Intercambiada con la de la identidad: otro dato autenticado.
+            let conn = raw(path);
+            let identity: Vec<u8> = conn
+                .query_row("SELECT data FROM identity", [], |row| row.get(0))
+                .unwrap();
+            conn.execute(
+                "UPDATE paired_pcs SET data = ?1 WHERE id = ?2",
+                rusqlite::params![identity, bad.as_bytes().as_slice()],
+            )
+            .unwrap();
+        }),
+    ];
+
+    for (label, damage) in damages {
+        let (_dir, path, mut vault) = new_vault();
+        vault.ensure_identity().unwrap();
+        let good = vault.add_paired_pc(new_pc(1, "Buena")).unwrap();
+        let bad = vault.add_paired_pc(new_pc(2, "Mala")).unwrap();
+        damage(&path, bad, good);
+
+        let listed = vault.paired_pcs().unwrap();
+        let ids: Vec<_> = listed.valid.iter().map(PairedPc::id).collect();
+        assert_eq!(ids, vec![good], "{label}");
+        assert_eq!(
+            listed.corrupt.len() + listed.unidentified_corrupt,
+            1,
+            "{label}"
+        );
+        // Se puede seguir usando la lista y la bóveda.
+        vault.add_paired_pc(new_pc(3, "Nueva")).unwrap();
+        assert_eq!(vault.paired_pcs().unwrap().valid.len(), 2, "{label}");
+        vault.lock();
+        assert!(vault.unlock(&password("correcta-larga")).is_ok(), "{label}");
+    }
+}
+
+#[test]
+fn pc_with_an_id_of_15_bytes_is_unidentified_corrupt() {
+    let (_dir, path, mut vault) = new_vault();
+    vault.add_paired_pc(new_pc(1, "Buena")).unwrap();
+    let conn = raw(&path);
+    conn.execute_batch("PRAGMA ignore_check_constraints = ON")
+        .unwrap();
+    conn.execute(
+        "INSERT INTO paired_pcs (id, pc_schema_version, data) VALUES (zeroblob(15), 1, zeroblob(60))",
+        [],
+    )
+    .unwrap();
+    let listed = vault.paired_pcs().unwrap();
+    assert_eq!(listed.valid.len(), 1);
+    assert!(listed.corrupt.is_empty());
+    assert_eq!(listed.unidentified_corrupt, 1);
+}
+
+#[test]
+fn remove_paired_pc_deletes_a_corrupt_row() {
+    let (_dir, path, mut vault) = new_vault();
+    let bad = vault.add_paired_pc(new_pc(2, "Mala")).unwrap();
+    flip_pc_byte(&path, bad, 30);
+    assert_eq!(vault.paired_pcs().unwrap().corrupt, vec![bad]);
+    vault.remove_paired_pc(bad).unwrap();
+    assert_eq!(pairing_row_counts(&path), (0, 0));
+    assert!(vault.paired_pcs().unwrap().corrupt.is_empty());
+}
+
+#[test]
+fn update_of_a_corrupt_pc_is_corrupt_and_writes_nothing() {
+    let (_dir, path, mut vault) = new_vault();
+    let bad = vault.add_paired_pc(new_pc(2, "Mala")).unwrap();
+    flip_pc_byte(&path, bad, 30);
+    let before = pc_row_snapshot(&path);
+    let update = PairedPcUpdate {
+        name: Some("Nueva".to_owned()),
+        last_ip: None,
+    };
+    assert_eq!(
+        vault.update_paired_pc(bad, update).err(),
+        Some(Error::CorruptPairedPc)
+    );
+    assert_eq!(pc_row_snapshot(&path), before);
+}
+
+#[test]
+fn corrupt_pc_does_not_block_unlock_or_entries() {
+    let (_dir, path, mut vault) = new_vault();
+    let entry = add_sample(&mut vault, "banco");
+    let bad = vault.add_paired_pc(new_pc(2, "Mala")).unwrap();
+    flip_pc_byte(&path, bad, 30);
+    vault.lock();
+    drop(vault);
+
+    let mut reopened = Vault::open(&path).unwrap();
+    let report = reopened.unlock(&password("correcta-larga")).unwrap();
+    assert!(report.corrupt.is_empty());
+    assert_eq!(revealed_password(&mut reopened, entry), "clave-banco");
+}
+
+#[test]
+fn identity_swapped_with_a_pc_row_is_corrupt() {
+    let (_dir, path, mut vault) = new_vault();
+    vault.ensure_identity().unwrap();
+    let pc = vault.add_paired_pc(new_pc(1, "Casa")).unwrap();
+    let pc_blob = pc_data(&path, pc);
+    let conn = raw(&path);
+    // El `CHECK` de longitud de `identity` no deja guardar un blob de otra
+    // longitud: se desactiva en la conexión de la prueba.
+    conn.execute_batch("PRAGMA ignore_check_constraints = ON")
+        .unwrap();
+    conn.execute("UPDATE identity SET data = ?1", [pc_blob])
+        .unwrap();
+    assert_eq!(vault.identity().err(), Some(Error::CorruptIdentity));
+}
+
+// --- Menores de la revisión final de la #93 ------------------------------
+
+/// Otra conexión migró la v2 a v3 entre la lectura de la cabecera y la
+/// migración de `unlock_with_key`: no se migra otra vez ni se escribe nada, y
+/// se desbloquea con la cabecera actual.
+#[test]
+fn concurrent_v2_to_v3_migration_with_key_unlocks_without_migrating_again() {
+    let key = fixture_v2_vault_key();
+    let (_dir, path) = fixture_v2_copy();
+    let mut a = Vault::open(&path).unwrap();
+    let mut b = Vault::open(&path).unwrap();
+
+    // La A leyó la cabecera v2; antes de migrar, la B migra a v3.
+    let header = a.storage.read_header().unwrap();
+    assert_eq!(header.format_version(), 2);
+    b.unlock(&password(FIXTURE_V2_PASSWORD)).unwrap();
+    let check_from_b = b.storage.read_header().unwrap().key_check().copied();
+    drop(b);
+
+    let report = a.finish_unlock_with_key(key, &header).unwrap();
+    assert!(report.corrupt.is_empty());
+    assert_eq!(a.entries().unwrap().len(), 3);
+    assert_eq!(stored_version_of(&path), 3);
+    // La cabecera es la que escribió la B: la A no migró otra vez.
+    assert_eq!(
+        a.storage.read_header().unwrap().key_check().copied(),
+        check_from_b
+    );
+}
+
+/// Dos conexiones crean la identidad a la vez: la que pierde la carrera
+/// devuelve la de la ganadora y no la sobrescribe.
+#[test]
+fn store_identity_returns_the_existing_one_when_another_connection_created_it() {
+    let (_dir, path, mut a) = new_vault();
+    let mut b = Vault::open(&path).unwrap();
+    b.unlock(&password("correcta-larga")).unwrap();
+
+    // La A ya comprobó que no había identidad; antes de escribir, la B la crea.
+    let winner = b.ensure_identity().unwrap();
+    let data_after_b = identity_data(&path);
+
+    let result = a.store_identity(Identity::from_bytes([1u8; 32])).unwrap();
+    assert_eq!(key_bytes(&result), key_bytes(&winner));
+    assert_ne!(key_bytes(&result), [1u8; 32]);
+    assert_eq!(identity_data(&path), data_after_b);
+}
+
+#[test]
+fn pc_row_with_data_shorter_than_nonce_and_tag_is_corrupt() {
+    // El `CHECK` de longitud solo se aplica al escribir: un archivo alterado
+    // puede traer una PC con menos de 40 bytes.
+    let (_dir, path, mut vault) = new_vault();
+    vault.add_paired_pc(new_pc(1, "Buena")).unwrap();
+    let short_id = [0x5A_u8; 16];
+    let conn = raw(&path);
+    conn.execute_batch("PRAGMA ignore_check_constraints = ON")
+        .unwrap();
+    conn.execute(
+        "INSERT INTO paired_pcs (id, pc_schema_version, data) VALUES (?1, 1, zeroblob(10))",
+        [short_id.as_slice()],
+    )
+    .unwrap();
+
+    let listed = vault.paired_pcs().unwrap();
+    assert_eq!(listed.valid.len(), 1);
+    assert_eq!(listed.corrupt, vec![PairedPcId::from_bytes(short_id)]);
+    assert_eq!(listed.unidentified_corrupt, 0);
+    // Se puede quitar.
+    vault
+        .remove_paired_pc(PairedPcId::from_bytes(short_id))
+        .unwrap();
+    assert!(vault.paired_pcs().unwrap().corrupt.is_empty());
 }

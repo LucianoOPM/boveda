@@ -116,8 +116,18 @@ pub(crate) fn seal_part(
     part: Part,
     plaintext: &[u8],
 ) -> Result<EncryptedPart> {
-    let nonce = XNonce::try_generate().map_err(|_| Error::Random)?;
     let ad = associated_data(id, entry_schema_version, part);
+    seal_with_ad(key, &ad, plaintext)
+}
+
+/// Cifra `plaintext` con un nonce aleatorio nuevo y el dato autenticado
+/// `ad`, que quien llama arma con una etiqueta propia de su pieza (la
+/// identidad y las PCs emparejadas de la versión 3 no usan el de las
+/// entradas). El resultado es `nonce (24) | texto cifrado | etiqueta (16)`.
+///
+/// Un fallo del generador aleatorio devuelve [`Error::Random`].
+pub(crate) fn seal_with_ad(key: &VaultKey, ad: &[u8], plaintext: &[u8]) -> Result<EncryptedPart> {
+    let nonce = XNonce::try_generate().map_err(|_| Error::Random)?;
 
     // Capacidad exacta reservada de antemano: ni la copia del texto en claro
     // ni la etiqueta hacen que el búfer se reasigne.
@@ -137,7 +147,7 @@ pub(crate) fn seal_part(
     let cipher =
         XChaCha20Poly1305::new_from_slice(key.expose_secret()).map_err(|_| Error::CorruptEntry)?;
     let tag = cipher
-        .encrypt_inout_detached(&nonce, &ad, body.into())
+        .encrypt_inout_detached(&nonce, ad, body.into())
         .map_err(|_| Error::CorruptEntry)?;
     buf.extend_from_slice(&tag);
 
@@ -157,12 +167,25 @@ pub(crate) fn open_part(
     part: Part,
     sealed: &EncryptedPart,
 ) -> Result<Zeroizing<Vec<u8>>> {
+    let ad = associated_data(id, entry_schema_version, part);
+    open_with_ad(key, &ad, sealed)
+}
+
+/// Descifra una pieza cifrada con [`seal_with_ad`] y el mismo `ad`.
+///
+/// Una pieza demasiado corta o que no se autentica (llave o dato autenticado
+/// distintos, o un byte alterado) devuelve [`Error::CorruptEntry`]; quien
+/// llama lo traduce al error de su pieza.
+pub(crate) fn open_with_ad(
+    key: &VaultKey,
+    ad: &[u8],
+    sealed: &EncryptedPart,
+) -> Result<Zeroizing<Vec<u8>>> {
     if sealed.0.len() < MIN_SEALED_LEN {
         return Err(Error::CorruptEntry);
     }
     let (nonce, body) = sealed.0.split_at(NONCE_LEN);
     let nonce = XNonce::try_from(nonce).map_err(|_| Error::CorruptEntry)?;
-    let ad = associated_data(id, entry_schema_version, part);
 
     // Se descifra en un búfer `Zeroizing`; `decrypt_in_place` lo trunca a la
     // longitud del texto en claro sin reasignar.
@@ -170,7 +193,7 @@ pub(crate) fn open_part(
     let cipher =
         XChaCha20Poly1305::new_from_slice(key.expose_secret()).map_err(|_| Error::CorruptEntry)?;
     cipher
-        .decrypt_in_place(&nonce, &ad, &mut *buf)
+        .decrypt_in_place(&nonce, ad, &mut *buf)
         .map_err(|_| Error::CorruptEntry)?;
     Ok(buf)
 }

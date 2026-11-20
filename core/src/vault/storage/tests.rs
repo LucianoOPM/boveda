@@ -1,7 +1,7 @@
 //! Pruebas unitarias de `vault/storage.rs`.
 
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use secrecy::{ExposeSecret, SecretString};
 
@@ -170,9 +170,9 @@ fn open_rejects_future_format_version() {
     let (_dir, path, storage) = new_vault();
     storage.close().unwrap();
     raw(&path)
-        .execute("UPDATE header SET format_version = 3", [])
+        .execute("UPDATE header SET format_version = 4", [])
         .unwrap();
-    assert_open_fails_unchanged(&path, Error::UnsupportedFormatVersion(3));
+    assert_open_fails_unchanged(&path, Error::UnsupportedFormatVersion(4));
 }
 
 /// Pasa a WAL la base de `conn` y comprueba el modo resultante.
@@ -189,13 +189,13 @@ fn open_rejects_future_format_version_in_wal() {
     storage.close().unwrap();
     {
         let conn = raw(&path);
-        conn.execute("UPDATE header SET format_version = 3", [])
+        conn.execute("UPDATE header SET format_version = 4", [])
             .unwrap();
         set_wal(&conn);
     }
     assert!(!sibling(&path, "-wal").exists());
 
-    assert_open_fails_unchanged(&path, Error::UnsupportedFormatVersion(3));
+    assert_open_fails_unchanged(&path, Error::UnsupportedFormatVersion(4));
     assert!(!sibling(&path, "-wal").exists());
     assert!(!sibling(&path, "-shm").exists());
 }
@@ -213,7 +213,7 @@ fn open_future_wal_with_pending_frames_checkpoints_and_keeps_content() {
         let conn = raw(&src);
         set_wal(&conn);
         conn.pragma_update(None, "wal_autocheckpoint", 0).unwrap();
-        conn.execute("UPDATE header SET format_version = 3", [])
+        conn.execute("UPDATE header SET format_version = 4", [])
             .unwrap();
         // Copia sin checkpoint, como tras un cierre forzado.
         fs::copy(&src, &path).unwrap();
@@ -224,7 +224,7 @@ fn open_future_wal_with_pending_frames_checkpoints_and_keeps_content() {
 
     assert_eq!(
         Storage::open(&path).err(),
-        Some(Error::UnsupportedFormatVersion(3))
+        Some(Error::UnsupportedFormatVersion(4))
     );
     // El checkpoint al cerrar integró el `-wal` y lo borró.
     assert!(!sibling(&path, "-wal").exists());
@@ -239,7 +239,28 @@ fn open_future_wal_with_pending_frames_checkpoints_and_keeps_content() {
             |row| row.get(0),
         )
         .unwrap();
-    assert_eq!(version, 3);
+    assert_eq!(version, 4);
+}
+
+#[test]
+fn created_vault_has_identity_and_paired_pcs_tables() {
+    let (_dir, path, storage) = new_vault();
+    storage.close().unwrap();
+    let conn = raw(&path);
+    for table in ["identity", "paired_pcs"] {
+        let count: i64 = conn
+            .query_row(&format!("SELECT count(*) FROM {table}"), [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(count, 0, "{table}");
+    }
+}
+
+#[test]
+fn read_header_reads_v3() {
+    let (_dir, _path, storage) = new_vault();
+    assert_eq!(storage.read_header().unwrap().format_version(), 3);
 }
 
 // --- Cabecera y solo lectura ---
@@ -787,25 +808,25 @@ fn assert_future_header_is_unsupported(sql: &str) {
 
     assert_eq!(
         Storage::open_read_only(&path).err(),
-        Some(Error::UnsupportedFormatVersion(3))
+        Some(Error::UnsupportedFormatVersion(4))
     );
     assert_eq!(
         Storage::open(&path).err(),
-        Some(Error::UnsupportedFormatVersion(3))
+        Some(Error::UnsupportedFormatVersion(4))
     );
 }
 
 #[test]
 fn future_header_without_v1_column_is_unsupported() {
     assert_future_header_is_unsupported(
-        "UPDATE header SET format_version = 3; ALTER TABLE header DROP COLUMN kdf_memory_kib;",
+        "UPDATE header SET format_version = 4; ALTER TABLE header DROP COLUMN kdf_memory_kib;",
     );
 }
 
 #[test]
 fn future_header_with_wider_value_is_unsupported() {
     assert_future_header_is_unsupported(
-        "UPDATE header SET format_version = 3, kdf_memory_kib = 99999999999;",
+        "UPDATE header SET format_version = 4, kdf_memory_kib = 99999999999;",
     );
 }
 
@@ -903,7 +924,7 @@ fn created_vault_stores_key_check() {
             |row| Ok((row.get(0)?, row.get(1)?)),
         )
         .unwrap();
-    assert_eq!((version, len), (2, 40));
+    assert_eq!((version, len), (3, 40));
     assert_eq!(storage.read_header().unwrap().verify_key(&key), Ok(()));
 }
 
@@ -934,6 +955,316 @@ fn migrate_header_on_v2_does_nothing() {
     assert_eq!(
         storage.migrate_header(&other).unwrap(),
         Migration::NotNeeded
+    );
+    drop(storage);
+    assert_eq!(fs::read(&path).unwrap(), before);
+}
+
+// --- Migración del formato 2 al 3 (#93) ---------------------------------
+
+fn v3_key_check() -> [u8; KEY_CHECK_LEN] {
+    let key = crate::crypto::keys::generate_vault_key().unwrap();
+    crate::crypto::keys::seal_key_check(&key, 3).unwrap()
+}
+
+#[test]
+fn migrate_v2_to_v3_creates_tables_and_only_touches_version_and_key_check() {
+    let (_dir, path, storage) = new_vault();
+    let before = storage.read_header().unwrap();
+    storage.close().unwrap();
+    downgrade_to_v2(&path);
+    let mut storage = Storage::open(&path).unwrap();
+
+    let key_check = v3_key_check();
+    assert_eq!(
+        storage.migrate_v2_to_v3(&key_check).unwrap(),
+        Migration::Done
+    );
+
+    let after = storage.read_header().unwrap();
+    assert_eq!(after.format_version(), 3);
+    assert_eq!(after.key_check(), Some(&key_check));
+    // Lo demás de la cabecera no se toca.
+    assert_eq!(after.salt(), before.salt());
+    assert_eq!(after.params(), before.params());
+    assert!(after.encrypted_key() == before.encrypted_key());
+    drop(storage);
+    assert_eq!(pairing_row_counts(&path), (0, 0));
+}
+
+#[test]
+fn migrate_v2_to_v3_on_v3_does_nothing() {
+    let (_dir, path, mut storage) = new_vault();
+    let before = fs::read(&path).unwrap();
+    assert_eq!(
+        storage.migrate_v2_to_v3(&v3_key_check()).unwrap(),
+        Migration::NotNeeded
+    );
+    drop(storage);
+    assert_eq!(fs::read(&path).unwrap(), before);
+}
+
+#[test]
+fn migrate_v2_to_v3_with_existing_pairing_tables_is_corrupt_and_writes_nothing() {
+    let (_dir, path, storage) = new_vault();
+    storage.close().unwrap();
+    raw(&path)
+        .execute("UPDATE header SET format_version = 2", [])
+        .unwrap();
+    let before = fs::read(&path).unwrap();
+    let mut storage = Storage::open(&path).unwrap();
+
+    assert_eq!(
+        storage.migrate_v2_to_v3(&v3_key_check()).err(),
+        Some(Error::Storage(StorageErrorKind::Corrupt))
+    );
+    drop(storage);
+    assert_eq!(fs::read(&path).unwrap(), before);
+}
+
+#[test]
+fn migrate_v2_to_v3_on_an_unexpected_version_is_corrupt() {
+    let (_dir, path, mut storage) = new_vault();
+    raw(&path)
+        .execute("UPDATE header SET format_version = 1", [])
+        .unwrap();
+    assert_eq!(
+        storage.migrate_v2_to_v3(&v3_key_check()).err(),
+        Some(Error::Storage(StorageErrorKind::Corrupt))
+    );
+}
+
+#[test]
+fn migrate_v2_to_v3_without_header_row_is_corrupt() {
+    let (_dir, path, mut storage) = new_vault();
+    raw(&path).execute("DELETE FROM header", []).unwrap();
+    assert_eq!(
+        storage.migrate_v2_to_v3(&v3_key_check()).err(),
+        Some(Error::Storage(StorageErrorKind::Corrupt))
+    );
+}
+
+// --- Identidad (#93) ---------------------------------------------------
+
+fn sealed_blob(len: usize) -> EncryptedPart {
+    EncryptedPart::from_bytes(vec![0xCD; len])
+}
+
+#[test]
+fn get_identity_is_none_when_absent() {
+    let (_dir, _path, storage) = new_vault();
+    assert!(storage.get_identity().unwrap().is_none());
+}
+
+#[test]
+fn insert_and_get_identity_round_trip() {
+    let (_dir, _path, mut storage) = new_vault();
+    assert!(storage.insert_identity(1, &sealed_blob(72)).unwrap());
+    let stored = storage.get_identity().unwrap().unwrap();
+    assert_eq!(stored.version, 1);
+    assert!(stored.sealed == sealed_blob(72));
+}
+
+#[test]
+fn insert_identity_does_not_overwrite_an_existing_row() {
+    let (_dir, path, mut storage) = new_vault();
+    assert!(storage.insert_identity(1, &sealed_blob(72)).unwrap());
+    let before = fs::read(&path).unwrap();
+    assert!(
+        !storage
+            .insert_identity(1, &EncryptedPart::from_bytes(vec![0xEE; 72]))
+            .unwrap()
+    );
+    drop(storage);
+    assert_eq!(fs::read(&path).unwrap(), before);
+}
+
+#[test]
+fn get_identity_with_version_out_of_u16_is_corrupt_identity() {
+    let (_dir, path, mut storage) = new_vault();
+    storage.insert_identity(1, &sealed_blob(72)).unwrap();
+    for version in ["70000", "-1"] {
+        raw(&path)
+            .execute(
+                &format!("UPDATE identity SET identity_schema_version = {version}"),
+                [],
+            )
+            .unwrap();
+        assert_eq!(storage.get_identity().err(), Some(Error::CorruptIdentity));
+    }
+}
+
+// --- PCs emparejadas (#93) -------------------------------------------------
+
+fn pc_id(byte: u8) -> PairedPcId {
+    PairedPcId::from_bytes([byte; 16])
+}
+
+#[test]
+fn paired_pc_crud_round_trip() {
+    let (_dir, _path, mut storage) = new_vault();
+    assert!(storage.list_paired_pcs().unwrap().rows.is_empty());
+
+    storage
+        .insert_paired_pc(pc_id(1), 1, &sealed_blob(60))
+        .unwrap();
+    storage
+        .insert_paired_pc(pc_id(2), 1, &sealed_blob(70))
+        .unwrap();
+    let listing = storage.list_paired_pcs().unwrap();
+    assert_eq!(listing.rows.len(), 2);
+    assert!(listing.corrupt.is_empty());
+    assert_eq!(listing.unidentified_corrupt, 0);
+
+    storage
+        .update_paired_pc(pc_id(1), 1, &sealed_blob(90))
+        .unwrap();
+    let stored = storage.get_paired_pc(pc_id(1)).unwrap().unwrap();
+    assert!(stored.sealed == sealed_blob(90));
+    assert!(storage.get_paired_pc(pc_id(9)).unwrap().is_none());
+
+    storage.delete_paired_pc(pc_id(1)).unwrap();
+    assert_eq!(storage.list_paired_pcs().unwrap().rows.len(), 1);
+}
+
+#[test]
+fn update_and_delete_of_an_unknown_pc_are_not_found() {
+    let (_dir, _path, mut storage) = new_vault();
+    assert_eq!(
+        storage
+            .update_paired_pc(pc_id(5), 1, &sealed_blob(60))
+            .err(),
+        Some(Error::PairedPcNotFound)
+    );
+    assert_eq!(
+        storage.delete_paired_pc(pc_id(5)).err(),
+        Some(Error::PairedPcNotFound)
+    );
+}
+
+#[test]
+fn insert_paired_pc_with_a_taken_id_is_an_error_and_writes_nothing() {
+    let (_dir, path, mut storage) = new_vault();
+    storage
+        .insert_paired_pc(pc_id(1), 1, &sealed_blob(60))
+        .unwrap();
+    let before = fs::read(&path).unwrap();
+    assert!(
+        storage
+            .insert_paired_pc(pc_id(1), 1, &sealed_blob(61))
+            .is_err()
+    );
+    drop(storage);
+    assert_eq!(fs::read(&path).unwrap(), before);
+}
+
+#[test]
+fn listing_separates_damaged_rows_from_valid_ones() {
+    let (_dir, path, mut storage) = new_vault();
+    storage
+        .insert_paired_pc(pc_id(1), 1, &sealed_blob(60))
+        .unwrap();
+    storage
+        .insert_paired_pc(pc_id(2), 1, &sealed_blob(60))
+        .unwrap();
+    storage
+        .insert_paired_pc(pc_id(3), 1, &sealed_blob(60))
+        .unwrap();
+    let conn = raw(&path);
+    // Versión fuera de u16 (se lista como dañada con su id).
+    conn.execute(
+        "UPDATE paired_pcs SET pc_schema_version = 70000 WHERE id = ?1",
+        [pc_id(2).as_bytes().as_slice()],
+    )
+    .unwrap();
+    // Un id que no mide 16 bytes: el `CHECK` solo se aplica al escribir.
+    conn.execute_batch("PRAGMA ignore_check_constraints = ON")
+        .unwrap();
+    conn.execute(
+        "INSERT INTO paired_pcs (id, pc_schema_version, data) VALUES (zeroblob(15), 1, zeroblob(60))",
+        [],
+    )
+    .unwrap();
+
+    let listing = storage.list_paired_pcs().unwrap();
+    assert_eq!(listing.rows.len(), 2);
+    assert_eq!(listing.corrupt, vec![pc_id(2)]);
+    assert_eq!(listing.unidentified_corrupt, 1);
+    // Una fila dañada leída por id es `CorruptPairedPc`, no ausente.
+    assert_eq!(
+        storage.get_paired_pc(pc_id(2)).err(),
+        Some(Error::CorruptPairedPc)
+    );
+    // Y se puede quitar.
+    storage.delete_paired_pc(pc_id(2)).unwrap();
+    assert!(storage.list_paired_pcs().unwrap().corrupt.is_empty());
+}
+
+// --- Preparar la copia temporal de una importación (#93) -----------------
+
+/// Rellena `identity` y `paired_pcs` con blobs de longitud válida.
+fn fill_pairing(path: &Path) {
+    raw(path)
+        .execute_batch(
+            "INSERT INTO identity (id, identity_schema_version, data) VALUES (1, 1, zeroblob(72));
+             INSERT INTO paired_pcs (id, pc_schema_version, data) VALUES (randomblob(16), 1, zeroblob(80));",
+        )
+        .unwrap();
+}
+
+#[test]
+fn prepare_import_copy_on_v3_empties_identity_and_pcs() {
+    let (_dir, path, mut storage) = new_vault();
+    fill_pairing(&path);
+    assert_eq!(pairing_row_counts(&path), (1, 1));
+
+    storage.prepare_import_copy(None).unwrap();
+    drop(storage);
+    assert_eq!(pairing_row_counts(&path), (0, 0));
+    assert_eq!(stored_version_of(&path), 3);
+}
+
+#[test]
+fn prepare_import_copy_from_v2_migrates_and_leaves_empty_tables() {
+    let (_dir, path, storage) = new_vault();
+    storage.close().unwrap();
+    downgrade_to_v2(&path);
+    let mut storage = Storage::open(&path).unwrap();
+
+    let key_check = v3_key_check();
+    storage.prepare_import_copy(Some(&key_check)).unwrap();
+    let header = storage.read_header().unwrap();
+    assert_eq!(header.format_version(), 3);
+    assert_eq!(header.key_check(), Some(&key_check));
+    drop(storage);
+    assert_eq!(pairing_row_counts(&path), (0, 0));
+}
+
+#[test]
+fn prepare_import_copy_expecting_v2_on_a_v3_copy_is_corrupt_and_writes_nothing() {
+    // La copia cambió de versión después de validarla: no se instala algo
+    // distinto de lo validado.
+    let (_dir, path, mut storage) = new_vault();
+    fill_pairing(&path);
+    let before = fs::read(&path).unwrap();
+    assert_eq!(
+        storage.prepare_import_copy(Some(&v3_key_check())).err(),
+        Some(Error::Storage(StorageErrorKind::Corrupt))
+    );
+    drop(storage);
+    assert_eq!(fs::read(&path).unwrap(), before);
+}
+
+#[test]
+fn prepare_import_copy_expecting_v3_on_a_v2_copy_is_corrupt_and_writes_nothing() {
+    let (_dir, path, storage) = new_vault();
+    storage.close().unwrap();
+    downgrade_to_v2(&path);
+    let before = fs::read(&path).unwrap();
+    let mut storage = Storage::open(&path).unwrap();
+    assert_eq!(
+        storage.prepare_import_copy(None).err(),
+        Some(Error::Storage(StorageErrorKind::Corrupt))
     );
     drop(storage);
     assert_eq!(fs::read(&path).unwrap(), before);

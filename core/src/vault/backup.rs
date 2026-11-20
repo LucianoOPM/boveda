@@ -17,9 +17,10 @@ use std::path::{Path, PathBuf};
 
 use secrecy::SecretString;
 
-use super::header::VaultHeader;
+use super::header::{FORMAT_VERSION, VaultHeader};
 use super::storage::{Migration, Storage, require_absolute};
 use super::{UnlockReport, Unlocked, Vault};
+use crate::crypto::keys;
 use crate::error::{Error, Result, StorageErrorKind};
 
 /// Sufijo de la copia temporal de un respaldo, junto a `dest`: así el
@@ -69,19 +70,32 @@ pub(super) fn import(
     // para soltarse después de ella: en Windows no se borra un archivo
     // abierto.
     let temp = copy_to_temp(backup, &with_suffix(dest, IMPORT_SUFFIX))?;
-    let (unlocked, report, upgraded) = validate(&temp.0, password)?;
-    // Un respaldo de la versión 1 se migra en la copia temporal, antes del
-    // renombrado: así `dest` nunca queda en la versión 1. La cabecera nueva
-    // ya viene armada con la llave derivada de la validación, sin un
-    // segundo Argon2id.
-    if let Some(header) = upgraded {
+    let (unlocked, report, version, upgraded) = validate(&temp.0, password)?;
+    // La copia temporal se deja lista antes del renombrado, para que `dest`
+    // nunca quede en una versión anterior a la 3 ni con la identidad y las PCs
+    // del respaldo. Cualquier fallo en la cadena deja `dest` intacta: el
+    // guardián borra la copia.
+    {
         let mut storage = Storage::open(&temp.0)?;
-        // La copia temporal la creó esta llamada: si al migrar ya no es la
-        // versión 1, alguien la cambió después de validarla. No se instala
-        // algo distinto de lo validado; el guardián borra la copia.
-        if storage.migrate_header(&header)? == Migration::NotNeeded {
+        // Un respaldo de la versión 1 pasa primero a la 2. La cabecera nueva
+        // ya viene armada con la llave derivada de la validación, sin un
+        // segundo Argon2id. La copia la creó esta llamada: si al migrar ya no
+        // es la versión 1, alguien la cambió después de validarla.
+        if let Some(header) = upgraded
+            && storage.migrate_header(&header)? == Migration::NotNeeded
+        {
             return Err(Error::Storage(StorageErrorKind::Corrupt));
         }
+        // Una versión 1 o 2 se migra a la 3 con el `key_check` de la 3 (con
+        // la llave ya validada) y, en la misma transacción, se descarta la
+        // identidad y la lista de PCs. Importar no genera una identidad: la
+        // nueva se crea al emparejar.
+        let key_check = if version < FORMAT_VERSION {
+            Some(keys::seal_key_check(&unlocked.key, FORMAT_VERSION)?)
+        } else {
+            None
+        };
+        storage.prepare_import_copy(key_check.as_ref())?;
         storage.close()?;
     }
 
@@ -149,18 +163,21 @@ fn same_file(a: &Path, b: &Path) -> bool {
 /// versión desconocida), revisa su integridad, la desbloquea y descifra los
 /// datos de búsqueda. Cierra la conexión antes de volver.
 ///
-/// Si la copia es de la versión de formato 1, devuelve también la cabecera
-/// de la versión 2 para migrarla (ver [`VaultHeader::unlock_upgrading`]).
+/// Devuelve también la versión de formato de la copia. Si es la 1, devuelve
+/// además la cabecera de la versión 2 para migrarla (ver
+/// [`VaultHeader::unlock_upgrading`]).
 fn validate(
     path: &Path,
     password: &SecretString,
-) -> Result<(Unlocked, UnlockReport, Option<VaultHeader>)> {
+) -> Result<(Unlocked, UnlockReport, u16, Option<VaultHeader>)> {
     let storage = Storage::open_read_only(path)?;
     storage.check_integrity()?;
-    let (key, upgraded) = storage.read_header()?.unlock_upgrading(password)?;
+    let header = storage.read_header()?;
+    let version = header.format_version();
+    let (key, upgraded) = header.unlock_upgrading(password)?;
     let (unlocked, report) = Vault::load_entries(&storage, key)?;
     storage.close()?;
-    Ok((unlocked, report, upgraded))
+    Ok((unlocked, report, version, upgraded))
 }
 
 /// Si `dest` tiene un `-journal` o un `-wal` (un cierre forzado a mitad de

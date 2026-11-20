@@ -186,6 +186,67 @@ pub(crate) fn fixture_v1_copy() -> (tempfile::TempDir, PathBuf) {
     (dir, path)
 }
 
+/// Contraseña de prueba de `core/tests/fixtures/vault-v2.db`. Se repite en
+/// `core/tests/vault.rs`, que no ve el código `cfg(test)` del crate.
+pub(crate) const FIXTURE_V2_PASSWORD: &str = "prueba-bóveda-v2";
+
+/// Copia `core/tests/fixtures/vault-v2.db` a un directorio temporal. Abrirla
+/// con contraseña o con llave la migra a la v3, así que nunca se usa el
+/// archivo del repositorio.
+pub(crate) fn fixture_v2_copy() -> (tempfile::TempDir, PathBuf) {
+    let source = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/vault-v2.db");
+    let (dir, path) = temp_path();
+    fs::copy(source, &path).unwrap();
+    (dir, path)
+}
+
+/// Contraseña de prueba de `core/tests/fixtures/vault-v3.db`. Se repite en
+/// `core/tests/vault.rs`, que no ve el código `cfg(test)` del crate.
+pub(crate) const FIXTURE_V3_PASSWORD: &str = "prueba-bóveda-v3";
+
+/// Copia `core/tests/fixtures/vault-v3.db` a un directorio temporal. Aunque
+/// una v3 no se migra al desbloquear, `reveal` escribe `last_used_at`: nunca se
+/// usa el archivo del repositorio.
+pub(crate) fn fixture_v3_copy() -> (tempfile::TempDir, PathBuf) {
+    let source = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/vault-v3.db");
+    let (dir, path) = temp_path();
+    fs::copy(source, &path).unwrap();
+    (dir, path)
+}
+
+/// Deja una bóveda v3 como una v2: sin las tablas de identidad y de PCs y
+/// con `format_version = 2`. `key_check` sigue siendo el de la versión 3.
+pub(crate) fn downgrade_to_v2(path: &Path) {
+    raw(path)
+        .execute_batch(
+            "DROP TABLE identity; DROP TABLE paired_pcs; UPDATE header SET format_version = 2;",
+        )
+        .unwrap();
+}
+
+/// Filas de `identity` y de `paired_pcs`.
+pub(crate) fn pairing_row_counts(path: &Path) -> (i64, i64) {
+    let conn = raw(path);
+    let count = |table: &str| -> i64 {
+        conn.query_row(&format!("SELECT count(*) FROM {table}"), [], |row| {
+            row.get(0)
+        })
+        .unwrap()
+    };
+    (count("identity"), count("paired_pcs"))
+}
+
+/// `format_version` guardada en el archivo.
+pub(crate) fn stored_version_of(path: &Path) -> i64 {
+    raw(path)
+        .query_row(
+            "SELECT format_version FROM header WHERE id = 1",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap()
+}
+
 /// Esquema completo de una base: `(type, name, tbl_name, sql)` de cada fila
 /// de `sqlite_schema`, ordenado por nombre.
 pub(crate) fn schema_of(path: &Path) -> Vec<(String, String, String, Option<String>)> {
