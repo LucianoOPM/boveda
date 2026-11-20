@@ -79,13 +79,15 @@ boveda/
 └── desktop/                # app Tauri 2 (esperado, etapa 3)
     ├── CLAUDE.md
     ├── package.json
-    ├── src/                # interfaz: ventana del QR y lista de dispositivos
+    ├── src/                # interfaz: esqueleto de React sin pantallas (main.tsx, App.tsx) y styles/tokens.css; la ventana del QR y la lista de dispositivos llegan con #101 y #107
     └── src-tauri/
         ├── Cargo.toml      # sin sección [workspace]: pertenece al de la raíz
         ├── tauri.conf.json
         └── src/
             ├── main.rs
-            ├── tray.rs       # ícono y menú de la bandeja
+            ├── lib.rs        # Builder: single-instance, autostart y bandeja; no termina al cerrar la última ventana
+            ├── tray.rs       # ícono y menú de la bandeja (menu_spec)
+            ├── autostart.rs  # lógica de la casilla Iniciar con Windows
             ├── server.rs     # escucha, mDNS, acepta solo emparejados
             ├── clipboard.rs  # escritura excluida del historial y borrado a 30 s
             └── identity.rs   # llave privada protegida con DPAPI
@@ -123,8 +125,8 @@ Sin dependencias de interfaz ni de plataforma.
 
 ### desktop/ (Windows, Tauri 2)
 
-- `src-tauri/src/`: bandeja, servidor de red local, portapapeles e identidad protegida con DPAPI.
-- `src/`: interfaz mínima (ventana del QR y lista de dispositivos).
+- `src-tauri/src/`: bandeja con su menú de cuatro opciones (`tray.rs`; «Emparejar celular» y «Dispositivos emparejados» siguen deshabilitadas hasta #101 y #107) y la casilla «Iniciar con Windows» (`autostart.rs`). Faltan el servidor de red local, el portapapeles y la identidad protegida con DPAPI. Sin ventana al arrancar; instancia única con `tauri-plugin-single-instance` 2.5.5. «Iniciar con Windows» usa `tauri-plugin-autostart` 2.7.0 y no tiene archivo de ajustes: la casilla lee y reconcilia `is_enabled()`, que consulta la clave `Run` del usuario en el registro. Ambos plugins piden `tauri` 2.12 o posterior.
+- `src/`: interfaz mínima (esqueleto de React y `styles/tokens.css`); la ventana del QR y la lista de dispositivos llegan con #101 y #107.
 
 ## Flujos principales
 

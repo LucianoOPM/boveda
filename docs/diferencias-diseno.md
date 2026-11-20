@@ -1,6 +1,6 @@
 # Diferencias entre el diseño y la app
 
-Actualizado: 2026-11-19
+Actualizado: 2026-11-20
 
 Lo que el diseño de Penpot y [`docs/DESIGN.md`](DESIGN.md) muestran y la app **no hace hoy**. Cada punto es un candidato a feature: se deja fuera de la restilización de las pantallas y se anota aquí para implementarlo después.
 
@@ -100,3 +100,12 @@ Son las decisiones que `DESIGN.md` (sección 15) da por hechas y que cambian la 
 | Barra de navegación flotante (D3). | Ajustes se abre desde el engranaje del encabezado. | Ver D3 en General. |
 | Texto de la advertencia del diálogo: "Esto reemplazará tu bóveda actual por la del respaldo." (`DESIGN.md` 7.9). | "Reemplaza la bóveda actual." (también es el subtítulo de la fila "Importar respaldo"). | Cambiar el texto; hoy lo buscan las pruebas de `backup_gate_test.dart`. |
 | Íconos de las filas: `download` (exportar) y `refresh-cw` (importar), con una flecha a la derecha. | Se adoptaron los del diseño. La flecha es solo decoración: las dos filas abren el selector de archivos o un diálogo, no otra pantalla. El de exportar antes era una flecha de subir (`upload_file`). | Nada; si la flecha confunde, se quita. |
+
+## App de Windows (bandeja)
+
+| Diseño | App hoy | Qué haría falta |
+| --- | --- | --- |
+| El clic izquierdo en el ícono abre "Dispositivos emparejados" (`DESIGN.md` 8). | El clic izquierdo muestra el menú, igual que el derecho. Es **temporal**. | #107 implementa el comportamiento definitivo, cuando exista esa ventana. |
+| "Emparejar celular" y "Dispositivos emparejados" abren sus ventanas. | Las dos opciones del menú están deshabilitadas. | Habilitarlas con sus ventanas (#101 y #107). |
+| Ícono monocromo de 16 px que sigue la barra de tareas, con un punto en `accent` mientras hay una contraseña en el portapapeles. | Se usa el ícono de la app, sin versión monocroma ni punto. | Un ícono monocromo propio y el punto, que llega con el portapapeles (#98). |
+| Fuentes Plus Jakarta Sans y JetBrains Mono empaquetadas en `desktop/src/assets/fonts/` (`DESIGN.md` 3). | `tokens.css` declara las familias y cae a las del sistema; aún no hay ventanas que las muestren. | Empaquetar las fuentes y su licencia junto con la primera ventana (#101). |
