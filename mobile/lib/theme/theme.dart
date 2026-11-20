@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'accents.dart';
 import 'colors.dart';
 import 'extensions.dart';
+import 'icons.dart';
 import 'spacing.dart';
 
 /// Acento que usa la app. Elegir otro es el selector de Ajustes (D2), que
@@ -125,6 +126,10 @@ ThemeData buildTheme(BovedaAccent accent) {
       scrolledUnderElevation: 0,
       centerTitle: false,
       titleTextStyle: textTheme.titleLarge,
+    ),
+    // La flecha de volver es la de Lucide; el widget sigue siendo `BackButton`.
+    actionIconTheme: ActionIconThemeData(
+      backButtonIconBuilder: (context) => const Icon(BovedaIcons.chevronLeft),
     ),
     dividerTheme: const DividerThemeData(color: BovedaColors.borderSubtle),
     // Principal: un solo botón por pantalla, alto 52, radio 12.

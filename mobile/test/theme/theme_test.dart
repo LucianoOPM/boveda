@@ -4,6 +4,7 @@
 import 'package:boveda/theme/accents.dart';
 import 'package:boveda/theme/colors.dart';
 import 'package:boveda/theme/extensions.dart';
+import 'package:boveda/theme/icons.dart';
 import 'package:boveda/theme/spacing.dart';
 import 'package:boveda/theme/theme.dart';
 import 'package:flutter/material.dart';
@@ -217,6 +218,41 @@ void main() {
         expect(style.backgroundColor!.resolve(disabled), isNot(accent.accent));
         expect(style.backgroundColor!.resolve({}), accent.accent);
         expect(style.foregroundColor!.resolve({}), accent.onAccent);
+      });
+
+      testWidgets('the back button uses the Lucide chevron', (tester) async {
+        await tester.pumpWidget(
+          MaterialApp(
+            theme: t,
+            home: Builder(
+              builder: (context) => TextButton(
+                onPressed: () => Navigator.of(context).push<void>(
+                  MaterialPageRoute(
+                    builder: (_) =>
+                        Scaffold(appBar: AppBar(title: const Text('x'))),
+                  ),
+                ),
+                child: const Text('ir'),
+              ),
+            ),
+          ),
+        );
+        await tester.tap(find.text('ir'));
+        await tester.pumpAndSettle();
+
+        // El widget sigue siendo el `BackButton` de siempre.
+        expect(find.byType(BackButton), findsOneWidget);
+        expect(
+          find.descendant(
+            of: find.byType(BackButton),
+            matching: find.byIcon(BovedaIcons.chevronLeft),
+          ),
+          findsOneWidget,
+        );
+        await tester.pageBack();
+        await tester.pumpAndSettle();
+        expect(find.text('ir'), findsOneWidget);
+        expect(find.byType(BackButton), findsNothing);
       });
 
       test('floating action button follows the design', () {
