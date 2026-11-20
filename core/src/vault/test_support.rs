@@ -200,6 +200,20 @@ pub(crate) fn fixture_v2_copy() -> (tempfile::TempDir, PathBuf) {
     (dir, path)
 }
 
+/// Contraseña de prueba de `core/tests/fixtures/vault-v3.db`. Se repite en
+/// `core/tests/vault.rs`, que no ve el código `cfg(test)` del crate.
+pub(crate) const FIXTURE_V3_PASSWORD: &str = "prueba-bóveda-v3";
+
+/// Copia `core/tests/fixtures/vault-v3.db` a un directorio temporal. Aunque
+/// una v3 no se migra al desbloquear, `reveal` escribe `last_used_at`: nunca se
+/// usa el archivo del repositorio.
+pub(crate) fn fixture_v3_copy() -> (tempfile::TempDir, PathBuf) {
+    let source = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/vault-v3.db");
+    let (dir, path) = temp_path();
+    fs::copy(source, &path).unwrap();
+    (dir, path)
+}
+
 /// Deja una bóveda v3 como una v2: sin las tablas de identidad y de PCs y
 /// con `format_version = 2`. `key_check` sigue siendo el de la versión 3.
 pub(crate) fn downgrade_to_v2(path: &Path) {

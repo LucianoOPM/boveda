@@ -1125,7 +1125,7 @@ fn fill_fixture(vault: &mut Vault) {
 /// Crea la bóveda de ejemplo `name` en `core/tests/fixtures/` con
 /// `KdfParams::MIN`. Si el archivo ya existe, falla a propósito con
 /// `AlreadyExists` sin tocarlo.
-fn generate_fixture(name: &str, fixture_password: &str) {
+fn generate_fixture(name: &str, fixture_password: &str) -> Vault {
     // Ruta absoluta, como exigen las reglas de rutas (`SQLITE_USE_URI`).
     let path = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("tests/fixtures")
@@ -1135,6 +1135,7 @@ fn generate_fixture(name: &str, fixture_password: &str) {
     let mut vault =
         Vault::create_with_params(&path, &password(fixture_password), KdfParams::MIN).unwrap();
     fill_fixture(&mut vault);
+    vault
 }
 
 /// Generó `core/tests/fixtures/vault-v1.db`, la bóveda de ejemplo del
@@ -1150,7 +1151,7 @@ fn generate_fixture(name: &str, fixture_password: &str) {
 #[test]
 #[ignore = "registro: generó vault-v1.db con el formato 1; ya no lo reproduce"]
 fn generate_fixture_v1() {
-    generate_fixture("vault-v1.db", FIXTURE_V1_PASSWORD);
+    drop(generate_fixture("vault-v1.db", FIXTURE_V1_PASSWORD));
 }
 
 /// Genera `core/tests/fixtures/vault-v2.db`, la bóveda de ejemplo del
@@ -1165,7 +1166,47 @@ fn generate_fixture_v1() {
 #[test]
 #[ignore = "solo al introducir una versión de formato nueva"]
 fn generate_fixture_v2() {
-    generate_fixture("vault-v2.db", FIXTURE_V2_PASSWORD);
+    drop(generate_fixture("vault-v2.db", FIXTURE_V2_PASSWORD));
+}
+
+/// Genera `core/tests/fixtures/vault-v3.db`, la bóveda de ejemplo del
+/// formato 3: el mismo contenido que las anteriores, una identidad fija
+/// (`[7u8; 32]`) y dos PCs emparejadas.
+///
+/// Se ejecutó una sola vez:
+/// `cargo test -p vault-core --lib -- --ignored --exact vault::tests::generate_fixture_v3`
+///
+/// Nunca con `--ignored` sin filtro: también correría los demás generadores.
+#[test]
+#[ignore = "solo al introducir una versión de formato nueva"]
+fn generate_fixture_v3() {
+    let mut vault = generate_fixture("vault-v3.db", FIXTURE_V3_PASSWORD);
+    vault.set_identity_for_test([0x07; 32]).unwrap();
+
+    // Una PC con IP (y por eso con fecha de la última vez) y otra sin IP.
+    let desktop = vault
+        .add_paired_pc(NewPairedPc {
+            public_key: [0x11; 32],
+            name: "Escritorio".to_owned(),
+            last_ip: None,
+        })
+        .unwrap();
+    vault
+        .update_paired_pc(
+            desktop,
+            PairedPcUpdate {
+                name: None,
+                last_ip: Some("192.168.1.50".parse().unwrap()),
+            },
+        )
+        .unwrap();
+    vault
+        .add_paired_pc(NewPairedPc {
+            public_key: [0x22; 32],
+            name: "Portátil".to_owned(),
+            last_ip: None,
+        })
+        .unwrap();
 }
 
 // --- Migración del formato 1 al 2 (#34) ----------------------------------
@@ -1480,7 +1521,8 @@ fn open_and_read_only_open_never_modify_any_version() {
     let (_dir2, v2) = fixture_v2_copy();
     let (_dir3, v3, vault) = new_vault();
     drop(vault);
-    for path in [&v1, &v2, &v3] {
+    let (_dir4, v3_fixture) = fixture_v3_copy();
+    for path in [&v1, &v2, &v3, &v3_fixture] {
         let before = fs::read(path).unwrap();
         drop(Vault::open(path).unwrap());
         assert_eq!(fs::read(path).unwrap(), before, "open {path:?}");
