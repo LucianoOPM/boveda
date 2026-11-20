@@ -15,7 +15,7 @@ mod tests;
 use std::fmt;
 use std::sync::mpsc::{Sender, sync_channel};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use secrecy::{ExposeSecret, SecretString};
 
@@ -110,5 +110,18 @@ impl ClipboardManager {
             })
             .map_err(|_| ClipboardError::Stopped)?;
         wait.recv().map_err(|_| ClipboardError::Stopped)?
+    }
+
+    /// Último intento de limpieza al salir de la app. Espera como mucho
+    /// `timeout`: si Windows no deja comprobar el portapapeles no se borra
+    /// nada y el cierre sigue. Después, `deliver` devuelve `Stopped`; llamarlo
+    /// otra vez no hace nada.
+    pub fn shutdown(&self, timeout: Duration) {
+        let (reply, wait) = sync_channel(1);
+        let deadline = Instant::now() + timeout;
+        if self.tx.send(Command::Shutdown { deadline, reply }).is_err() {
+            return;
+        }
+        let _ = wait.recv_timeout(timeout);
     }
 }

@@ -503,3 +503,93 @@ fn cleanup_entries_are_bounded() {
     std::thread::sleep(Duration::from_millis(400));
     assert_eq!(clear_calls(&fake), 6);
 }
+
+#[test]
+fn shutdown_clears_the_pending_password() {
+    let fake = FakeBackend::default();
+    let manager = manager_with(&fake, 60_000, 20);
+    assert_eq!(manager.deliver(&secret("prueba-no-real-1")), Ok(()));
+
+    manager.shutdown(Duration::from_secs(2));
+
+    assert_eq!(fake.content(), FakeContent::Empty);
+}
+
+#[test]
+fn shutdown_does_not_clear_other_content() {
+    let fake = FakeBackend::default();
+    let manager = manager_with(&fake, 60_000, 20);
+    assert_eq!(manager.deliver(&secret("prueba-no-real-1")), Ok(()));
+    fake.set_content(text("copiado-por-el-usuario"));
+
+    manager.shutdown(Duration::from_secs(2));
+
+    assert_eq!(fake.content(), text("copiado-por-el-usuario"));
+}
+
+#[test]
+fn shutdown_with_unavailable_clipboard_returns_within_the_timeout_and_does_not_clear() {
+    let fake = FakeBackend::default();
+    fake.set_unavailable_for(usize::MAX);
+    let manager = manager_with(&fake, 60_000, 20);
+    assert_eq!(manager.deliver(&secret("prueba-no-real-1")), Ok(()));
+
+    let start = Instant::now();
+    manager.shutdown(Duration::from_millis(300));
+
+    assert!(start.elapsed() < Duration::from_millis(500));
+    assert_eq!(fake.content(), text("prueba-no-real-1"));
+    // Tres intentos y ninguno borró nada.
+    assert_eq!(clear_calls(&fake), 3);
+}
+
+#[test]
+fn shutdown_respects_a_deadline_shorter_than_its_attempts() {
+    let fake = FakeBackend::default();
+    fake.set_unavailable_for(usize::MAX);
+    let manager = ClipboardManager::with_backend(
+        fake.clone(),
+        Config {
+            ttl: Duration::from_secs(60),
+            shutdown_interval: Duration::from_millis(200),
+            shutdown_attempts: 50,
+            ..fast_config()
+        },
+    );
+    assert_eq!(manager.deliver(&secret("prueba-no-real-1")), Ok(()));
+
+    let start = Instant::now();
+    manager.shutdown(Duration::from_millis(300));
+
+    // 50 intentos de 200 ms serían 10 s: el plazo corta mucho antes.
+    assert!(start.elapsed() < Duration::from_millis(700));
+    assert!(clear_calls(&fake) < 50);
+    assert_eq!(fake.content(), text("prueba-no-real-1"));
+}
+
+#[test]
+fn shutdown_twice_and_deliver_after_shutdown_are_safe() {
+    let fake = FakeBackend::default();
+    let manager = manager(&fake);
+    manager.shutdown(Duration::from_secs(2));
+
+    manager.shutdown(Duration::from_secs(2));
+
+    assert_eq!(
+        manager.deliver(&secret("prueba-no-real-1")),
+        Err(ClipboardError::Stopped)
+    );
+    assert!(fake.calls().is_empty());
+}
+
+#[test]
+fn shutdown_without_pending_entries_returns_quickly() {
+    let fake = FakeBackend::default();
+    let manager = manager(&fake);
+
+    let start = Instant::now();
+    manager.shutdown(Duration::from_secs(2));
+
+    assert!(start.elapsed() < Duration::from_millis(500));
+    assert!(fake.calls().is_empty());
+}

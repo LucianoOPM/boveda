@@ -15,6 +15,11 @@ pub(super) enum Command {
         password: SecretString,
         reply: SyncSender<Result<(), ClipboardError>>,
     },
+    /// Último intento de limpieza antes de salir; el trabajador termina después.
+    Shutdown {
+        deadline: Instant,
+        reply: SyncSender<()>,
+    },
 }
 
 /// Una contraseña que hay que borrar si sigue en el portapapeles. Solo guarda
@@ -52,6 +57,11 @@ pub(super) fn run<B: ClipboardBackend>(
                 drop(password);
                 let _ = reply.send(result);
             }
+            Ok(Command::Shutdown { deadline, reply }) => {
+                shutdown(&mut backend, &config, &key, &pending, deadline);
+                let _ = reply.send(());
+                break;
+            }
             Err(RecvTimeoutError::Timeout) => {}
             // El gestor se soltó: no queda nadie a quien atender.
             Err(RecvTimeoutError::Disconnected) => break,
@@ -88,6 +98,34 @@ fn process_due<B: ClipboardBackend>(
             }
         }
     });
+}
+
+/// Limpieza al salir: hasta `shutdown_attempts` intentos por entrada, sin pasar
+/// de `deadline`. Si Windows no deja comprobar, no se borra y el cierre sigue.
+fn shutdown<B: ClipboardBackend>(
+    backend: &mut B,
+    config: &Config,
+    key: &FingerprintKey,
+    pending: &[Pending],
+    deadline: Instant,
+) {
+    for entry in pending {
+        let fingerprint = entry.fingerprint;
+        for attempt in 1..=config.shutdown_attempts {
+            let outcome = backend.clear_if_matches(&|bytes| key.fingerprint(bytes) == fingerprint);
+            let last = attempt == config.shutdown_attempts;
+            if outcome != ClearOutcome::Unavailable
+                || last
+                || Instant::now() + config.shutdown_interval >= deadline
+            {
+                if outcome == ClearOutcome::Unavailable {
+                    eprintln!("No se pudo comprobar el portapapeles al salir: no se borró nada.");
+                }
+                break;
+            }
+            std::thread::sleep(config.shutdown_interval);
+        }
+    }
 }
 
 fn deliver<B: ClipboardBackend>(
