@@ -2,6 +2,7 @@
 // los boards "Bóveda" de Penpot). El comportamiento sigue en
 // `search_screen_test.dart`.
 
+import 'package:boveda/screens/entry_form_screen.dart';
 import 'package:boveda/screens/search_screen.dart';
 import 'package:boveda/src/rust/api/entries.dart';
 import 'package:boveda/theme/accents.dart';
@@ -214,6 +215,127 @@ void main() {
       Theme.of(tester.element(find.byType(Scaffold))).scaffoldBackgroundColor,
       BovedaColors.bgBase,
     );
+  });
+
+  group('estados', () {
+    const emptyText =
+        'Todavía no hay contraseñas guardadas. Toca + para agregar la primera.';
+
+    for (final accent in BovedaAccent.values) {
+      testWidgets('con ${accent.name}: vacío con caja, ícono, texto y botón', (
+        tester,
+      ) async {
+        await pumpSearch(tester, accent: accent);
+
+        final box = find.byKey(const Key('empty-icon-box'));
+        expect(tester.getSize(box), const Size(72, 72));
+        final decoration =
+            tester.widget<Container>(box).decoration! as BoxDecoration;
+        expect(decoration.color, BovedaColors.surface2);
+        expect(decoration.borderRadius, BorderRadius.circular(Radii.card));
+        final icon = tester.widget<Icon>(
+          find.descendant(of: box, matching: find.byIcon(BovedaIcons.vault)),
+        );
+        expect(icon.color, accent.accent);
+        expect(find.text(emptyText), findsOneWidget);
+        expect(
+          find.widgetWithText(OutlinedButton, 'Agregar la primera'),
+          findsOneWidget,
+        );
+      });
+    }
+
+    testWidgets('"Agregar la primera" abre el formulario de crear', (
+      tester,
+    ) async {
+      await pumpSearch(tester);
+
+      await tester.tap(find.byKey(const Key('empty-add')));
+      await tester.pumpAndSettle();
+
+      expect(find.byType(EntryFormScreen), findsOneWidget);
+    });
+
+    testWidgets('con texto buscado y sin resultados: lupa y texto, sin botón', (
+      tester,
+    ) async {
+      await pumpSearch(tester);
+      await tester.enterText(searchField, 'xyz');
+      await tester.pump();
+
+      expect(find.text('Sin resultados para «xyz»'), findsOneWidget);
+      expect(
+        find.descendant(
+          of: find.byKey(const Key('no-results')),
+          matching: find.byIcon(BovedaIcons.search),
+        ),
+        findsOneWidget,
+      );
+      expect(find.byKey(const Key('empty-add')), findsNothing);
+      expect(find.byKey(const Key('empty-icon-box')), findsNothing);
+    });
+
+    testWidgets('error de búsqueda: alerta, texto y "Reintentar"', (
+      tester,
+    ) async {
+      session.onSearch = (_) async => throw Exception('falla');
+      await pumpSearch(tester);
+
+      final failed = find.byKey(const Key('search-failed'));
+      expect(
+        find.descendant(of: failed, matching: find.text('No se pudo buscar')),
+        findsOneWidget,
+      );
+      expect(
+        find.descendant(
+          of: failed,
+          matching: find.byIcon(BovedaIcons.triangleAlert),
+        ),
+        findsOneWidget,
+      );
+      expect(find.widgetWithText(TextButton, 'Reintentar'), findsOneWidget);
+
+      // Reintentar vuelve a buscar.
+      session.onSearch = (_) async => sample();
+      await tester.tap(find.text('Reintentar'));
+      await tester.pump();
+      expect(find.byType(VaultCard), findsNWidgets(4));
+    });
+
+    for (final scale in [1.0, 2.0]) {
+      testWidgets('vacío a ${scale * 100} % en una pantalla baja con teclado: '
+          'no desborda y se desplaza', (tester) async {
+        tester.view.physicalSize = const Size(360, 400);
+        tester.view.devicePixelRatio = 1;
+        tester.view.viewInsets = const FakeViewPadding(bottom: 200);
+        addTearDown(tester.view.reset);
+        await pumpSearch(tester, textScale: scale, onOpenSettings: () {});
+
+        expect(tester.takeException(), isNull);
+        expect(find.text(emptyText), findsOneWidget);
+      });
+
+      testWidgets('error a ${scale * 100} % en una pantalla baja: no '
+          'desborda', (tester) async {
+        session.onSearch = (_) async => throw Exception('falla');
+        tester.view.physicalSize = const Size(360, 400);
+        tester.view.devicePixelRatio = 1;
+        tester.view.viewInsets = const FakeViewPadding(bottom: 200);
+        addTearDown(tester.view.reset);
+        await pumpSearch(tester, textScale: scale, onOpenSettings: () {});
+
+        expect(tester.takeException(), isNull);
+        expect(find.text('No se pudo buscar'), findsOneWidget);
+      });
+    }
+
+    testWidgets('sin resultados a 200 % no desborda', (tester) async {
+      await pumpSearch(tester, textScale: 2);
+      await tester.enterText(searchField, 'x' * 40);
+      await tester.pump();
+
+      expect(tester.takeException(), isNull);
+    });
   });
 
   testWidgets('con letra grande y aviso, la lista conserva la mitad de la '

@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import '../src/rust/api/entries.dart';
 import '../src/rust/api/error.dart';
 import '../src/rust/api/session.dart';
+import '../theme/colors.dart';
 import '../theme/icons.dart';
 import '../theme/spacing.dart';
 import '../widgets/activity_text_field.dart';
@@ -266,21 +267,47 @@ class _SearchScreenState extends State<SearchScreen> {
     );
   }
 
-  Widget _body() {
-    if (_failed) {
-      return Center(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Text('No se pudo buscar'),
-            const SizedBox(height: 8),
-            TextButton(
-              onPressed: () => _search(_query.text),
-              child: const Text('Reintentar'),
+  /// Un estado de la pantalla (error, vacío, sin resultados), centrado y
+  /// desplazable: con una pantalla baja, el teclado abierto o letra grande se
+  /// desplaza en vez de desbordar.
+  Widget _state(Key key, List<Widget> children) {
+    return CustomScrollView(
+      slivers: [
+        SliverFillRemaining(
+          hasScrollBody: false,
+          child: Center(
+            child: Padding(
+              key: key,
+              padding: const EdgeInsets.all(Space.lg),
+              child: Column(mainAxisSize: MainAxisSize.min, children: children),
             ),
-          ],
+          ),
         ),
-      );
+      ],
+    );
+  }
+
+  Widget _body() {
+    final theme = Theme.of(context);
+    if (_failed) {
+      return _state(const Key('search-failed'), [
+        Icon(
+          BovedaIcons.triangleAlert,
+          size: 32,
+          color: theme.colorScheme.error,
+        ),
+        const SizedBox(height: Space.md),
+        Text(
+          'No se pudo buscar',
+          textAlign: TextAlign.center,
+          style: theme.textTheme.titleMedium,
+        ),
+        const SizedBox(height: Space.sm),
+        TextButton(
+          onPressed: () => _search(_query.text),
+          child: const Text('Reintentar'),
+        ),
+      ]);
     }
     final results = _results;
     if (results == null) {
@@ -288,18 +315,53 @@ class _SearchScreenState extends State<SearchScreen> {
     }
     if (results.isEmpty) {
       final text = _shownQuery.trim();
-      return Center(
-        child: Padding(
-          padding: const EdgeInsets.all(16),
-          child: Text(
-            text.isEmpty
-                ? 'Todavía no hay contraseñas guardadas. '
-                      'Toca + para agregar la primera.'
-                : 'Sin resultados para «$text»',
-            textAlign: TextAlign.center,
+      if (text.isEmpty) {
+        // Bóveda vacía: caja con el ícono, el texto y el mismo acceso al
+        // formulario que el botón "+".
+        return _state(const Key('vault-empty'), [
+          Container(
+            key: const Key('empty-icon-box'),
+            width: 72,
+            height: 72,
+            decoration: BoxDecoration(
+              color: BovedaColors.surface2,
+              borderRadius: BorderRadius.circular(Radii.card),
+              border: Border.all(color: BovedaColors.borderCard),
+            ),
+            child: Icon(
+              BovedaIcons.vault,
+              size: 32,
+              color: theme.colorScheme.primary,
+            ),
           ),
+          const SizedBox(height: Space.lg),
+          Text(
+            'Todavía no hay contraseñas guardadas. '
+            'Toca + para agregar la primera.',
+            textAlign: TextAlign.center,
+            style: theme.textTheme.bodyLarge,
+          ),
+          const SizedBox(height: Space.xl),
+          OutlinedButton(
+            key: const Key('empty-add'),
+            onPressed: _openCreate,
+            child: const Text('Agregar la primera'),
+          ),
+        ]);
+      }
+      return _state(const Key('no-results'), [
+        Icon(
+          BovedaIcons.search,
+          size: 40,
+          color: theme.colorScheme.onSurfaceVariant,
         ),
-      );
+        const SizedBox(height: Space.md),
+        Text(
+          'Sin resultados para «$text»',
+          textAlign: TextAlign.center,
+          style: theme.textTheme.titleMedium,
+        ),
+      ]);
     }
     return ListView.separated(
       controller: _scroll,
