@@ -21,6 +21,9 @@ abstract final class Space {
 /// widgets (`docs/DESIGN.md`, 5.1: trazo de 2 px, el mismo ícono en toda la
 /// app).
 abstract final class IconSizes {
+  /// Dentro de una insignia (la ✕ de una etiqueta).
+  static const double inline = 14;
+
   /// Dentro de un campo, un botón o un aviso.
   static const double control = 20;
 

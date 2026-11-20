@@ -299,7 +299,7 @@ void main() {
       expect(textOf(tester, service), 'Gmail');
       expect(textOf(tester, username), 'ana@example.com');
       expect(textOf(tester, url), 'https://mail.example.com');
-      expect(find.widgetWithText(InputChip, 'correo'), findsOneWidget);
+      expect(find.widgetWithText(InputChip, 'CORREO'), findsOneWidget);
       expect(find.text('Contraseña: sin cambios'), findsOneWidget);
       expect(find.text('Notas: sin cambios'), findsOneWidget);
       expect(password, findsNothing);
@@ -590,7 +590,7 @@ void main() {
       expect(find.text(repairText), findsOneWidget);
       expect(find.widgetWithText(AppBar, 'Reparar entrada'), findsOneWidget);
       expect(textOf(tester, username), 'nuevo@example.com');
-      expect(find.widgetWithText(InputChip, 'personal'), findsOneWidget);
+      expect(find.widgetWithText(InputChip, 'PERSONAL'), findsOneWidget);
       expect(password, findsOneWidget);
       expect(notes, findsOneWidget);
       expect(cancelPassword, findsNothing);
@@ -814,7 +814,7 @@ void main() {
       await tester.pump();
       expect(fieldHasFocus(tester, service), isTrue);
 
-      await tester.tap(find.widgetWithText(InputChip, 'correo'));
+      await tester.tap(find.widgetWithText(InputChip, 'CORREO'));
       await tester.pump();
       expect(fieldHasFocus(tester, service), isTrue);
 

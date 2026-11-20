@@ -1,6 +1,11 @@
 import 'package:flutter/material.dart';
 
+import '../theme/extensions.dart';
+import '../theme/icons.dart';
+import '../theme/spacing.dart';
+import '../theme/theme.dart';
 import 'activity_text_field.dart';
+import 'labeled_field.dart';
 
 /// Etiquetas de una entrada: un chip por etiqueta y un campo para agregar
 /// más (#41).
@@ -55,6 +60,11 @@ class TagsField extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final accent = theme.colorScheme.primary;
+    final accents =
+        theme.extension<AccentColors>() ?? AccentColors.of(defaultAccent);
+    final meta = (theme.extension<BovedaText>() ?? BovedaText.standard).meta;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -62,13 +72,33 @@ class TagsField extends StatelessWidget {
           // Los chips son parte del formulario: tocarlos no cierra el teclado.
           TextFieldTapRegion(
             child: Padding(
-              padding: const EdgeInsets.only(bottom: 8),
+              padding: const EdgeInsets.only(bottom: Space.sm),
               child: Wrap(
-                spacing: 8,
+                spacing: Space.sm,
+                runSpacing: Space.sm,
                 children: [
                   for (final (index, tag) in tags.indexed)
+                    // Con el estilo de insignia de la tarjeta (`DESIGN.md` 6.2
+                    // y 7.6); el texto va en MAYÚSCULAS solo al dibujarse.
                     InputChip(
-                      label: Text(tag, overflow: TextOverflow.ellipsis),
+                      label: Text(
+                        tag.toUpperCase(),
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      labelStyle: meta.copyWith(
+                        color: accent,
+                        fontWeight: FontWeight.w700,
+                      ),
+                      backgroundColor: accents.dim,
+                      side: BorderSide(color: accents.border),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(Radii.tag),
+                      ),
+                      deleteIcon: Icon(
+                        BovedaIcons.x,
+                        size: IconSizes.inline,
+                        color: accent,
+                      ),
                       isEnabled: enabled,
                       deleteButtonTooltipMessage: 'Quitar etiqueta',
                       onDeleted: enabled
@@ -79,22 +109,25 @@ class TagsField extends StatelessWidget {
               ),
             ),
           ),
-        ActivityTextField(
-          controller: controller,
-          focusNode: focusNode,
+        LabeledField(
+          label: 'Agregar etiqueta',
           enabled: enabled,
-          textInputAction: TextInputAction.done,
-          // Enter agrega la etiqueta sin quitar el foco.
-          onEditingComplete: _commit,
-          onChanged: (text) {
-            if (text.contains(',')) _commit();
-          },
-          autocorrect: false,
-          enableIMEPersonalizedLearning: false,
-          decoration: InputDecoration(
-            labelText: 'Agregar etiqueta',
-            helperText: 'Enter o coma para agregar',
-            errorText: errorText,
+          child: ActivityTextField(
+            controller: controller,
+            focusNode: focusNode,
+            enabled: enabled,
+            textInputAction: TextInputAction.done,
+            // Enter agrega la etiqueta sin quitar el foco.
+            onEditingComplete: _commit,
+            onChanged: (text) {
+              if (text.contains(',')) _commit();
+            },
+            autocorrect: false,
+            enableIMEPersonalizedLearning: false,
+            decoration: InputDecoration(
+              helperText: 'Enter o coma para agregar',
+              errorText: errorText,
+            ),
           ),
         ),
       ],
