@@ -14,6 +14,9 @@ class TagBadge extends StatelessWidget {
 
   final String label;
 
+  /// Relleno vertical de la insignia: no está en la escala base de 4.
+  static const _verticalPadding = 2.0;
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -21,7 +24,10 @@ class TagBadge extends StatelessWidget {
         theme.extension<AccentColors>() ?? AccentColors.of(defaultAccent);
     final meta = (theme.extension<BovedaText>() ?? BovedaText.standard).meta;
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: Space.sm, vertical: 2),
+      padding: const EdgeInsets.symmetric(
+        horizontal: Space.sm,
+        vertical: _verticalPadding,
+      ),
       decoration: BoxDecoration(
         color: accent.dim,
         borderRadius: BorderRadius.circular(Radii.tag),

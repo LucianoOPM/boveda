@@ -12,6 +12,7 @@ import 'package:boveda/widgets/tag_badge.dart';
 import 'package:boveda/widgets/vault_card.dart';
 import 'package:boveda/widgets/vault_header.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/semantics.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 const initialKey = Key('vault-card-initial');
@@ -231,6 +232,25 @@ void main() {
       handle.dispose();
     });
 
+    testWidgets('conserva la acción de tocar en su nodo de semántica', (
+      tester,
+    ) async {
+      final handle = tester.ensureSemantics();
+      var taps = 0;
+      await pump(tester, card(onTap: () => taps++));
+
+      final data = tester
+          .getSemantics(find.byKey(surfaceKey))
+          .getSemanticsData();
+      // Con `excludeSemantics`, sin `onTap` en el `Semantics` la tarjeta no se
+      // podría activar con TalkBack.
+      expect(data.hasAction(SemanticsAction.tap), isTrue);
+      tester.semantics.tap(find.semantics.byLabel('Gmail, ana@gmail.com'));
+      await tester.pump();
+      expect(taps, 1);
+      handle.dispose();
+    });
+
     testWidgets('sin detalle anuncia solo el servicio', (tester) async {
       final handle = tester.ensureSemantics();
       await pump(tester, card(detail: null));
@@ -336,6 +356,26 @@ void main() {
 
       await tester.tap(find.byKey(settingsKey));
       expect(taps, 1);
+    });
+
+    testWidgets('el engranaje tiene su propio nodo: botón, tooltip y toque', (
+      tester,
+    ) async {
+      final handle = tester.ensureSemantics();
+      var taps = 0;
+      await pump(tester, VaultHeader(onOpenSettings: () => taps++));
+
+      // Desde la caja visible: el `SizedBox` de 48 pertenece al nodo padre.
+      final data = tester
+          .getSemantics(find.byKey(settingsBoxKey))
+          .getSemanticsData();
+      expect(data.flagsCollection.isButton, isTrue);
+      expect(data.tooltip, 'Ajustes');
+      expect(data.hasAction(SemanticsAction.tap), isTrue);
+      // El nodo es solo del engranaje: no se mezcla con la marca ni la cápsula.
+      expect(data.label, isNot(contains('BÓVEDA')));
+      expect(data.label, isNot(contains('Bóveda abierta')));
+      handle.dispose();
     });
 
     testWidgets('sin onOpenSettings no hay engranaje', (tester) async {

@@ -176,6 +176,18 @@ class _SearchScreenState extends State<SearchScreen> {
     if (!created) _refresh();
   }
 
+  /// Una zona de arriba de la lista: [child] se desplaza por dentro si pasa de
+  /// la cuarta parte de la altura disponible.
+  Widget _scrollZone(BoxConstraints constraints, Widget child) {
+    return ConstrainedBox(
+      constraints: BoxConstraints(maxHeight: constraints.maxHeight * 0.25),
+      child: SingleChildScrollView(
+        keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+        child: child,
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -189,77 +201,70 @@ class _SearchScreenState extends State<SearchScreen> {
         ),
       ),
       body: SafeArea(
-        // La zona de arriba (encabezado, campo y aviso) no pasa de la mitad
+        // El campo de búsqueda va fijo (`DESIGN.md` 7.4). El encabezado y el
+        // aviso de dañadas, cada uno en su zona, no pasan de la cuarta parte
         // de la altura: con una pantalla baja, el teclado abierto o letra
-        // grande, se desplaza por dentro en vez de desbordar y la lista
+        // grande se desplazan por dentro en vez de desbordar, y la lista
         // conserva el resto.
         child: LayoutBuilder(
           builder: (context, constraints) => Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              ConstrainedBox(
-                constraints: BoxConstraints(
-                  maxHeight: constraints.maxHeight * 0.5,
+              _scrollZone(
+                constraints,
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(
+                    Space.lg,
+                    Space.md,
+                    Space.lg,
+                    0,
+                  ),
+                  child: VaultHeader(onOpenSettings: widget.onOpenSettings),
                 ),
-                child: SingleChildScrollView(
-                  keyboardDismissBehavior:
-                      ScrollViewKeyboardDismissBehavior.onDrag,
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      Padding(
-                        padding: const EdgeInsets.fromLTRB(
-                          Space.lg,
-                          Space.md,
-                          Space.lg,
-                          Space.md,
-                        ),
-                        child: VaultHeader(
-                          onOpenSettings: widget.onOpenSettings,
-                        ),
-                      ),
-                      Padding(
-                        padding: const EdgeInsets.fromLTRB(
-                          Space.lg,
-                          0,
-                          Space.lg,
-                          Space.lg,
-                        ),
-                        child: ActivityTextField(
-                          controller: _query,
-                          focusNode: _focus,
-                          textInputAction: TextInputAction.search,
-                          // La tecla "buscar" no quita el foco.
-                          onEditingComplete: () {},
-                          onChanged: _onChanged,
-                          // Con false, Flutter marca el campo en Android como contraseña
-                          // visible (VISIBLE_PASSWORD) y el teclado muestra la fila de
-                          // números. Sin aprendizaje del teclado, sus sugerencias no
-                          // guardan lo que se busca.
-                          autocorrect: false,
-                          enableIMEPersonalizedLearning: false,
-                          decoration: InputDecoration(
-                            hintText: 'Buscar',
-                            constraints: const BoxConstraints(minHeight: 52),
-                            prefixIcon: const Icon(
-                              BovedaIcons.search,
-                              size: 20,
+              ),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(
+                  Space.lg,
+                  Space.md,
+                  Space.lg,
+                  Space.lg,
+                ),
+                child: ActivityTextField(
+                  controller: _query,
+                  focusNode: _focus,
+                  textInputAction: TextInputAction.search,
+                  // La tecla "buscar" no quita el foco.
+                  onEditingComplete: () {},
+                  onChanged: _onChanged,
+                  // Con false, Flutter marca el campo en Android como contraseña
+                  // visible (VISIBLE_PASSWORD) y el teclado muestra la fila de
+                  // números. Sin aprendizaje del teclado, sus sugerencias no
+                  // guardan lo que se busca.
+                  autocorrect: false,
+                  enableIMEPersonalizedLearning: false,
+                  decoration: InputDecoration(
+                    hintText: 'Buscar',
+                    constraints: const BoxConstraints(minHeight: 52),
+                    prefixIcon: const Icon(
+                      BovedaIcons.search,
+                      size: IconSizes.control,
+                    ),
+                    suffixIcon: _query.text.isEmpty
+                        ? null
+                        : IconButton(
+                            tooltip: 'Borrar búsqueda',
+                            icon: const Icon(
+                              BovedaIcons.x,
+                              size: IconSizes.control,
                             ),
-                            suffixIcon: _query.text.isEmpty
-                                ? null
-                                : IconButton(
-                                    tooltip: 'Borrar búsqueda',
-                                    icon: const Icon(BovedaIcons.x, size: 20),
-                                    onPressed: _clear,
-                                  ),
+                            onPressed: _clear,
                           ),
-                        ),
-                      ),
-                      DamagedEntriesBanner(count: widget.damagedEntries),
-                    ],
                   ),
                 ),
+              ),
+              _scrollZone(
+                constraints,
+                DamagedEntriesBanner(count: widget.damagedEntries),
               ),
               Expanded(child: _body()),
             ],
@@ -296,7 +301,7 @@ class _SearchScreenState extends State<SearchScreen> {
       return _state(const Key('search-failed'), [
         Icon(
           BovedaIcons.triangleAlert,
-          size: 32,
+          size: IconSizes.feature,
           color: theme.colorScheme.error,
         ),
         const SizedBox(height: Space.md),
@@ -333,7 +338,7 @@ class _SearchScreenState extends State<SearchScreen> {
             ),
             child: Icon(
               BovedaIcons.vault,
-              size: 32,
+              size: IconSizes.feature,
               color: theme.colorScheme.primary,
             ),
           ),
@@ -355,7 +360,7 @@ class _SearchScreenState extends State<SearchScreen> {
       return _state(const Key('no-results'), [
         Icon(
           BovedaIcons.search,
-          size: 40,
+          size: IconSizes.large,
           color: theme.colorScheme.onSurfaceVariant,
         ),
         const SizedBox(height: Space.md),

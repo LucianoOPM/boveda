@@ -256,6 +256,38 @@ void main() {
       expect(find.byType(EntryFormScreen), findsOneWidget);
     });
 
+    for (final accent in BovedaAccent.values) {
+      testWidgets('con ${accent.name}: sin resultados y error no dependen del '
+          'acento', (tester) async {
+        // Sin resultados: lupa en textSecondary.
+        await pumpSearch(tester, accent: accent);
+        await tester.enterText(searchField, 'xyz');
+        await tester.pump();
+        final search = tester.widget<Icon>(
+          find.descendant(
+            of: find.byKey(const Key('no-results')),
+            matching: find.byIcon(BovedaIcons.search),
+          ),
+        );
+        expect(search.color, BovedaColors.textSecondary);
+        expect(find.text('Sin resultados para «xyz»'), findsOneWidget);
+
+        // Error: alerta en error y el botón de siempre. Se desmonta la pantalla
+        // para que la nueva búsqueda arranque con su propio estado.
+        await tester.pumpWidget(const SizedBox.shrink());
+        session.onSearch = (_) async => throw Exception('falla');
+        await pumpSearch(tester, accent: accent);
+        final alert = tester.widget<Icon>(
+          find.descendant(
+            of: find.byKey(const Key('search-failed')),
+            matching: find.byIcon(BovedaIcons.triangleAlert),
+          ),
+        );
+        expect(alert.color, BovedaColors.error);
+        expect(find.text('Reintentar'), findsOneWidget);
+      });
+    }
+
     testWidgets('con texto buscado y sin resultados: lupa y texto, sin botón', (
       tester,
     ) async {
@@ -349,12 +381,14 @@ void main() {
         tester.widget<ListView>(find.byType(ListView)).keyboardDismissBehavior,
         onDrag,
       );
-      expect(
-        tester
-            .widget<SingleChildScrollView>(find.byType(SingleChildScrollView))
-            .keyboardDismissBehavior,
-        onDrag,
+      // Las dos zonas desplazables de arriba (encabezado y aviso).
+      final zones = tester.widgetList<SingleChildScrollView>(
+        find.byType(SingleChildScrollView),
       );
+      expect(zones, hasLength(2));
+      for (final zone in zones) {
+        expect(zone.keyboardDismissBehavior, onDrag);
+      }
     });
 
     testWidgets('el estado vacío lo cierra', (tester) async {
@@ -394,17 +428,53 @@ void main() {
     });
   });
 
-  testWidgets('con letra grande y aviso, la lista conserva la mitad de la '
-      'altura y la zona de arriba se desplaza', (tester) async {
+  testWidgets('con letra grande y aviso, la lista conserva su espacio y el '
+      'encabezado y el aviso se desplazan por separado', (tester) async {
     session.onSearch = (_) async => sample();
     await pumpSearch(tester, textScale: 2, damaged: 12, onOpenSettings: () {});
 
-    // 640 de alto: la zona de arriba no pasa de 320, el resto es de la lista.
+    // Cada zona desplazable no pasa de la cuarta parte de la altura y el
+    // campo va fijo entre las dos: la lista conserva lo que queda.
     expect(
       tester.getSize(find.byType(ListView)).height,
-      greaterThanOrEqualTo(300),
+      greaterThanOrEqualTo(180),
     );
-    expect(find.byType(SingleChildScrollView), findsOneWidget);
+    expect(find.byType(SingleChildScrollView), findsNWidgets(2));
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('el campo de búsqueda es fijo: entero a la vista con letra '
+      'grande y aviso, y no se mueve al desplazar el encabezado', (
+    tester,
+  ) async {
+    session.onSearch = (_) async => sample();
+    await pumpSearch(tester, textScale: 2, damaged: 12, onOpenSettings: () {});
+
+    final before = tester.getRect(searchField);
+    expect(before.top, greaterThanOrEqualTo(0));
+    expect(before.bottom, lessThanOrEqualTo(640));
+
+    await tester.drag(find.byType(VaultHeader), const Offset(0, -80));
+    await tester.pump();
+    await tester.drag(find.byType(DamagedEntriesBanner), const Offset(0, -80));
+    await tester.pump();
+
+    expect(tester.getRect(searchField), before);
+  });
+
+  testWidgets('con una pantalla baja y el teclado abierto el campo cabe en '
+      'el área visible', (tester) async {
+    tester.view.physicalSize = const Size(360, 400);
+    tester.view.devicePixelRatio = 1;
+    tester.view.viewInsets = const FakeViewPadding(bottom: 200);
+    addTearDown(tester.view.reset);
+    session.onSearch = (_) async => sample();
+    await pumpSearch(tester, damaged: 3, onOpenSettings: () {});
+
+    // 400 menos 200 del teclado: el campo entero cabe en los 200 de arriba.
+    final field = tester.getRect(searchField);
+    expect(field.top, greaterThanOrEqualTo(0));
+    expect(field.bottom, lessThanOrEqualTo(200));
     expect(tester.takeException(), isNull);
   });
 

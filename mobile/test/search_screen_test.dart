@@ -97,6 +97,14 @@ void main() {
     final c = tester.widgetList<VaultCard>(find.byType(VaultCard)).elementAt(2);
     expect(c.service, 'C');
     expect(c.detail, isNull);
+    // Lo que se ve: solo la inicial y el servicio, sin segunda línea.
+    expect(
+      find.descendant(
+        of: find.byType(VaultCard).at(2),
+        matching: find.byType(Text),
+      ),
+      findsNWidgets(2),
+    );
   });
 
   testWidgets('inicial: primer grafema en mayúscula', (tester) async {

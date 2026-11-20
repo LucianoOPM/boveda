@@ -4,6 +4,7 @@ import '../theme/colors.dart';
 import '../theme/extensions.dart';
 import '../theme/icons.dart';
 import '../theme/spacing.dart';
+import '../theme/text_scale.dart';
 import 'status_capsule.dart';
 
 /// Encabezado de la pantalla de la bóveda (`docs/DESIGN.md`, 6.1): la marca
@@ -24,15 +25,12 @@ class VaultHeader extends StatelessWidget {
   /// Abre Ajustes; sin él, el encabezado no muestra el engranaje.
   final VoidCallback? onOpenSettings;
 
-  /// Por encima de esta escala del texto, la cápsula se apila bajo la marca.
-  static const _stackAbove = 1.1;
-
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final styles = theme.extension<BovedaText>() ?? BovedaText.standard;
-    final stacked =
-        MediaQuery.textScalerOf(context).scale(10) / 10 > _stackAbove;
+    // Con letra grande la cápsula pasa bajo la marca.
+    final stacked = isLargeText(context);
 
     final brand = Text(
       'BÓVEDA',
@@ -113,7 +111,7 @@ class VaultHeader extends StatelessWidget {
                 ),
                 child: Icon(
                   BovedaIcons.settings,
-                  size: 20,
+                  size: IconSizes.control,
                   color: theme.colorScheme.onSurface,
                 ),
               ),

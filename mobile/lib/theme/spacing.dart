@@ -17,6 +17,20 @@ abstract final class Space {
   static const double huge = 48;
 }
 
+/// Tamaños de los íconos de Lucide que usan la pantalla de la bóveda y sus
+/// widgets (`docs/DESIGN.md`, 5.1: trazo de 2 px, el mismo ícono en toda la
+/// app).
+abstract final class IconSizes {
+  /// Dentro de un campo, un botón o un aviso.
+  static const double control = 20;
+
+  /// Ícono de un estado (vacío o error).
+  static const double feature = 32;
+
+  /// Ícono grande de un estado sin resultados.
+  static const double large = 40;
+}
+
 /// Radios (`docs/DESIGN.md`, 4.2).
 abstract final class Radii {
   /// Tarjetas, diálogos y hojas inferiores.

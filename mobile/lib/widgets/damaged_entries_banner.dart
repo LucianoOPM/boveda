@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../theme/colors.dart';
 import '../theme/icons.dart';
 import '../theme/spacing.dart';
+import '../theme/text_scale.dart';
 
 /// Aviso de entradas que no se pudieron leer al desbloquear.
 ///
@@ -42,10 +43,10 @@ class _DamagedEntriesBannerState extends State<DamagedEntriesBanner> {
     final error = theme.colorScheme.error;
     // Con el texto del sistema más grande que un 110 %, "Entendido" deja al
     // mensaje una columna muy estrecha: pasa debajo, a la derecha.
-    final stacked = MediaQuery.textScalerOf(context).scale(10) / 10 > 1.1;
+    final stacked = isLargeText(context);
     final text = Row(
       children: [
-        Icon(BovedaIcons.triangleAlert, size: 20, color: error),
+        Icon(BovedaIcons.triangleAlert, size: IconSizes.control, color: error),
         const SizedBox(width: Space.sm),
         Expanded(
           child: Text(

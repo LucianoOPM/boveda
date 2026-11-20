@@ -37,6 +37,9 @@ class VaultCard extends StatefulWidget {
   /// Cuántas insignias se muestran antes del `+N`.
   static const maxBadges = 2;
 
+  /// Separación entre insignias (`DESIGN.md` 6.2): no está en la escala base.
+  static const _badgeGap = 6.0;
+
   @override
   State<VaultCard> createState() => _VaultCardState();
 }
@@ -117,7 +120,7 @@ class _VaultCardState extends State<VaultCard> {
                         if (tags.isNotEmpty) ...[
                           const SizedBox(height: Space.xs),
                           Wrap(
-                            spacing: 6,
+                            spacing: VaultCard._badgeGap,
                             runSpacing: Space.xs,
                             crossAxisAlignment: WrapCrossAlignment.center,
                             children: [
