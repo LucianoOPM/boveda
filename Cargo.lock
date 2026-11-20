@@ -508,6 +508,7 @@ dependencies = [
  "tauri-plugin-single-instance",
  "tempfile",
  "vault-core",
+ "windows",
  "windows-sys 0.61.2",
  "zeroize",
 ]

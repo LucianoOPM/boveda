@@ -1,8 +1,14 @@
 //! Detección de las redes privadas de Windows (#100).
 
+#[cfg(windows)]
+mod nlm;
+
 use std::collections::BTreeSet;
 use std::fmt;
 use std::net::Ipv4Addr;
+
+#[cfg(windows)]
+pub use nlm::NlmProbe;
 
 /// No se pudo saber qué redes son privadas. Sin datos: quien llama lo trata
 /// como «ninguna red privada» (falla cerrando).
