@@ -13,7 +13,7 @@ use std::{
 use zeroize::Zeroizing;
 
 use crate::{
-    atomic_file::write_atomic,
+    atomic_file::{write_atomic, write_atomic_new},
     dpapi::{protect, unprotect},
 };
 
@@ -54,12 +54,39 @@ pub fn write_protected(
     body: &[u8],
     entropy: &[u8],
 ) -> Result<(), ProtectedFileError> {
+    let blob = seal(magic, version, body, entropy)?;
+    write_atomic(path, &blob).map_err(|_| ProtectedFileError::Io)
+}
+
+/// Como [`write_protected`], pero **nunca reemplaza** un archivo existente:
+/// `Ok(true)` si lo creó y `Ok(false)` si `path` ya existía (no se toca).
+pub fn create_protected(
+    path: &Path,
+    magic: &[u8],
+    version: u16,
+    body: &[u8],
+    entropy: &[u8],
+) -> Result<bool, ProtectedFileError> {
+    let blob = seal(magic, version, body, entropy)?;
+    match write_atomic_new(path, &blob) {
+        Ok(()) => Ok(true),
+        Err(e) if e.kind() == io::ErrorKind::AlreadyExists => Ok(false),
+        Err(_) => Err(ProtectedFileError::Io),
+    }
+}
+
+/// `magic | versión | cuerpo` protegido con DPAPI.
+fn seal(
+    magic: &[u8],
+    version: u16,
+    body: &[u8],
+    entropy: &[u8],
+) -> Result<Vec<u8>, ProtectedFileError> {
     let mut plain = Zeroizing::new(Vec::with_capacity(magic.len() + 2 + body.len()));
     plain.extend_from_slice(magic);
     plain.extend_from_slice(&version.to_le_bytes());
     plain.extend_from_slice(body);
-    let blob = protect(&plain, entropy).map_err(|_| ProtectedFileError::Protection)?;
-    write_atomic(path, &blob).map_err(|_| ProtectedFileError::Io)
+    protect(&plain, entropy).map_err(|_| ProtectedFileError::Protection)
 }
 
 /// Lee y descifra `path`. `Ok(None)` **solo** si el archivo no existe; cualquier
@@ -108,6 +135,25 @@ mod tests {
     const ENTROPY: &[u8] = b"entropia de prueba";
     const BODY: &[u8] = b"cuerpo-reconocible-0123456789";
     const MAX: usize = 4096;
+
+    #[test]
+    fn create_protected_creates_missing_file() {
+        let (_d, path) = setup();
+        assert!(create_protected(&path, MAGIC, 1, BODY, ENTROPY).unwrap());
+        let body = read_protected(&path, MAGIC, 1, ENTROPY, MAX)
+            .unwrap()
+            .unwrap();
+        assert_eq!(body.as_slice(), BODY);
+    }
+
+    #[test]
+    fn create_protected_never_replaces_existing_file() {
+        let (_d, path) = setup();
+        write_ok(&path);
+        let before = fs::read(&path).unwrap();
+        assert!(!create_protected(&path, MAGIC, 1, b"otro cuerpo", ENTROPY).unwrap());
+        assert_eq!(fs::read(&path).unwrap(), before);
+    }
 
     #[test]
     fn file_over_max_len_is_corrupt_without_decrypting() {

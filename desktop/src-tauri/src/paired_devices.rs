@@ -435,10 +435,37 @@ mod tests {
     }
 
     #[test]
-    fn oversized_file_is_rejected() {
+    fn file_over_max_len_is_corrupt_without_decrypting() {
         let (_d, path) = setup();
-        write_body(&path, &vec![0u8; 1024 * 1024]);
+        // Basura que, sin el tope de lectura, daría `Protection` al descifrarla.
+        fs::write(&path, vec![0xAB; MAX_FILE_BYTES + 1]).unwrap();
         assert_open_fails_untouched(&path, PairedDevicesError::Corrupt);
+    }
+
+    #[test]
+    fn debug_and_errors_do_not_show_name_or_key() {
+        // Guarda de regresión: con un celular real y un error real de ese mismo
+        // archivo, nada de lo que se puede imprimir lleva el nombre ni la llave.
+        let (_d, path) = setup();
+        let mut store = PairedDeviceStore::open(path.clone()).unwrap();
+        let mut d = dev(5);
+        d.name = "Pixel-de-Luciano-123".into();
+        store.add(d).unwrap();
+        let mut bytes = fs::read(&path).unwrap();
+        let mid = bytes.len() / 2;
+        bytes[mid] ^= 0x01;
+        fs::write(&path, bytes).unwrap();
+        let err = PairedDeviceStore::open(path).unwrap_err();
+
+        for text in [
+            format!("{err:?}"),
+            err.to_string(),
+            format!("{store:?}"),
+            format!("{:?}", store.list()),
+        ] {
+            assert!(!text.contains("Luciano"), "{text}");
+            assert!(!text.contains("[5, 5"), "{text}");
+        }
     }
 
     #[test]

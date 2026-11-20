@@ -12,7 +12,7 @@ use std::{fmt, fs, path::PathBuf};
 use secrecy::{ExposeSecret, ExposeSecretMut, SecretBox};
 use vault_core::protocol::KeyPair;
 
-use crate::protected_file::{ProtectedFileError, read_protected, write_protected};
+use crate::protected_file::{ProtectedFileError, create_protected, read_protected};
 
 const MAGIC: &[u8] = b"boveda-pc-identity";
 const VERSION: u16 = 1;
@@ -79,34 +79,51 @@ impl IdentityStore {
     /// Carga la identidad; si el archivo **no existe**, genera una, la guarda y
     /// la devuelve. Cualquier otro problema es un error y no se modifica nada.
     pub fn load_or_create(&self) -> Result<KeyPair, IdentityError> {
-        if let Some(body) = read_protected(&self.path, MAGIC, VERSION, ENTROPY, MAX_FILE_BYTES)? {
-            if body.len() != KEY_LEN {
-                return Err(IdentityError::Corrupt);
-            }
-            // La llave se conserva tal cual, sin validarla ni transformarla.
-            let mut private = SecretBox::<[u8; KEY_LEN]>::default();
-            private.expose_secret_mut().copy_from_slice(&body);
-            return Ok(KeyPair::from_private(private));
+        if let Some(pair) = self.load()? {
+            return Ok(pair);
         }
 
         let pair = KeyPair::generate().map_err(|_| IdentityError::Generation)?;
         if let Some(parent) = self.path.parent() {
             fs::create_dir_all(parent).map_err(|_| IdentityError::Io)?;
         }
-        write_protected(
+        // «Solo crear»: si el archivo apareció después de la lectura, no se
+        // pisa; se usa el que ya existe.
+        let created = create_protected(
             &self.path,
             MAGIC,
             VERSION,
             pair.private().expose_secret(),
             ENTROPY,
         )?;
-        Ok(pair)
+        if created {
+            Ok(pair)
+        } else {
+            self.load()?.ok_or(IdentityError::Io)
+        }
+    }
+
+    /// Solo lectura: carga la identidad guardada. `Ok(None)` **únicamente** si el
+    /// archivo no existe; no crea ni modifica nada.
+    pub fn load(&self) -> Result<Option<KeyPair>, IdentityError> {
+        let Some(body) = read_protected(&self.path, MAGIC, VERSION, ENTROPY, MAX_FILE_BYTES)?
+        else {
+            return Ok(None);
+        };
+        if body.len() != KEY_LEN {
+            return Err(IdentityError::Corrupt);
+        }
+        // La llave se conserva tal cual, sin validarla ni transformarla.
+        let mut private = SecretBox::<[u8; KEY_LEN]>::default();
+        private.expose_secret_mut().copy_from_slice(&body);
+        Ok(Some(KeyPair::from_private(private)))
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::protected_file::write_protected;
     use secrecy::ExposeSecret;
     use std::fs;
 
@@ -125,6 +142,40 @@ mod tests {
         assert_eq!(fs::read(path).unwrap(), before);
         assert_eq!(store.load_or_create().unwrap_err(), expected);
         assert_eq!(fs::read(path).unwrap(), before);
+    }
+
+    #[test]
+    fn load_missing_file_is_none_and_creates_nothing() {
+        let (d, path) = setup();
+        assert!(IdentityStore::new(path).load().unwrap().is_none());
+        assert_eq!(fs::read_dir(d.path()).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn load_returns_the_stored_identity() {
+        let (_d, path) = setup();
+        let created = IdentityStore::new(path.clone()).load_or_create().unwrap();
+        let loaded = IdentityStore::new(path).load().unwrap().unwrap();
+        assert_eq!(created.public(), loaded.public());
+    }
+
+    #[test]
+    fn locked_file_errors_without_regenerating() {
+        use std::{fs::OpenOptions, os::windows::fs::OpenOptionsExt};
+        let (_d, path) = setup();
+        IdentityStore::new(path.clone()).load_or_create().unwrap();
+        let before = fs::read(&path).unwrap();
+        // Sin compartir nada, otro intento de abrirlo para leer falla.
+        let _lock = OpenOptions::new()
+            .read(true)
+            .share_mode(0)
+            .open(&path)
+            .unwrap();
+        let store = IdentityStore::new(path.clone());
+        assert_eq!(store.load_or_create().unwrap_err(), IdentityError::Io);
+        assert_eq!(store.load_or_create().unwrap_err(), IdentityError::Io);
+        drop(_lock);
+        assert_eq!(fs::read(&path).unwrap(), before);
     }
 
     #[test]
@@ -231,22 +282,29 @@ mod tests {
     }
 
     #[test]
-    fn errors_do_not_show_key() {
+    fn debug_and_errors_do_not_show_key() {
+        // Guarda de regresión: con una identidad real y un error real de ese
+        // mismo archivo, nada de lo que se puede imprimir lleva la llave.
         let (_d, path) = setup();
-        let pair = IdentityStore::new(path).load_or_create().unwrap();
+        let store = IdentityStore::new(path.clone());
+        let pair = store.load_or_create().unwrap();
         let key = *pair.private().expose_secret();
         let hex: String = key.iter().map(|b| format!("{b:02x}")).collect();
         let dec = format!("{key:?}");
-        for err in [
-            IdentityError::Io,
-            IdentityError::Protection,
-            IdentityError::Corrupt,
-            IdentityError::UnknownVersion,
-            IdentityError::Generation,
+
+        let mut bytes = fs::read(&path).unwrap();
+        let mid = bytes.len() / 2;
+        bytes[mid] ^= 0x01;
+        fs::write(&path, bytes).unwrap();
+        let err = store.load_or_create().unwrap_err();
+
+        for text in [
+            format!("{err:?}"),
+            err.to_string(),
+            format!("{pair:?}"),
+            format!("{store:?}"),
         ] {
-            for text in [format!("{err:?}"), err.to_string()] {
-                assert!(!text.contains(&hex) && !text.contains(&dec));
-            }
+            assert!(!text.contains(&hex) && !text.contains(&dec), "{text}");
         }
     }
 }

@@ -91,6 +91,10 @@ pub fn protect(plain: &[u8], entropy: &[u8]) -> Result<Vec<u8>, DpapiError> {
     if ok == 0 {
         return Err(last_error());
     }
+    // Un búfer nulo no se puede convertir en segmento ni hay nada que liberar.
+    if output.pbData.is_null() {
+        return Ok(Vec::new());
+    }
     // SAFETY: en éxito, `pbData` apunta a `cbData` bytes reservados por Windows.
     let blob =
         unsafe { std::slice::from_raw_parts(output.pbData, output.cbData as usize) }.to_vec();
@@ -123,6 +127,10 @@ pub fn unprotect(blob: &[u8], entropy: &[u8]) -> Result<Zeroizing<Vec<u8>>, Dpap
     };
     if ok == 0 {
         return Err(last_error());
+    }
+    // Un búfer nulo no se puede convertir en segmento ni hay nada que liberar.
+    if output.pbData.is_null() {
+        return Ok(Zeroizing::new(Vec::new()));
     }
     // SAFETY: en éxito, `pbData` apunta a `cbData` bytes reservados por Windows.
     let plain = unsafe { std::slice::from_raw_parts_mut(output.pbData, output.cbData as usize) };

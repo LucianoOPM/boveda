@@ -29,6 +29,17 @@ fn wide(path: &Path) -> Vec<u16> {
 /// Ante cualquier error el destino conserva su contenido anterior y el
 /// temporal (`<nombre>.tmp`) se borra.
 pub fn write_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
+    write_with(path, bytes, MOVEFILE_REPLACE_EXISTING)
+}
+
+/// Como [`write_atomic`], pero **nunca reemplaza**: si `path` ya existe
+/// (aunque haya aparecido después de que quien llama comprobó que no estaba),
+/// falla con `ErrorKind::AlreadyExists` y el archivo existente queda intacto.
+pub fn write_atomic_new(path: &Path, bytes: &[u8]) -> io::Result<()> {
+    write_with(path, bytes, 0)
+}
+
+fn write_with(path: &Path, bytes: &[u8], replace_flag: u32) -> io::Result<()> {
     let file_name = path
         .file_name()
         .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "ruta sin nombre de archivo"))?;
@@ -43,7 +54,7 @@ pub fn write_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
         Err(e) => return Err(e),
     }
 
-    let result = write_and_replace(&tmp, path, bytes);
+    let result = write_and_replace(&tmp, path, bytes, replace_flag);
     if result.is_err() {
         // Si no se puede borrar, queda el temporal; el error original manda.
         let _ = fs::remove_file(&tmp);
@@ -51,7 +62,7 @@ pub fn write_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
     result
 }
 
-fn write_and_replace(tmp: &Path, path: &Path, bytes: &[u8]) -> io::Result<()> {
+fn write_and_replace(tmp: &Path, path: &Path, bytes: &[u8], replace_flag: u32) -> io::Result<()> {
     {
         let mut file = OpenOptions::new().write(true).create_new(true).open(tmp)?;
         file.write_all(bytes)?;
@@ -65,7 +76,7 @@ fn write_and_replace(tmp: &Path, path: &Path, bytes: &[u8]) -> io::Result<()> {
         MoveFileExW(
             from.as_ptr(),
             to.as_ptr(),
-            MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
+            replace_flag | MOVEFILE_WRITE_THROUGH,
         )
     };
     if ok == 0 {
@@ -138,6 +149,26 @@ mod tests {
         fs::write(dir.path().join("a.bin.tmp"), b"basura").unwrap();
         write_atomic(&path, b"bien").unwrap();
         assert_eq!(fs::read(&path).unwrap(), b"bien");
+        assert_eq!(names(dir.path()), vec!["a.bin"]);
+    }
+
+    #[test]
+    fn write_atomic_new_creates_missing_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("a.bin");
+        write_atomic_new(&path, b"nuevo").unwrap();
+        assert_eq!(fs::read(&path).unwrap(), b"nuevo");
+        assert_eq!(names(dir.path()), vec!["a.bin"]);
+    }
+
+    #[test]
+    fn write_atomic_new_never_replaces_existing_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("a.bin");
+        fs::write(&path, b"original").unwrap();
+        let err = write_atomic_new(&path, b"nuevo").unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::AlreadyExists);
+        assert_eq!(fs::read(&path).unwrap(), b"original");
         assert_eq!(names(dir.path()), vec!["a.bin"]);
     }
 

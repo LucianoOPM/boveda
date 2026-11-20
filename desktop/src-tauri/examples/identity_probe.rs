@@ -20,15 +20,11 @@ fn main() {
     };
     let dir = std::path::PathBuf::from(dir);
 
-    let identity = dir.join("identity.bin");
-    if identity.exists() {
-        // El archivo existe, así que `load_or_create` solo lee: nunca genera.
-        match IdentityStore::new(identity).load_or_create() {
-            Ok(_) => println!("identidad=ok"),
-            Err(err) => println!("identidad={err:?}"),
-        }
-    } else {
-        println!("identidad=ausente");
+    // `load` es de solo lectura: nunca crea ni modifica nada.
+    match IdentityStore::new(dir.join("identity.bin")).load() {
+        Ok(Some(_)) => println!("identidad=ok"),
+        Ok(None) => println!("identidad=ausente"),
+        Err(err) => println!("identidad={err:?}"),
     }
 
     let list = dir.join("paired-devices.bin");
