@@ -170,9 +170,9 @@ fn open_rejects_future_format_version() {
     let (_dir, path, storage) = new_vault();
     storage.close().unwrap();
     raw(&path)
-        .execute("UPDATE header SET format_version = 3", [])
+        .execute("UPDATE header SET format_version = 4", [])
         .unwrap();
-    assert_open_fails_unchanged(&path, Error::UnsupportedFormatVersion(3));
+    assert_open_fails_unchanged(&path, Error::UnsupportedFormatVersion(4));
 }
 
 /// Pasa a WAL la base de `conn` y comprueba el modo resultante.
@@ -189,13 +189,13 @@ fn open_rejects_future_format_version_in_wal() {
     storage.close().unwrap();
     {
         let conn = raw(&path);
-        conn.execute("UPDATE header SET format_version = 3", [])
+        conn.execute("UPDATE header SET format_version = 4", [])
             .unwrap();
         set_wal(&conn);
     }
     assert!(!sibling(&path, "-wal").exists());
 
-    assert_open_fails_unchanged(&path, Error::UnsupportedFormatVersion(3));
+    assert_open_fails_unchanged(&path, Error::UnsupportedFormatVersion(4));
     assert!(!sibling(&path, "-wal").exists());
     assert!(!sibling(&path, "-shm").exists());
 }
@@ -213,7 +213,7 @@ fn open_future_wal_with_pending_frames_checkpoints_and_keeps_content() {
         let conn = raw(&src);
         set_wal(&conn);
         conn.pragma_update(None, "wal_autocheckpoint", 0).unwrap();
-        conn.execute("UPDATE header SET format_version = 3", [])
+        conn.execute("UPDATE header SET format_version = 4", [])
             .unwrap();
         // Copia sin checkpoint, como tras un cierre forzado.
         fs::copy(&src, &path).unwrap();
@@ -224,7 +224,7 @@ fn open_future_wal_with_pending_frames_checkpoints_and_keeps_content() {
 
     assert_eq!(
         Storage::open(&path).err(),
-        Some(Error::UnsupportedFormatVersion(3))
+        Some(Error::UnsupportedFormatVersion(4))
     );
     // El checkpoint al cerrar integró el `-wal` y lo borró.
     assert!(!sibling(&path, "-wal").exists());
@@ -239,7 +239,28 @@ fn open_future_wal_with_pending_frames_checkpoints_and_keeps_content() {
             |row| row.get(0),
         )
         .unwrap();
-    assert_eq!(version, 3);
+    assert_eq!(version, 4);
+}
+
+#[test]
+fn created_vault_has_identity_and_paired_pcs_tables() {
+    let (_dir, path, storage) = new_vault();
+    storage.close().unwrap();
+    let conn = raw(&path);
+    for table in ["identity", "paired_pcs"] {
+        let count: i64 = conn
+            .query_row(&format!("SELECT count(*) FROM {table}"), [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(count, 0, "{table}");
+    }
+}
+
+#[test]
+fn read_header_reads_v3() {
+    let (_dir, _path, storage) = new_vault();
+    assert_eq!(storage.read_header().unwrap().format_version(), 3);
 }
 
 // --- Cabecera y solo lectura ---
@@ -787,25 +808,25 @@ fn assert_future_header_is_unsupported(sql: &str) {
 
     assert_eq!(
         Storage::open_read_only(&path).err(),
-        Some(Error::UnsupportedFormatVersion(3))
+        Some(Error::UnsupportedFormatVersion(4))
     );
     assert_eq!(
         Storage::open(&path).err(),
-        Some(Error::UnsupportedFormatVersion(3))
+        Some(Error::UnsupportedFormatVersion(4))
     );
 }
 
 #[test]
 fn future_header_without_v1_column_is_unsupported() {
     assert_future_header_is_unsupported(
-        "UPDATE header SET format_version = 3; ALTER TABLE header DROP COLUMN kdf_memory_kib;",
+        "UPDATE header SET format_version = 4; ALTER TABLE header DROP COLUMN kdf_memory_kib;",
     );
 }
 
 #[test]
 fn future_header_with_wider_value_is_unsupported() {
     assert_future_header_is_unsupported(
-        "UPDATE header SET format_version = 3, kdf_memory_kib = 99999999999;",
+        "UPDATE header SET format_version = 4, kdf_memory_kib = 99999999999;",
     );
 }
 
@@ -903,7 +924,7 @@ fn created_vault_stores_key_check() {
             |row| Ok((row.get(0)?, row.get(1)?)),
         )
         .unwrap();
-    assert_eq!((version, len), (2, 40));
+    assert_eq!((version, len), (3, 40));
     assert_eq!(storage.read_header().unwrap().verify_key(&key), Ok(()));
 }
 

@@ -8,6 +8,12 @@
 //! Desde la versión 2 incluye `key_check`, el verificador de la llave de
 //! bóveda (ver `crypto::keys::seal_key_check`). Una cabecera de la versión 1
 //! leída del disco no lo tiene.
+//!
+//! La versión 3 no cambia la tabla `header`: agrega las tablas de identidad
+//! y de PCs emparejadas. Por eso el dato autenticado de `encrypted_key` lleva
+//! la **versión de la cabecera** ([`header_aad_version`]) y no
+//! `format_version`: así `unlock_with_key`, que no tiene la contraseña,
+//! puede migrar una v2 a v3 sin volver a cifrar `encrypted_key`.
 
 use secrecy::SecretString;
 
@@ -16,11 +22,34 @@ use crate::crypto::keys::{self, EncryptedKey, KEY_CHECK_LEN, VaultKey};
 use crate::error::{Error, Result, StorageErrorKind};
 
 /// Versión actual del formato de la bóveda.
-pub(crate) const FORMAT_VERSION: u16 = 2;
+pub(crate) const FORMAT_VERSION: u16 = 3;
+
+/// Versión 2 del formato: con verificador de la llave, sin identidad ni PCs.
+/// Solo se lee, para migrarla.
+pub(crate) const FORMAT_VERSION_V2: u16 = 2;
 
 /// Versión 1 del formato: sin verificador de la llave. Solo se lee, para
 /// migrarla.
 pub(crate) const FORMAT_VERSION_V1: u16 = 1;
+
+/// Versión actual de la estructura de la tabla `header`. Es independiente de
+/// `format_version` y solo cambia cuando esa tabla cambia.
+///
+/// Si una versión futura cambia la tabla `header`, su migración tendrá que
+/// volver a cifrar `encrypted_key` con la contraseña; entonces
+/// `unlock_with_key` no podrá migrarla, como hoy no puede con la v1.
+pub(crate) const HEADER_VERSION: u16 = 2;
+
+/// Versión de la cabecera que va en el dato autenticado de `encrypted_key`
+/// para una bóveda de `format_version`: 1 para la v1; 2 para la v2 y las
+/// siguientes (ver [`HEADER_VERSION`]).
+pub(crate) const fn header_aad_version(format_version: u16) -> u16 {
+    if format_version == FORMAT_VERSION_V1 {
+        FORMAT_VERSION_V1
+    } else {
+        HEADER_VERSION
+    }
+}
 
 /// Longitud del dato autenticado:
 /// versión (2) | algoritmo (1) | memoria (4) | iteraciones (4) | paralelismo (4) | sal (16).
@@ -84,8 +113,12 @@ impl VaultHeader {
 
         // La llave cifrada no forma parte del dato autenticado, así que se
         // puede calcular antes de tenerla.
-        let associated_data =
-            encode_associated_data(FORMAT_VERSION, KdfAlgorithm::Argon2idV13, &params, &salt);
+        let associated_data = encode_associated_data(
+            header_aad_version(FORMAT_VERSION),
+            KdfAlgorithm::Argon2idV13,
+            &params,
+            &salt,
+        );
         let encrypted_key =
             keys::seal_vault_key(vault_key, password, &salt, &params, &associated_data)?;
         let key_check = keys::seal_key_check(vault_key, FORMAT_VERSION)?;
@@ -103,8 +136,8 @@ impl VaultHeader {
     /// Reconstruye una cabecera leída del almacenamiento y valida la versión
     /// del formato, el algoritmo y los parámetros.
     ///
-    /// Acepta las versiones 1 (sin `key_check`) y 2 (con él); otra versión
-    /// da [`Error::UnsupportedFormatVersion`]. Una versión conocida con la
+    /// Acepta la versión 1 (sin `key_check`) y las 2 y 3 (con él); otra
+    /// versión da [`Error::UnsupportedFormatVersion`]. Una versión conocida con la
     /// presencia equivocada de `key_check` da `Storage(Corrupt)`.
     pub(crate) fn from_parts(
         format_version: u16,
@@ -115,8 +148,8 @@ impl VaultHeader {
         key_check: Option<[u8; KEY_CHECK_LEN]>,
     ) -> Result<Self> {
         match (format_version, key_check.is_some()) {
-            (FORMAT_VERSION_V1, false) | (FORMAT_VERSION, true) => {}
-            (FORMAT_VERSION_V1 | FORMAT_VERSION, _) => {
+            (FORMAT_VERSION_V1, false) | (FORMAT_VERSION_V2 | FORMAT_VERSION, true) => {}
+            (FORMAT_VERSION_V1 | FORMAT_VERSION_V2 | FORMAT_VERSION, _) => {
                 return Err(Error::Storage(StorageErrorKind::Corrupt));
             }
             (other, _) => return Err(Error::UnsupportedFormatVersion(other)),
@@ -166,8 +199,9 @@ impl VaultHeader {
     /// Argon2id corre una sola vez: la llave derivada que descifró la llave
     /// de bóveda la vuelve a cifrar con el dato autenticado de la versión 2,
     /// con la misma sal y los mismos parámetros y un nonce nuevo, y se crea
-    /// `key_check`. En una versión 2 devuelve `(llave, None)`. Los errores
-    /// son los de [`VaultHeader::unlock`].
+    /// `key_check`. En una versión 2 o 3 devuelve `(llave, None)`: la
+    /// migración v2→v3 no toca `encrypted_key` y la hace el almacenamiento.
+    /// Los errores son los de [`VaultHeader::unlock`].
     pub(crate) fn unlock_upgrading(
         &self,
         password: &SecretString,
@@ -179,16 +213,20 @@ impl VaultHeader {
             &self.params,
             &self.associated_data(),
         )?;
-        if self.format_version == FORMAT_VERSION {
+        if self.format_version != FORMAT_VERSION_V1 {
             return Ok((vault_key, None));
         }
 
-        let associated_data =
-            encode_associated_data(FORMAT_VERSION, self.algorithm, &self.params, &self.salt);
+        let associated_data = encode_associated_data(
+            header_aad_version(FORMAT_VERSION_V2),
+            self.algorithm,
+            &self.params,
+            &self.salt,
+        );
         let encrypted_key = keys::encrypt_vault_key(&vault_key, &derived, &associated_data)?;
-        let key_check = keys::seal_key_check(&vault_key, FORMAT_VERSION)?;
+        let key_check = keys::seal_key_check(&vault_key, FORMAT_VERSION_V2)?;
         let upgraded = Self {
-            format_version: FORMAT_VERSION,
+            format_version: FORMAT_VERSION_V2,
             algorithm: self.algorithm,
             params: self.params,
             salt: self.salt,
@@ -199,10 +237,11 @@ impl VaultHeader {
     }
 
     /// Codifica los campos de la cabecera como dato autenticado: binario de
-    /// ancho fijo y little-endian.
+    /// ancho fijo y little-endian. El campo de versión es la de la cabecera
+    /// ([`header_aad_version`]), no `format_version`.
     pub(crate) fn associated_data(&self) -> [u8; ASSOCIATED_DATA_LEN] {
         encode_associated_data(
-            self.format_version,
+            header_aad_version(self.format_version),
             self.algorithm,
             &self.params,
             &self.salt,
@@ -230,16 +269,17 @@ impl VaultHeader {
     }
 }
 
-/// `versión (u16) | algoritmo (u8) | memoria en KiB (u32) | iteraciones (u32)
-/// | paralelismo (u32) | sal (16 bytes)`, little-endian y sin separadores.
+/// `versión de la cabecera (u16) | algoritmo (u8) | memoria en KiB (u32) |
+/// iteraciones (u32) | paralelismo (u32) | sal (16 bytes)`, little-endian y
+/// sin separadores.
 fn encode_associated_data(
-    format_version: u16,
+    header_version: u16,
     algorithm: KdfAlgorithm,
     params: &KdfParams,
     salt: &[u8; SALT_LEN],
 ) -> [u8; ASSOCIATED_DATA_LEN] {
     let mut out = [0u8; ASSOCIATED_DATA_LEN];
-    out[0..2].copy_from_slice(&format_version.to_le_bytes());
+    out[0..2].copy_from_slice(&header_version.to_le_bytes());
     out[2] = algorithm as u8;
     out[3..7].copy_from_slice(&params.memory_kib.to_le_bytes());
     out[7..11].copy_from_slice(&params.iterations.to_le_bytes());

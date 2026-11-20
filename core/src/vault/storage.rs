@@ -23,7 +23,7 @@ use rusqlite::{Connection, ErrorCode, OpenFlags, TransactionBehavior, params};
 
 use super::entry::sealed::SealedEntry;
 use super::entry::{ENTRY_ID_LEN, EntryId};
-use super::header::{FORMAT_VERSION, FORMAT_VERSION_V1, VaultHeader};
+use super::header::{FORMAT_VERSION, FORMAT_VERSION_V1, FORMAT_VERSION_V2, VaultHeader};
 use crate::crypto::aead::EncryptedPart;
 use crate::crypto::kdf::{KdfParams, SALT_LEN};
 use crate::crypto::keys::{ENCRYPTED_KEY_LEN, EncryptedKey, KEY_CHECK_LEN, NONCE_LEN};
@@ -55,8 +55,49 @@ macro_rules! header_v2_columns {
     };
 }
 
-/// Esquema de la versión de formato 2. El de la versión 1 (sin `key_check`)
-/// está en la especificación y en `tests/fixtures/vault-v1.db`.
+/// Columnas de la tabla `identity` de la versión de formato 3. Las usan
+/// `SCHEMA` y la migración desde la versión 2, así que el texto es el mismo.
+macro_rules! identity_columns {
+    () => {
+        "(
+    id                      INTEGER PRIMARY KEY CHECK (id = 1),
+    identity_schema_version INTEGER NOT NULL,
+    data                    BLOB NOT NULL CHECK (length(data) = 72)
+) STRICT"
+    };
+}
+
+/// Columnas de la tabla `paired_pcs` de la versión de formato 3. Ver
+/// [`identity_columns`].
+macro_rules! paired_pcs_columns {
+    () => {
+        "(
+    id                BLOB PRIMARY KEY NOT NULL CHECK (length(id) = 16),
+    pc_schema_version INTEGER NOT NULL,
+    data              BLOB NOT NULL CHECK (length(data) >= 40)
+) STRICT, WITHOUT ROWID"
+    };
+}
+
+/// Las dos tablas que agrega la versión de formato 3. Las crean `SCHEMA` y
+/// la migración desde la versión 2.
+macro_rules! pairing_tables {
+    () => {
+        concat!(
+            "CREATE TABLE identity ",
+            identity_columns!(),
+            ";
+CREATE TABLE paired_pcs ",
+            paired_pcs_columns!(),
+            ";
+",
+        )
+    };
+}
+
+/// Esquema de la versión de formato 3. El de la versión 1 (sin `key_check`)
+/// está en la especificación y en `tests/fixtures/vault-v1.db`; la versión 2
+/// es la 3 sin `identity` ni `paired_pcs`.
 ///
 /// `"header"` va entre comillas para coincidir con lo que deja
 /// `ALTER TABLE ... RENAME` en la migración desde la versión 1: SQLite
@@ -79,7 +120,8 @@ CREATE TABLE entries (
     CHECK ((deleted = 0 AND search IS NOT NULL AND secret IS NOT NULL)
         OR (deleted = 1 AND search IS NULL AND secret IS NULL))
 ) STRICT, WITHOUT ROWID;
-"
+",
+    pairing_tables!(),
 );
 
 /// Resultado de [`Storage::migrate_header`].
@@ -231,9 +273,9 @@ impl Storage {
         let version =
             u16::try_from(version).map_err(|_| Error::Storage(StorageErrorKind::Corrupt))?;
         // La versión 1 no tiene la columna `key_check`: cada versión conocida
-        // tiene su consulta.
+        // tiene su consulta. La tabla `header` es la misma en la 2 y la 3.
         let sql = match version {
-            FORMAT_VERSION => {
+            FORMAT_VERSION | FORMAT_VERSION_V2 => {
                 "SELECT format_version, kdf_algorithm, kdf_memory_kib, kdf_iterations, \
                  kdf_parallelism, salt, key_nonce, encrypted_key, key_check \
                  FROM header WHERE id = 1"
@@ -288,7 +330,7 @@ impl Storage {
     }
 
     /// Reemplaza la única fila de la cabecera (al cambiar la contraseña
-    /// maestra). La cabecera debe ser de la versión actual, con `key_check`.
+    /// maestra). La cabecera debe tener `key_check` (versión 2 o 3).
     pub(crate) fn replace_header(&mut self, header: &VaultHeader) -> Result<()> {
         let key_check = current_key_check(header)?;
         let tx = self
@@ -393,7 +435,7 @@ impl Storage {
                 |row| Ok((row.get(0)?, row.get(1)?)),
             )
             .map_err(map_sqlite_error)?;
-        if (version, key_check_len) != (i64::from(FORMAT_VERSION), KEY_CHECK_LEN as i64) {
+        if (version, key_check_len) != (i64::from(FORMAT_VERSION_V2), KEY_CHECK_LEN as i64) {
             return Err(Error::Storage(StorageErrorKind::Corrupt));
         }
         tx.commit().map_err(map_sqlite_error)?;
@@ -687,11 +729,15 @@ impl HeaderTable {
     }
 }
 
-/// `key_check` de una cabecera de la versión actual. Una cabecera sin él
+/// `key_check` de una cabecera de la versión 2 o 3. Una cabecera sin él
 /// (de la versión 1) no se puede escribir: da `Storage(Corrupt)`.
 fn current_key_check(header: &VaultHeader) -> Result<&[u8; KEY_CHECK_LEN]> {
     match header.key_check() {
-        Some(key_check) if header.format_version() == FORMAT_VERSION => Ok(key_check),
+        Some(key_check)
+            if matches!(header.format_version(), FORMAT_VERSION_V2 | FORMAT_VERSION) =>
+        {
+            Ok(key_check)
+        }
         _ => Err(Error::Storage(StorageErrorKind::Corrupt)),
     }
 }
