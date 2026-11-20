@@ -20,6 +20,18 @@ tauri-build = { version = "2", features = [] }
 tauri = { version = "2", features = ["tray-icon"] }
 tauri-plugin-single-instance = "2.5.5"
 tauri-plugin-autostart = "2.7.0"
+# Aviso «Contraseña lista para pegar» (#98). Solo se usa su API de Rust.
+tauri-plugin-notification = "2.8.1"
+# Escribe en el portapapeles excluido del historial de Win+V y de la nube (#98).
+# Sin `image-data`: no hace falta la crate `image`.
+arboard = { version = "3.7.0", default-features = false }
+secrecy = "0.10"
+zeroize = "1.9"
+
+# Borrado condicional del portapapeles bajo una sola apertura (#98). Es la misma
+# crate que `arboard` usa en Windows, así que no agrega otra versión.
+[target.'cfg(windows)'.dependencies]
+clipboard-win = "5.4"
 
 # El perfil de release vive en el Cargo.toml de la raíz: Cargo ignora los
 # perfiles declarados en los miembros del workspace.
