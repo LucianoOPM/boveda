@@ -28,6 +28,7 @@ fn every_invalid_field_has_a_non_empty_message() {
         InvalidField::PasswordEmpty,
         InvalidField::PasswordTooLong,
         InvalidField::Port,
+        InvalidField::DeviceName,
         InvalidField::Address,
     ] {
         assert!(!field.to_string().is_empty(), "{field:?}");

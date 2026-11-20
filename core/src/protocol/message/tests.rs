@@ -731,3 +731,72 @@ fn send_message_buffer_is_exact_for_short_passwords_too() {
         assert_eq!(bytes.capacity(), bytes.len(), "texto de {len} bytes");
     }
 }
+
+const DEVICE_NAME_ERR: ProtocolError = ProtocolError::InvalidField(InvalidField::DeviceName);
+
+#[test]
+fn device_name_trims() {
+    assert_eq!(
+        DeviceName::new("  Pixel de Ana \n").unwrap().as_str(),
+        "Pixel de Ana"
+    );
+}
+
+#[test]
+fn device_name_accepts_1_and_128_bytes() {
+    assert!(DeviceName::new("a").is_ok());
+    assert_eq!(
+        DeviceName::new(&"a".repeat(128)).unwrap().as_str().len(),
+        128
+    );
+}
+
+#[test]
+fn device_name_rejects_empty_and_129_bytes() {
+    assert_eq!(DeviceName::new("").err(), Some(DEVICE_NAME_ERR));
+    assert_eq!(DeviceName::new("  \t ").err(), Some(DEVICE_NAME_ERR));
+    assert_eq!(
+        DeviceName::new(&"a".repeat(129)).err(),
+        Some(DEVICE_NAME_ERR)
+    );
+}
+
+#[test]
+fn device_name_rejects_control_chars() {
+    for c in ['\u{0}', '\u{7}', '\u{7f}'] {
+        assert_eq!(
+            DeviceName::new(&format!("a{c}b")).err(),
+            Some(DEVICE_NAME_ERR),
+            "{c:?}"
+        );
+    }
+}
+
+#[test]
+fn device_name_rejects_direction_chars() {
+    let mut forbidden = vec!['\u{061C}', '\u{200E}', '\u{200F}', '\u{2028}', '\u{2029}'];
+    forbidden.extend('\u{202A}'..='\u{202E}');
+    forbidden.extend('\u{2066}'..='\u{2069}');
+    for c in forbidden {
+        assert_eq!(
+            DeviceName::new(&format!("a{c}b")).err(),
+            Some(DEVICE_NAME_ERR),
+            "{c:?}"
+        );
+    }
+}
+
+#[test]
+fn device_name_128_bytes_multibyte_ok() {
+    assert_eq!(
+        DeviceName::new(&"é".repeat(64)).unwrap().as_str().len(),
+        128
+    );
+}
+
+#[test]
+fn device_name_127_plus_2_bytes_rejected() {
+    let name = format!("{}é", "a".repeat(127));
+    assert_eq!(name.len(), 129);
+    assert_eq!(DeviceName::new(&name).err(), Some(DEVICE_NAME_ERR));
+}
