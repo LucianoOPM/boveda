@@ -42,9 +42,11 @@ pub fn run() {
             // Al salir de verdad (`app.exit` emite primero `ExitRequested` y
             // después `Exit`), un último intento acotado de borrar la
             // contraseña pendiente: si Windows no deja comprobarlo, no se borra.
-            RunEvent::Exit => app
-                .state::<ClipboardManager>()
-                .shutdown(Duration::from_secs(2)),
+            RunEvent::Exit => {
+                if let Some(clipboard) = app.try_state::<ClipboardManager>() {
+                    clipboard.shutdown(Duration::from_secs(2));
+                }
+            }
             _ => {}
         }
     });

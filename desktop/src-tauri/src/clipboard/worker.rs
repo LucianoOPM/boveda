@@ -110,6 +110,10 @@ fn shutdown<B: ClipboardBackend>(
     deadline: Instant,
 ) {
     for entry in pending {
+        // Un intento lento puede haber agotado el plazo: no se empieza otra entrada.
+        if Instant::now() >= deadline {
+            break;
+        }
         let fingerprint = entry.fingerprint;
         for attempt in 1..=config.shutdown_attempts {
             let outcome = backend.clear_if_matches(&|bytes| key.fingerprint(bytes) == fingerprint);
