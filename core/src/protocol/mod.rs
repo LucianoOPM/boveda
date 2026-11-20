@@ -19,7 +19,7 @@ pub use message::{
 pub use pairing::{
     AwaitingReply, AwaitingSecond, AwaitingThird, CONFIRMATION_TIMEOUT, Decision, FIRST_FRAME_LEN,
     Frame, Initiator, MAX_FAILED_ATTEMPTS, MAX_FRAME_LEN, PAIRING_CODE_TTL, PAIRING_PATTERN,
-    PAIRING_PROLOGUE, PairedDevice, PairedPc, PairingError, PairingSession, PendingPairing,
-    Refusal,
+    PAIRING_PROLOGUE, PairedDevice, PairedPc, PairingError, PairingSession, PendingConnection,
+    PendingPairing, Refusal, pair_with_pc, serve_pairing,
 };
 pub use transport::{CANCEL_POLL, CancelToken, PairingTimeouts, TimedStream};

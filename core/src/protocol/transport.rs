@@ -155,8 +155,6 @@ fn read_full<S: TimedStream>(
 /// validarlo: en la primera trama de la PC cualquier largo distinto de 48
 /// cuenta como intento fallido, y para eso hay que verlo. Lo valida
 /// [`read_frame_body`], antes de reservar memoria.
-// Lo usan los conductores (Task 7).
-#[allow(dead_code)]
 pub(crate) fn read_frame_header<S: TimedStream>(
     stream: &mut S,
     deadline: Instant,
@@ -170,8 +168,6 @@ pub(crate) fn read_frame_header<S: TimedStream>(
 
 /// Lee el cuerpo de una trama de `len` bytes. `len` debe estar entre 1 y
 /// `MAX_FRAME_LEN`: se comprueba **antes** de reservar y de leer nada.
-// Lo usan los conductores (Task 7).
-#[allow(dead_code)]
 pub(crate) fn read_frame_body<S: TimedStream>(
     stream: &mut S,
     len: usize,
@@ -186,8 +182,6 @@ pub(crate) fn read_frame_body<S: TimedStream>(
 }
 
 /// Escribe una trama con su prefijo de largo.
-// Lo usan los conductores (Task 7).
-#[allow(dead_code)]
 pub(crate) fn write_frame<S: TimedStream>(
     stream: &mut S,
     frame: &[u8],

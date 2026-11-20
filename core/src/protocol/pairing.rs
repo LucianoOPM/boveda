@@ -17,6 +17,7 @@
 //! aceptada (ver `ARCHITECTURE.md`).
 
 use std::net::SocketAddr;
+use std::sync::{Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
 use secrecy::ExposeSecret;
@@ -28,6 +29,9 @@ use super::error::ProtocolError;
 use super::identity::{Fingerprint, KeyPair, PublicKey};
 use super::message::{
     AckDecision, DeviceName, PairingCode, PairingOffer, PairingReply, PairingRequest,
+};
+use super::transport::{
+    CancelToken, PairingTimeouts, TimedStream, read_frame_body, read_frame_header, write_frame,
 };
 use crate::vault::NewPairedPc;
 
@@ -444,6 +448,12 @@ impl PendingPairing {
         &self.name
     }
 
+    /// Cambia el plazo (lo usa el conductor con `PairingTimeouts`).
+    pub(crate) fn with_deadline(mut self, deadline: Instant) -> Self {
+        self.deadline = deadline;
+        self
+    }
+
     /// Hasta cuándo puede aceptarse. La app debe mostrar el diálogo de
     /// inmediato y rechazar al llegar aquí.
     pub fn deadline(&self) -> Instant {
@@ -599,6 +609,156 @@ impl AwaitingReply {
             AckDecision::Rejected => Err(PairingError::Rejected),
         }
     }
+}
+
+fn lock(session: &Mutex<PairingSession>) -> Result<MutexGuard<'_, PairingSession>, PairingError> {
+    // Un `Mutex` envenenado (otro hilo entró en pánico) no debe tumbar a este.
+    session.lock().map_err(|_| PairingError::Closed)
+}
+
+/// Conductor de la PC: atiende **una** conexión entrante hasta tener el
+/// apretón de manos terminado, y la devuelve como [`PendingConnection`] a la
+/// espera de la decisión del usuario.
+///
+/// La conexión se recibe por valor y se cierra al soltarse, en cualquier
+/// camino de salida con error. El `Mutex` de la sesión se toma solo durante
+/// las llamadas a `note_malformed` y `accept_first`, que no hacen entrada ni
+/// salida. Un código incorrecto, caducado, reutilizado o agotado se cierra
+/// **sin escribir ninguna trama**; el motivo (`Refused`) es solo para la app.
+/// Una conexión que se corta, vence o se cancela antes de completar la trama 1
+/// no cuenta como intento. Los plazos y la cancelación están en
+/// [`PairingTimeouts`] y [`CancelToken`].
+pub fn serve_pairing<S: TimedStream>(
+    mut stream: S,
+    session: &Mutex<PairingSession>,
+    cancel: &CancelToken,
+    timeouts: &PairingTimeouts,
+) -> Result<PendingConnection<S>, PairingError> {
+    let deadline = Instant::now() + timeouts.handshake;
+    let step = timeouts.step;
+
+    let len = read_frame_header(&mut stream, deadline, step, cancel)?;
+    if len != FIRST_FRAME_LEN {
+        // Cuenta como intento sin leer el cuerpo.
+        let refusal = lock(session)?.note_malformed(Instant::now());
+        return Err(PairingError::Refused(refusal));
+    }
+    let first = read_frame_body(&mut stream, len, deadline, step, cancel)?;
+    let third = lock(session)?
+        .accept_first(Instant::now(), &first)
+        .map_err(PairingError::Refused)?;
+
+    write_frame(&mut stream, third.second_message(), deadline, step, cancel)?;
+    let len = read_frame_header(&mut stream, deadline, step, cancel)?;
+    let frame = read_frame_body(&mut stream, len, deadline, step, cancel)?;
+
+    let now = Instant::now();
+    let pending = third
+        .read_third(now, &frame)?
+        .with_deadline(now + timeouts.confirmation);
+    Ok(PendingConnection {
+        stream,
+        pending,
+        step,
+        cancel: cancel.clone(),
+    })
+}
+
+/// Conexión con el apretón de manos terminado, a la espera de la decisión del
+/// usuario en la PC.
+///
+/// El núcleo no lanza hilos ni temporizadores: la app muestra el diálogo de
+/// inmediato y llama a [`confirm`](Self::confirm) o [`reject`](Self::reject)
+/// (en `deadline()` a más tardar). Soltarlo sin decidir cierra la conexión,
+/// que el celular ve como un fallo.
+pub struct PendingConnection<S> {
+    stream: S,
+    pending: PendingPairing,
+    step: Duration,
+    cancel: CancelToken,
+}
+
+impl<S: TimedStream> PendingConnection<S> {
+    /// El celular que pide emparejarse (solo lectura).
+    pub fn pending(&self) -> &PendingPairing {
+        &self.pending
+    }
+
+    /// El usuario acepta. La trama de aceptación se escribe **completa antes**
+    /// de devolver el [`PairedDevice`]: si falla, es un error y no hay
+    /// dispositivo. Que la escritura salga bien no garantiza que el celular la
+    /// reciba ni que la app consiga guardar después. Pasado el plazo, el
+    /// celular recibe un rechazo y esto da `ConfirmationTimeout`.
+    pub fn confirm(self) -> Result<PairedDevice, PairingError> {
+        let Self {
+            mut stream,
+            pending,
+            step,
+            cancel,
+        } = self;
+        match pending.accept(Instant::now())? {
+            Decision::Accepted { device, frame } => {
+                write_frame(&mut stream, &frame, Instant::now() + step, step, &cancel)?;
+                Ok(device)
+            }
+            Decision::TimedOut { frame } => {
+                // El celular merece enterarse; si no se puede, da igual.
+                let _ = write_frame(&mut stream, &frame, Instant::now() + step, step, &cancel);
+                Err(PairingError::ConfirmationTimeout)
+            }
+        }
+    }
+
+    /// El usuario rechaza: el celular recibe la trama de rechazo.
+    pub fn reject(self) -> Result<(), PairingError> {
+        let Self {
+            mut stream,
+            pending,
+            step,
+            cancel,
+        } = self;
+        let frame = pending.reject()?;
+        write_frame(&mut stream, &frame, Instant::now() + step, step, &cancel)
+    }
+}
+
+/// Conductor del celular: hace el emparejamiento por `stream` (ya conectado
+/// a la dirección del QR) y devuelve la PC solo si recibe una aceptación
+/// autenticada. La conexión se cierra al terminar, con o sin error.
+///
+/// Si la trama 2 no se autentica (`PeerNotAuthentic`), no manda la trama 3. Un
+/// código rechazado y un corte de red dan el mismo `Closed`: el celular no
+/// puede saber cuál fue. Esperar la decisión de la PC dura como máximo
+/// `timeouts.reply_wait`, y agotarlo es `ConfirmationTimeout`.
+pub fn pair_with_pc<S: TimedStream>(
+    mut stream: S,
+    identity: &KeyPair,
+    offer: &PairingOffer,
+    name: DeviceName,
+    cancel: &CancelToken,
+    timeouts: &PairingTimeouts,
+) -> Result<PairedPc, PairingError> {
+    let deadline = Instant::now() + timeouts.handshake;
+    let step = timeouts.step;
+
+    let (awaiting, first) = Initiator::new(identity, offer, name)?.first_message()?;
+    write_frame(&mut stream, &first, deadline, step, cancel)?;
+    let len = read_frame_header(&mut stream, deadline, step, cancel)?;
+    let second = read_frame_body(&mut stream, len, deadline, step, cancel)?;
+    let (reply, third) = awaiting.read_second(&second)?;
+    write_frame(&mut stream, &third, deadline, step, cancel)?;
+
+    let wait = timeouts.reply_wait;
+    let reply_deadline = Instant::now() + wait;
+    let to_confirmation = |error| match error {
+        PairingError::Timeout => PairingError::ConfirmationTimeout,
+        other => other,
+    };
+    let len =
+        read_frame_header(&mut stream, reply_deadline, wait, cancel).map_err(to_confirmation)?;
+    let frame =
+        read_frame_body(&mut stream, len, reply_deadline, wait, cancel).map_err(to_confirmation)?;
+    reply.read_reply(&frame)
 }
 
 #[cfg(test)]

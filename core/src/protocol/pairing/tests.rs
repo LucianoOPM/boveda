@@ -490,3 +490,434 @@ fn garbage_third_frame_fails() {
         Some(PairingError::Handshake)
     );
 }
+
+// ---- Conductores síncronos (Task 7) ----
+
+use std::collections::VecDeque;
+use std::io::{self, Read, Write};
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
+use std::sync::{Arc, Mutex};
+use std::thread;
+
+/// Un extremo de una conexión en memoria que respeta los plazos configurados.
+/// Al soltarse un extremo, el otro lee fin de conexión y falla al escribir.
+struct Duplex {
+    rx: Receiver<Vec<u8>>,
+    tx: Sender<Vec<u8>>,
+    buffered: VecDeque<u8>,
+    read_timeout: Option<Duration>,
+    sent: Arc<AtomicUsize>,
+    received: Arc<AtomicUsize>,
+}
+
+fn duplex() -> (Duplex, Duplex) {
+    let (a_tx, b_rx) = mpsc::channel();
+    let (b_tx, a_rx) = mpsc::channel();
+    let end = |rx, tx| Duplex {
+        rx,
+        tx,
+        buffered: VecDeque::new(),
+        read_timeout: None,
+        sent: Arc::new(AtomicUsize::new(0)),
+        received: Arc::new(AtomicUsize::new(0)),
+    };
+    (end(a_rx, a_tx), end(b_rx, b_tx))
+}
+
+impl Read for Duplex {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        if self.buffered.is_empty() {
+            let timeout = self.read_timeout.expect("se leyó sin plazo");
+            match self.rx.recv_timeout(timeout) {
+                Ok(chunk) => self.buffered.extend(chunk),
+                Err(RecvTimeoutError::Timeout) => return Err(io::ErrorKind::TimedOut.into()),
+                Err(RecvTimeoutError::Disconnected) => return Ok(0),
+            }
+        }
+        let n = buf.len().min(self.buffered.len());
+        for slot in buf.iter_mut().take(n) {
+            *slot = self.buffered.pop_front().unwrap();
+        }
+        self.received.fetch_add(n, Ordering::SeqCst);
+        Ok(n)
+    }
+}
+
+impl Write for Duplex {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        self.tx
+            .send(buf.to_vec())
+            .map_err(|_| io::Error::from(io::ErrorKind::BrokenPipe))?;
+        self.sent.fetch_add(buf.len(), Ordering::SeqCst);
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+}
+
+impl TimedStream for Duplex {
+    fn set_read_timeout(&mut self, timeout: Option<Duration>) -> io::Result<()> {
+        self.read_timeout = timeout;
+        Ok(())
+    }
+
+    fn set_write_timeout(&mut self, _timeout: Option<Duration>) -> io::Result<()> {
+        Ok(())
+    }
+}
+
+fn fast() -> PairingTimeouts {
+    PairingTimeouts {
+        step: Duration::from_millis(400),
+        handshake: Duration::from_secs(3),
+        confirmation: Duration::from_secs(3),
+        reply_wait: Duration::from_secs(3),
+    }
+}
+
+fn shared_session() -> Arc<Mutex<PairingSession>> {
+    Arc::new(Mutex::new(PairingSession::new(
+        keypair(1),
+        code(7),
+        Instant::now(),
+    )))
+}
+
+/// Escribe una trama en un extremo, como lo haría el otro lado.
+fn put(stream: &mut Duplex, frame: &[u8]) {
+    let cancel = CancelToken::new();
+    let far = Instant::now() + Duration::from_secs(5);
+    write_frame(stream, frame, far, Duration::from_secs(5), &cancel).unwrap();
+}
+
+/// Lee una trama completa de un extremo.
+fn take(stream: &mut Duplex) -> Result<Frame, PairingError> {
+    let cancel = CancelToken::new();
+    let far = Instant::now() + Duration::from_secs(5);
+    let step = Duration::from_secs(5);
+    let len = read_frame_header(stream, far, step, &cancel)?;
+    read_frame_body(stream, len, far, step, &cancel)
+}
+
+fn serve(
+    server: Duplex,
+    session: &Arc<Mutex<PairingSession>>,
+    t: PairingTimeouts,
+) -> Result<PendingConnection<Duplex>, PairingError> {
+    serve_pairing(server, session, &CancelToken::new(), &t)
+}
+
+fn pair(client: Duplex, code_n: u8, t: PairingTimeouts) -> Result<PairedPc, PairingError> {
+    let offer = PairingOffer::new(keypair(1).public(), address(), code(code_n)).unwrap();
+    pair_with_pc(
+        client,
+        &keypair(2),
+        &offer,
+        device_name(),
+        &CancelToken::new(),
+        &t,
+    )
+}
+
+/// Cuenta de nuevo si la sesión sigue aceptando el código correcto.
+fn session_still_active(session: &Arc<Mutex<PairingSession>>) -> bool {
+    session
+        .lock()
+        .unwrap()
+        .accept_first(Instant::now(), &first_frame(7))
+        .is_ok()
+}
+
+#[test]
+fn pc_closed_before_header_does_not_count() {
+    let session = shared_session();
+    let (client, server) = duplex();
+    drop(client);
+    assert_eq!(
+        serve(server, &session, fast()).err(),
+        Some(PairingError::Closed)
+    );
+    assert!(session_still_active(&session));
+}
+
+#[test]
+fn pc_closed_mid_first_frame_does_not_count() {
+    let session = shared_session();
+    let (mut client, server) = duplex();
+    client.write_all(&[0, 48, 1, 2, 3]).unwrap();
+    drop(client);
+    assert_eq!(
+        serve(server, &session, fast()).err(),
+        Some(PairingError::Closed)
+    );
+    assert!(session_still_active(&session));
+}
+
+#[test]
+fn pc_timeout_does_not_count() {
+    let session = shared_session();
+    let (_client, server) = duplex();
+    let t = PairingTimeouts {
+        step: Duration::from_millis(200),
+        ..fast()
+    };
+    assert_eq!(
+        serve(server, &session, t).err(),
+        Some(PairingError::Timeout)
+    );
+    assert!(session_still_active(&session));
+}
+
+#[test]
+fn pc_bad_length_counts_and_does_not_read_body() {
+    let session = shared_session();
+    for _ in 0..MAX_FAILED_ATTEMPTS {
+        let (mut client, server) = duplex();
+        let received = server.received.clone();
+        client.write_all(&[0, 47]).unwrap();
+        client.write_all(&[9; 47]).unwrap();
+        assert_eq!(
+            serve(server, &session, fast()).err(),
+            Some(PairingError::Refused(Refusal::Malformed))
+        );
+        assert_eq!(received.load(Ordering::SeqCst), 2, "solo el encabezado");
+    }
+    let (mut client, server) = duplex();
+    put(&mut client, &first_frame(7));
+    assert_eq!(
+        serve(server, &session, fast()).err(),
+        Some(PairingError::Refused(Refusal::TooManyAttempts))
+    );
+}
+
+#[test]
+fn pc_wrong_code_writes_nothing() {
+    let session = shared_session();
+    let (mut client, server) = duplex();
+    let sent = server.sent.clone();
+    put(&mut client, &first_frame(8));
+    assert_eq!(
+        serve(server, &session, fast()).err(),
+        Some(PairingError::Refused(Refusal::WrongCode))
+    );
+    assert_eq!(sent.load(Ordering::SeqCst), 0);
+    // El celular solo ve que la conexión se cierra.
+    assert_eq!(take(&mut client).err(), Some(PairingError::Closed));
+}
+
+#[test]
+fn pc_expired_reads_first_frame_and_writes_nothing() {
+    let old = Instant::now()
+        .checked_sub(PAIRING_CODE_TTL + Duration::from_secs(1))
+        .expect("el reloj monótono es más joven que 2 minutos");
+    let session = Arc::new(Mutex::new(PairingSession::new(keypair(1), code(7), old)));
+    let (mut client, server) = duplex();
+    let (sent, received) = (server.sent.clone(), server.received.clone());
+    put(&mut client, &first_frame(7));
+    assert_eq!(
+        serve(server, &session, fast()).err(),
+        Some(PairingError::Refused(Refusal::Expired))
+    );
+    assert_eq!(received.load(Ordering::SeqCst), 2 + FIRST_FRAME_LEN);
+    assert_eq!(sent.load(Ordering::SeqCst), 0);
+}
+
+#[test]
+fn pc_third_frame_failure_keeps_consumed() {
+    let session = shared_session();
+    let (mut client, server) = duplex();
+    put(&mut client, &first_frame(7));
+    put(&mut client, &[0x42; 196]);
+    assert_eq!(
+        serve(server, &session, fast()).err(),
+        Some(PairingError::Handshake)
+    );
+    let (mut client, server) = duplex();
+    put(&mut client, &first_frame(7));
+    assert_eq!(
+        serve(server, &session, fast()).err(),
+        Some(PairingError::Refused(Refusal::AlreadyUsed))
+    );
+}
+
+#[test]
+fn full_pairing_through_the_conductors() {
+    let session = shared_session();
+    let (client, server) = duplex();
+    let phone = thread::spawn(move || pair(client, 7, fast()));
+    let connection = serve(server, &session, fast()).unwrap();
+    assert_eq!(connection.pending().peer_public_key(), keypair(2).public());
+    assert_eq!(connection.pending().peer_name().as_str(), "Pixel de Ana");
+    let device = connection.confirm().unwrap();
+    assert_eq!(device.public_key(), keypair(2).public());
+    let pc = phone.join().unwrap().unwrap();
+    assert_eq!(pc.public_key(), keypair(1).public());
+}
+
+#[test]
+fn rejecting_gives_rejected_to_the_phone() {
+    let session = shared_session();
+    let (client, server) = duplex();
+    let phone = thread::spawn(move || pair(client, 7, fast()));
+    serve(server, &session, fast()).unwrap().reject().unwrap();
+    assert_eq!(phone.join().unwrap().err(), Some(PairingError::Rejected));
+}
+
+#[test]
+fn confirm_after_the_confirmation_timeout_is_a_rejection() {
+    let session = shared_session();
+    let (client, server) = duplex();
+    let phone = thread::spawn(move || pair(client, 7, fast()));
+    let t = PairingTimeouts {
+        confirmation: Duration::ZERO,
+        ..fast()
+    };
+    let connection = serve(server, &session, t).unwrap();
+    assert_eq!(
+        connection.confirm().err(),
+        Some(PairingError::ConfirmationTimeout)
+    );
+    assert_eq!(phone.join().unwrap().err(), Some(PairingError::Rejected));
+}
+
+#[test]
+fn confirm_after_phone_disconnect_fails() {
+    let session = shared_session();
+    let (mut client, server) = duplex();
+    let (awaiting, frame1) = phone_named("Pixel").first_message().unwrap();
+    let server_session = session.clone();
+    let pc = thread::spawn(move || serve(server, &server_session, fast()));
+    put(&mut client, &frame1);
+    let frame2 = take(&mut client).unwrap();
+    let (_, frame3) = awaiting.read_second(&frame2).unwrap();
+    put(&mut client, &frame3);
+    let connection = pc.join().unwrap().unwrap();
+    drop(client);
+    // No hay `PairedDevice`: la escritura de la trama 4 falla.
+    assert_eq!(connection.confirm().err(), Some(PairingError::Closed));
+}
+
+#[test]
+fn dropping_the_pending_connection_is_closed_for_the_phone() {
+    let session = shared_session();
+    let (client, server) = duplex();
+    let phone = thread::spawn(move || pair(client, 7, fast()));
+    drop(serve(server, &session, fast()).unwrap());
+    assert_eq!(phone.join().unwrap().err(), Some(PairingError::Closed));
+}
+
+#[test]
+fn phone_gets_the_same_error_for_refused_and_for_cut() {
+    // Código incorrecto: la PC rechaza y cierra.
+    let session = shared_session();
+    let (client, server) = duplex();
+    let phone = thread::spawn(move || pair(client, 8, fast()));
+    assert_eq!(
+        serve(server, &session, fast()).err(),
+        Some(PairingError::Refused(Refusal::WrongCode))
+    );
+    let refused = phone.join().unwrap().err();
+    // Corte de red: el otro extremo desaparece.
+    let (client, server) = duplex();
+    drop(server);
+    let cut = pair(client, 7, fast()).err();
+    assert_eq!(refused, Some(PairingError::Closed));
+    assert_eq!(refused, cut);
+}
+
+#[test]
+fn phone_peer_not_authentic_sends_no_third_frame() {
+    let (client, mut server) = duplex();
+    let received = server.received.clone();
+    let phone = thread::spawn(move || pair(client, 7, fast()));
+    let _frame1 = take(&mut server).unwrap();
+    put(&mut server, &[0x42; 48]);
+    assert_eq!(
+        phone.join().unwrap().err(),
+        Some(PairingError::PeerNotAuthentic)
+    );
+    assert_eq!(
+        received.load(Ordering::SeqCst),
+        2 + FIRST_FRAME_LEN,
+        "solo la trama 1"
+    );
+}
+
+#[test]
+fn phone_waits_at_most_reply_wait() {
+    let session = shared_session();
+    let (client, server) = duplex();
+    let t = PairingTimeouts {
+        reply_wait: Duration::from_millis(300),
+        ..fast()
+    };
+    let phone = thread::spawn(move || pair(client, 7, t));
+    // La PC termina el apretón de manos pero nadie decide.
+    let connection = serve(server, &session, fast()).unwrap();
+    let started = Instant::now();
+    assert_eq!(
+        phone.join().unwrap().err(),
+        Some(PairingError::ConfirmationTimeout)
+    );
+    assert!(started.elapsed() < Duration::from_secs(2));
+    drop(connection);
+}
+
+#[test]
+fn cancel_on_each_side() {
+    // PC: un cliente mudo.
+    let session = shared_session();
+    let (_client, server) = duplex();
+    let cancel = CancelToken::new();
+    let other = cancel.clone();
+    thread::spawn(move || {
+        thread::sleep(Duration::from_millis(100));
+        other.cancel();
+    });
+    let t = PairingTimeouts {
+        step: Duration::from_secs(5),
+        ..fast()
+    };
+    let started = Instant::now();
+    assert_eq!(
+        serve_pairing(server, &session, &cancel, &t).err(),
+        Some(PairingError::Cancelled)
+    );
+    assert!(started.elapsed() < Duration::from_secs(1));
+
+    // Celular: una PC que nunca responde.
+    let (client, _server) = duplex();
+    let cancel = CancelToken::new();
+    let other = cancel.clone();
+    thread::spawn(move || {
+        thread::sleep(Duration::from_millis(100));
+        other.cancel();
+    });
+    let offer = PairingOffer::new(keypair(1).public(), address(), code(7)).unwrap();
+    let started = Instant::now();
+    assert_eq!(
+        pair_with_pc(client, &keypair(2), &offer, device_name(), &cancel, &t).err(),
+        Some(PairingError::Cancelled)
+    );
+    assert!(started.elapsed() < Duration::from_secs(1));
+}
+
+#[test]
+fn poisoned_session_is_closed_not_a_panic() {
+    let session = shared_session();
+    let poisoner = session.clone();
+    let _ = thread::spawn(move || {
+        let _guard = poisoner.lock().unwrap();
+        panic!("envenena el Mutex a propósito");
+    })
+    .join();
+    let (mut client, server) = duplex();
+    put(&mut client, &first_frame(7));
+    assert_eq!(
+        serve(server, &session, fast()).err(),
+        Some(PairingError::Closed)
+    );
+}
