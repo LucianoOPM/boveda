@@ -17,13 +17,16 @@
 //! aceptada (ver `ARCHITECTURE.md`).
 
 use std::net::SocketAddr;
-use std::time::Duration;
+use std::time::{Duration, Instant};
+
+use secrecy::ExposeSecret;
 
 use snow::params::NoiseParams;
+use snow::{Builder, HandshakeState, TransportState};
 
 use super::error::ProtocolError;
-use super::identity::PublicKey;
-use super::message::DeviceName;
+use super::identity::{KeyPair, PublicKey};
+use super::message::{DeviceName, PairingCode, PairingOffer, PairingRequest};
 use crate::vault::NewPairedPc;
 
 /// Patrón Noise del emparejamiento: el celular conoce la llave de la PC (QR)
@@ -199,6 +202,279 @@ impl std::fmt::Debug for PairedDevice {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "PairedDevice({})", self.public_key.fingerprint())
     }
+}
+
+/// Estados del código de un solo uso en la PC.
+#[derive(Debug, Clone, Copy)]
+enum CodeState {
+    /// Puede autenticar una primera trama; lleva los intentos fallidos.
+    Active { failed: u8 },
+    /// Una primera trama se autenticó: el código ya se gastó (final).
+    Consumed,
+    /// Pasaron los 120 s (final).
+    Expired,
+    /// Agotó los intentos fallidos (final).
+    Exhausted,
+    /// La app lo canceló (final).
+    Cancelled,
+}
+
+/// Código de un solo uso en la PC: cuándo nació, cuántos intentos fallidos
+/// lleva y si ya se gastó.
+///
+/// Todas las transiciones son atómicas porque pasan por `&mut self`: el
+/// conductor toma un `Mutex` solo durante `accept_first`, que no hace entrada
+/// ni salida, así que dos conexiones con el código correcto no pueden
+/// consumirlo las dos.
+///
+/// Se crea en el mismo momento en que se genera el código y se muestra el QR:
+/// los 2 minutos cuentan desde `new`, con reloj monótono (`Instant`).
+pub struct PairingSession {
+    identity: KeyPair,
+    code: PairingCode,
+    created: Instant,
+    state: CodeState,
+}
+
+impl PairingSession {
+    /// Sesión nueva con la identidad de la PC y el código del QR.
+    pub fn new(identity: KeyPair, code: PairingCode, now: Instant) -> Self {
+        Self {
+            identity,
+            code,
+            created: now,
+            state: CodeState::Active { failed: 0 },
+        }
+    }
+
+    /// Procesa la primera trama de una conexión.
+    ///
+    /// Solo un código `Active` se usa para descifrar. Si la trama se
+    /// autentica, el código pasa a `Consumed` aunque el usuario rechace
+    /// después; si no, suma un intento fallido y al tercero queda
+    /// `Exhausted`. La caducidad se evalúa primero. El motivo del rechazo es
+    /// solo para la app local: la conexión nunca lo ve.
+    pub fn accept_first(&mut self, now: Instant, frame: &[u8]) -> Result<AwaitingThird, Refusal> {
+        self.refresh(now);
+        if let Some(refusal) = self.final_refusal() {
+            return Err(refusal);
+        }
+        if frame.len() != FIRST_FRAME_LEN {
+            return Err(self.record_failure(Refusal::Malformed));
+        }
+        match self.respond(frame) {
+            Ok(third) => {
+                self.state = CodeState::Consumed;
+                Ok(third)
+            }
+            Err(_) => Err(self.record_failure(Refusal::WrongCode)),
+        }
+    }
+
+    /// Anota que la primera trama anunció un largo distinto de 48 bytes:
+    /// cuenta como intento fallido si el código está `Active`.
+    pub fn note_malformed(&mut self, now: Instant) -> Refusal {
+        self.refresh(now);
+        match self.final_refusal() {
+            Some(refusal) => refusal,
+            None => self.record_failure(Refusal::Malformed),
+        }
+    }
+
+    /// La app cancela el código (por ejemplo, al cerrar la ventana del QR).
+    /// Un código ya gastado sigue gastado.
+    pub fn cancel(&mut self) {
+        if matches!(self.state, CodeState::Active { .. }) {
+            self.state = CodeState::Cancelled;
+        }
+    }
+
+    fn refresh(&mut self, now: Instant) {
+        if matches!(self.state, CodeState::Active { .. })
+            && now.saturating_duration_since(self.created) >= PAIRING_CODE_TTL
+        {
+            self.state = CodeState::Expired;
+        }
+    }
+
+    fn final_refusal(&self) -> Option<Refusal> {
+        match self.state {
+            CodeState::Active { .. } => None,
+            CodeState::Consumed => Some(Refusal::AlreadyUsed),
+            CodeState::Expired => Some(Refusal::Expired),
+            CodeState::Exhausted => Some(Refusal::TooManyAttempts),
+            CodeState::Cancelled => Some(Refusal::Cancelled),
+        }
+    }
+
+    fn record_failure(&mut self, refusal: Refusal) -> Refusal {
+        if let CodeState::Active { failed } = self.state {
+            let failed = failed.saturating_add(1);
+            self.state = if failed >= MAX_FAILED_ATTEMPTS {
+                CodeState::Exhausted
+            } else {
+                CodeState::Active { failed }
+            };
+        }
+        refusal
+    }
+
+    /// Lee la trama 1 con el código como PSK y escribe la trama 2.
+    fn respond(&self, frame: &[u8]) -> Result<AwaitingThird, PairingError> {
+        let mut handshake = noise_builder(
+            self.identity.private().expose_secret(),
+            self.code.expose_bytes(),
+        )
+        .and_then(|builder| builder.build_responder())
+        .map_err(|_| PairingError::Handshake)?;
+        let mut buffer = [0u8; MAX_FRAME_LEN];
+        let payload = handshake
+            .read_message(frame, &mut buffer)
+            .map_err(|_| PairingError::Handshake)?;
+        if payload != 0 {
+            return Err(PairingError::Handshake);
+        }
+        let len = handshake
+            .write_message(&[], &mut buffer)
+            .map_err(|_| PairingError::Handshake)?;
+        Ok(AwaitingThird {
+            handshake,
+            second: buffer[..len].to_vec(),
+        })
+    }
+}
+
+/// Configuración común de Noise: patrón, prólogo, llave estática propia y el
+/// código como PSK en la posición 0. Las llaves se pasan como referencias
+/// para no hacer copias propias (ver "Borrado de memoria").
+fn noise_builder<'a>(
+    private_key: &'a [u8; 32],
+    code: &'a [u8; 32],
+) -> Result<Builder<'a>, snow::Error> {
+    let params = noise_params().map_err(|_| snow::Error::Input)?;
+    Builder::new(params)
+        .local_private_key(private_key)?
+        .psk(0, code)?
+        .prologue(PAIRING_PROLOGUE)
+}
+
+/// La PC autenticó la trama 1 y tiene lista la trama 2.
+// El apretón de manos lo consume `read_third` (Task 5).
+#[allow(dead_code)]
+pub struct AwaitingThird {
+    handshake: HandshakeState,
+    second: Frame,
+}
+
+impl AwaitingThird {
+    /// La trama 2, sin prefijo de largo, para mandarla al celular.
+    pub fn second_message(&self) -> &[u8] {
+        &self.second
+    }
+}
+
+/// Celular que va a empezar el emparejamiento.
+pub struct Initiator {
+    handshake: HandshakeState,
+    name: DeviceName,
+    pc_key: PublicKey,
+    address: SocketAddr,
+}
+
+impl Initiator {
+    /// Prepara el intercambio con la oferta del QR y el nombre del celular.
+    pub fn new(
+        identity: &KeyPair,
+        offer: &PairingOffer,
+        name: DeviceName,
+    ) -> Result<Self, PairingError> {
+        let pc_key = offer.public_key();
+        let handshake = noise_builder(
+            identity.private().expose_secret(),
+            offer.code().expose_bytes(),
+        )
+        .and_then(|builder| builder.remote_public_key(pc_key.as_bytes()))
+        .and_then(|builder| builder.build_initiator())
+        .map_err(|_| PairingError::Handshake)?;
+        Ok(Self {
+            handshake,
+            name,
+            pc_key,
+            address: offer.address(),
+        })
+    }
+
+    /// Escribe la trama 1 (`e, es`, 48 bytes).
+    pub fn first_message(mut self) -> Result<(AwaitingSecond, Frame), PairingError> {
+        let mut buffer = [0u8; MAX_FRAME_LEN];
+        let len = self
+            .handshake
+            .write_message(&[], &mut buffer)
+            .map_err(|_| PairingError::Handshake)?;
+        let frame = buffer[..len].to_vec();
+        Ok((
+            AwaitingSecond {
+                handshake: self.handshake,
+                name: self.name,
+                pc_key: self.pc_key,
+                address: self.address,
+            },
+            frame,
+        ))
+    }
+}
+
+/// El celular mandó la trama 1 y espera la 2.
+pub struct AwaitingSecond {
+    handshake: HandshakeState,
+    name: DeviceName,
+    pc_key: PublicKey,
+    address: SocketAddr,
+}
+
+impl AwaitingSecond {
+    /// Lee la trama 2 y escribe la 3 (`s, se` y el nombre). Una trama 2 que
+    /// no se autentica es `PeerNotAuthentic`: quien responde no tiene la
+    /// llave privada de la llave pública del QR. El celular **no** manda la
+    /// trama 3 en ese caso.
+    pub fn read_second(mut self, frame: &[u8]) -> Result<(AwaitingReply, Frame), PairingError> {
+        let mut buffer = [0u8; MAX_FRAME_LEN];
+        let payload = self
+            .handshake
+            .read_message(frame, &mut buffer)
+            .map_err(|_| PairingError::PeerNotAuthentic)?;
+        if payload != 0 {
+            return Err(PairingError::Handshake);
+        }
+        let request = PairingRequest::new(self.name).encode()?;
+        let len = self
+            .handshake
+            .write_message(&request, &mut buffer)
+            .map_err(|_| PairingError::Handshake)?;
+        let frame = buffer[..len].to_vec();
+        let transport = self
+            .handshake
+            .into_transport_mode()
+            .map_err(|_| PairingError::Handshake)?;
+        Ok((
+            AwaitingReply {
+                transport,
+                pc_key: self.pc_key,
+                address: self.address,
+            },
+            frame,
+        ))
+    }
+}
+
+/// El celular mandó la trama 3: espera la decisión de la PC. Aquí termina el
+/// intercambio Noise, **no** el emparejamiento.
+// `read_reply` lo agrega la Task 5.
+#[allow(dead_code)]
+pub struct AwaitingReply {
+    transport: TransportState,
+    pc_key: PublicKey,
+    address: SocketAddr,
 }
 
 #[cfg(test)]
