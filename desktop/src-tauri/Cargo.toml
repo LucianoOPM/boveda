@@ -38,6 +38,8 @@ postcard = { version = "1", default-features = false, features = ["alloc"] }
 # crate que `arboard` usa en Windows, así que no agrega otra versión.
 [target.'cfg(windows)'.dependencies]
 clipboard-win = "5.4"
+# Anuncio mDNS de la PC en las redes privadas (#100). Aprobada en el épico.
+mdns-sd = "0.22"
 # Ventana de solo mensajes que hace de propietaria del portapapeles: con un
 # propietario NULL Windows no lo bloquea (#98). Misma versión que ya está en el
 # lock (la usa tauri); solo las funciones de ventanas.

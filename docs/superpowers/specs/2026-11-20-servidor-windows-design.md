@@ -149,3 +149,18 @@ Todas sin red real, salvo donde se indica.
 - Los intervalos exactos del reintento acotado y el plazo de espera a los trabajadores al bajar.
 - El nombre exacto de las reglas del Firewall y de sus archivos del hook.
 - Si `GetNetworks` o `GetNetworkConnections` es el camino más corto para obtener el adaptador de cada red, y las features mínimas de `windows` que haga falta sumar.
+
+## Verificación de `mdns-sd` 0.22.0 (tarea 1 del plan)
+
+Hecha el 2026-11-20 leyendo `service_daemon.rs` de la crate y con la prueba real `desktop/src-tauri/tests/mdns_interfaces.rs` (`#[ignore]`, multidifusión de la máquina).
+
+**Configuración elegida.** Un `ServiceDaemon` por generación; justo después de crearlo, `disable_interface(IfKind::All)` y, por cada IPv4 privada, `enable_interface(IfKind::Addr(IpAddr::V4(ip)))`; el `ServiceInfo` lleva solo esas IPv4 como direcciones explícitas, sin `enable_addr_auto`, y `set_interfaces` con las mismas.
+
+**Lo que se comprobó en el código:**
+- Cada entrada de interfaz es una *dirección*; las selecciones se aplican en orden y gana la última. `Addr(ip)` se resuelve a `IndexV4(idx)` o `IndexV6(idx)` según la familia de la IP, así que `Addr(IPv4)` habilita solo las direcciones IPv4 de ese adaptador. `disable_interface(All)` también cubre el loopback (que está habilitado por defecto).
+- El anuncio (`announce_service_on_intf`) recorre solo las interfaces habilitadas (`my_intfs`), y `prepare_announce` no emite nada por una familia en la que el servicio no tiene direcciones en esa interfaz: con solo IPv4 explícitas no se anuncia por IPv6.
+- Los paquetes recibidos por una interfaz que no está en `my_intfs`, o de una familia deshabilitada en ella, se descartan sin responder.
+
+**Lo que se comprobó en la prueba:** el consultante restringido a IPv4 ve el servicio y el restringido a IPv6 no (tampoco con la configuración por defecto, porque el servicio solo tiene IPv4: la restricción de interfaces es una segunda capa).
+
+**Limitación que la crate no permite cerrar (decisión del implementador, a revisar por el usuario).** `ServiceDaemon::new()` abre sus dos sockets UDP 5353 enlazados a `0.0.0.0` y `[::]` (`MulticastSockets::new`; la crate no ofrece otro bind), y al arrancar se une a los grupos de multidifusión de todas las interfaces hasta que se procesa el `disable_interface(All)`. En una máquina con una red privada y otra pública a la vez, por tanto, existe un socket UDP comodín mientras haya una generación. Ese socket **no anuncia ni responde** por la interfaz pública (descarta sus paquetes) y el instalador limita su regla de Firewall al perfil privado, pero no es «escuchar solo en las IP privadas» en sentido estricto. Con **ninguna** red privada no hay daemon, así que se cumple «sin escucha y sin anuncio». Alternativas si se quiere cerrar el hueco: un anunciante propio con sockets enlazados por interfaz (más código de red a mantener) u otra crate.
