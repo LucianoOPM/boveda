@@ -9,12 +9,14 @@
 #![allow(dead_code)]
 
 use std::fmt;
+use std::net::SocketAddr;
 
 use secrecy::{ExposeSecret, ExposeSecretMut, SecretBox};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use zeroize::{ZeroizeOnDrop, Zeroizing};
 
-use super::error::{ProtocolError, Result};
+use super::error::{InvalidField, ProtocolError, Result};
+use super::identity::PublicKey;
 use crate::vault::entry::flavor::ZeroizingVec;
 
 /// Versión del protocolo que escribe y acepta esta versión del núcleo.
@@ -157,6 +159,90 @@ impl<'de> Deserialize<'de> for PairingCode {
         secret.expose_secret_mut().copy_from_slice(&*bytes);
         Ok(Self(secret))
     }
+}
+
+/// Tope del contenido del QR de emparejamiento, en bytes: una IPv6 con un
+/// puerto de 3 bytes (versión, tipo, llave, dirección y código). La #94 no
+/// fija una versión de QR; la #101 mide el tamaño real con su biblioteca.
+pub const MAX_PAIRING_OFFER_LEN: usize = 86;
+
+/// Contenido del QR de emparejamiento: la llave pública de la PC, la
+/// dirección donde escucha y el código de un solo uso.
+///
+/// No lleva fecha de caducidad: los relojes de la PC y del celular no
+/// coinciden, y los 2 minutos los cuenta la PC desde que muestra el QR. Una
+/// IPv6 se codifica sin zona (`scope id`): una dirección link-local sin zona no
+/// sirve para conectar, y qué dirección anuncia la PC lo decide la #100.
+///
+/// Su `Debug` solo muestra la huella de la llave: ni el código ni la
+/// dirección, que revela dónde está la PC.
+#[derive(Serialize, Deserialize)]
+pub struct PairingOffer {
+    public_key: PublicKey,
+    address: SocketAddr,
+    code: PairingCode,
+}
+
+impl PairingOffer {
+    /// Arma una oferta. Puerto 0 da `InvalidField::Port`; una dirección no
+    /// especificada o multicast, `InvalidField::Address`. Loopback y las
+    /// direcciones privadas se aceptan.
+    pub fn new(public_key: PublicKey, address: SocketAddr, code: PairingCode) -> Result<Self> {
+        validate_address(&address)?;
+        Ok(Self {
+            public_key,
+            address,
+            code,
+        })
+    }
+
+    /// Llave pública de la PC.
+    pub fn public_key(&self) -> PublicKey {
+        self.public_key
+    }
+
+    /// Dirección donde escucha la PC.
+    pub fn address(&self) -> SocketAddr {
+        self.address
+    }
+
+    /// Código de un solo uso.
+    pub fn code(&self) -> &PairingCode {
+        &self.code
+    }
+
+    /// Codifica la oferta (`versión | tipo | cuerpo`). El resultado contiene
+    /// el código: va en un búfer que se borra al soltarse.
+    pub fn encode(&self) -> Result<Zeroizing<Vec<u8>>> {
+        encode_body(Kind::PairingOffer, self)
+    }
+
+    /// Decodifica y valida una oferta.
+    pub fn decode(bytes: &[u8]) -> Result<Self> {
+        let offer: Self = decode_body(Kind::PairingOffer, bytes)?;
+        validate_address(&offer.address)?;
+        Ok(offer)
+    }
+}
+
+impl fmt::Debug for PairingOffer {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("PairingOffer")
+            .field("public_key", &self.public_key)
+            .finish_non_exhaustive()
+    }
+}
+
+/// Puerto distinto de 0 y dirección que no sea no especificada ni multicast.
+fn validate_address(address: &SocketAddr) -> Result<()> {
+    if address.port() == 0 {
+        return Err(ProtocolError::InvalidField(InvalidField::Port));
+    }
+    let ip = address.ip();
+    if ip.is_unspecified() || ip.is_multicast() {
+        return Err(ProtocolError::InvalidField(InvalidField::Address));
+    }
+    Ok(())
 }
 
 /// Serialización de un `SecretString` para `#[serde(with = "secret_str")]`.

@@ -20,6 +20,7 @@
 use std::fmt;
 
 use secrecy::{ExposeSecret, ExposeSecretMut, SecretBox};
+use serde::{Deserialize, Serialize};
 use x25519_dalek::{PublicKey as DalekPublicKey, StaticSecret};
 use zeroize::ZeroizeOnDrop;
 
@@ -29,8 +30,9 @@ use crate::vault::PUBLIC_KEY_LEN;
 /// Longitud de la huella, en bytes.
 const FINGERPRINT_LEN: usize = 8;
 
-/// Llave pública X25519. No es un secreto.
-#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+/// Llave pública X25519. No es un secreto. En el cable son sus 32 bytes, sin
+/// longitud.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct PublicKey([u8; PUBLIC_KEY_LEN]);
 
 impl PublicKey {

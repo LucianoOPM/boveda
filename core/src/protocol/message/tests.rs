@@ -250,3 +250,200 @@ fn secret_str_with_trailing_bytes_still_errors() {
         Some(ProtocolError::TrailingBytes)
     );
 }
+
+// --- PairingOffer ---
+
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
+
+use crate::protocol::identity::PublicKey;
+
+const V4: SocketAddr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 20)), 50000);
+
+fn v6(port: u16) -> SocketAddr {
+    SocketAddr::new(IpAddr::V6(Ipv6Addr::new(0xfd00, 0, 0, 0, 0, 0, 0, 1)), port)
+}
+
+fn offer(address: SocketAddr) -> Result<PairingOffer> {
+    PairingOffer::new(
+        PublicKey::from_bytes([0x11; 32]),
+        address,
+        code_from([0x22; 32]),
+    )
+}
+
+/// `versión | tipo | llave | dirección | código` armado a mano.
+fn raw_offer(address: &[u8]) -> Vec<u8> {
+    let mut bytes = vec![PROTOCOL_VERSION, 1];
+    bytes.extend_from_slice(&[0x11; 32]);
+    bytes.extend_from_slice(address);
+    bytes.extend_from_slice(&[0x22; 32]);
+    bytes
+}
+
+#[test]
+fn pairing_offer_roundtrip_ipv4_and_ipv6() {
+    for address in [V4, v6(50000), v6(1)] {
+        let original = offer(address).unwrap();
+        let bytes = original.encode().unwrap();
+        let decoded = PairingOffer::decode(&bytes).unwrap();
+        assert_eq!(decoded.public_key(), PublicKey::from_bytes([0x11; 32]));
+        assert_eq!(decoded.address(), address);
+        assert_eq!(decoded.code().expose_bytes(), &[0x22; 32]);
+    }
+}
+
+#[test]
+fn pairing_offer_wire_bytes_ipv4() {
+    // Variante 0 (IPv4), 192.168.1.20 y el puerto 50000 como varint (D0 86 03).
+    let expected = raw_offer(&[0, 192, 168, 1, 20, 0xD0, 0x86, 0x03]);
+    assert_eq!(expected.len(), 74);
+    assert_eq!(offer(V4).unwrap().encode().unwrap().as_slice(), expected);
+}
+
+#[test]
+fn pairing_offer_wire_bytes_ipv6() {
+    let mut address = vec![1, 0xfd];
+    address.extend_from_slice(&[0; 14]);
+    address.push(1);
+    address.extend_from_slice(&[0xD0, 0x86, 0x03]);
+    let expected = raw_offer(&address);
+    assert_eq!(expected.len(), 86);
+    assert_eq!(
+        offer(v6(50000)).unwrap().encode().unwrap().as_slice(),
+        expected
+    );
+}
+
+#[test]
+fn pairing_offer_max_len_is_86() {
+    assert_eq!(MAX_PAIRING_OFFER_LEN, 86);
+    assert_eq!(offer(v6(65535)).unwrap().encode().unwrap().len(), 86);
+    assert_eq!(
+        offer(SocketAddr::new(V4.ip(), 65535))
+            .unwrap()
+            .encode()
+            .unwrap()
+            .len(),
+        74
+    );
+    // Ningún puerto da un contenido mayor.
+    for port in [1u16, 127, 128, 16383, 16384, 65535] {
+        assert!(offer(v6(port)).unwrap().encode().unwrap().len() <= MAX_PAIRING_OFFER_LEN);
+    }
+}
+
+#[test]
+fn port_zero_is_invalid() {
+    assert_eq!(
+        offer(SocketAddr::new(V4.ip(), 0)).err(),
+        Some(ProtocolError::InvalidField(InvalidField::Port))
+    );
+    let bytes = raw_offer(&[0, 192, 168, 1, 20, 0]);
+    assert_eq!(
+        PairingOffer::decode(&bytes).err(),
+        Some(ProtocolError::InvalidField(InvalidField::Port))
+    );
+}
+
+#[test]
+fn unspecified_and_multicast_addresses_are_invalid() {
+    let invalid = [
+        SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 50000),
+        SocketAddr::new(IpAddr::V6(Ipv6Addr::UNSPECIFIED), 50000),
+        SocketAddr::new(IpAddr::V4(Ipv4Addr::new(224, 0, 0, 251)), 50000),
+        SocketAddr::new(
+            IpAddr::V6(Ipv6Addr::new(0xff02, 0, 0, 0, 0, 0, 0, 0xfb)),
+            50000,
+        ),
+    ];
+    for address in invalid {
+        assert_eq!(
+            offer(address).err(),
+            Some(ProtocolError::InvalidField(InvalidField::Address)),
+            "{address}"
+        );
+    }
+    // Lo mismo al decodificar bytes armados a mano.
+    for ip in [[0u8, 0, 0, 0], [224, 0, 0, 251]] {
+        let mut address = vec![0];
+        address.extend_from_slice(&ip);
+        address.extend_from_slice(&[0xD0, 0x86, 0x03]);
+        assert_eq!(
+            PairingOffer::decode(&raw_offer(&address)).err(),
+            Some(ProtocolError::InvalidField(InvalidField::Address))
+        );
+    }
+    let mut address = vec![1];
+    address.extend_from_slice(&[0; 16]);
+    address.extend_from_slice(&[0xD0, 0x86, 0x03]);
+    assert_eq!(
+        PairingOffer::decode(&raw_offer(&address)).err(),
+        Some(ProtocolError::InvalidField(InvalidField::Address))
+    );
+}
+
+#[test]
+fn loopback_and_private_addresses_are_accepted() {
+    for address in [
+        SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 50000),
+        SocketAddr::new(IpAddr::V6(Ipv6Addr::LOCALHOST), 50000),
+        SocketAddr::new(IpAddr::V4(Ipv4Addr::new(10, 0, 0, 5)), 50000),
+    ] {
+        assert!(offer(address).is_ok(), "{address}");
+    }
+}
+
+#[test]
+fn pairing_offer_truncated_prefixes_fail() {
+    let bytes = offer(V4).unwrap().encode().unwrap();
+    for len in 0..bytes.len() {
+        let error = PairingOffer::decode(&bytes[..len]).err().unwrap();
+        assert!(
+            matches!(error, ProtocolError::Truncated | ProtocolError::Malformed),
+            "prefijo de {len} bytes: {error:?}"
+        );
+    }
+}
+
+#[test]
+fn pairing_offer_trailing_bytes_are_rejected() {
+    let mut bytes = offer(V4).unwrap().encode().unwrap().to_vec();
+    bytes.push(0);
+    assert_eq!(
+        PairingOffer::decode(&bytes).err(),
+        Some(ProtocolError::TrailingBytes)
+    );
+}
+
+#[test]
+fn pairing_offer_rejects_other_kinds_and_versions() {
+    let mut bytes = offer(V4).unwrap().encode().unwrap().to_vec();
+    bytes[1] = 3;
+    assert_eq!(
+        PairingOffer::decode(&bytes).err(),
+        Some(ProtocolError::UnexpectedKind(3))
+    );
+    bytes[1] = 1;
+    bytes[0] = 2;
+    assert_eq!(
+        PairingOffer::decode(&bytes).err(),
+        Some(ProtocolError::UnsupportedVersion(2))
+    );
+}
+
+#[test]
+fn pairing_offer_debug_hides_the_code_and_the_address() {
+    let debug = format!("{:?}", offer(V4).unwrap());
+    assert!(!debug.to_lowercase().contains("2222"), "{debug}");
+    assert!(!debug.contains("34, 34"), "{debug}");
+    assert!(!debug.contains("192.168"), "{debug}");
+    assert!(debug.contains("PublicKey(1111-1111-1111-1111)"), "{debug}");
+}
+
+#[test]
+fn pairing_offer_encode_buffer_does_not_reallocate() {
+    for address in [V4, v6(50000)] {
+        let bytes = offer(address).unwrap().encode().unwrap();
+        assert_eq!(bytes.capacity(), bytes.len());
+    }
+}
