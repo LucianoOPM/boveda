@@ -352,6 +352,38 @@ void main() {
       expect(find.byKey(settingsKey), findsOneWidget);
     });
 
+    testWidgets('a 100 % es una sola fila baja', (tester) async {
+      // `Align` suelta la altura que el `Scaffold` le impone al hijo.
+      await pump(
+        tester,
+        Align(
+          alignment: Alignment.topLeft,
+          child: VaultHeader(onOpenSettings: () {}),
+        ),
+      );
+
+      // Marca, subtítulo y cápsula caben en una fila de unos 60 dp.
+      expect(tester.getSize(find.byType(VaultHeader)).height, lessThan(90));
+    });
+
+    testWidgets('a 200 % se apila y no se vuelve altísimo', (tester) async {
+      await pump(
+        tester,
+        Align(
+          alignment: Alignment.topLeft,
+          child: VaultHeader(onOpenSettings: () {}),
+        ),
+        textScale: 2,
+      );
+
+      // La marca no se parte letra por letra en una columna estrecha: la
+      // cápsula pasa debajo y el encabezado sigue siendo manejable.
+      expect(tester.getSize(find.byType(VaultHeader)).height, lessThan(260));
+      final brand = tester.getRect(find.text('BÓVEDA'));
+      final capsule = tester.getRect(find.byType(StatusCapsule));
+      expect(capsule.top, greaterThanOrEqualTo(brand.bottom));
+    });
+
     testWidgets('sin tema usa los estilos estándar', (tester) async {
       tester.view.physicalSize = const Size(360, 640);
       tester.view.devicePixelRatio = 1;

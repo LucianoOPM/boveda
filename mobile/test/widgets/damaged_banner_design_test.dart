@@ -107,4 +107,22 @@ void main() {
     expect(tester.takeException(), isNull);
     expect(find.text('Entendido'), findsOneWidget);
   });
+
+  testWidgets('a 200 % el botón pasa debajo del texto y el aviso no se '
+      'vuelve altísimo', (tester) async {
+    await pump(tester, 12, textScale: 2);
+
+    final text = tester.getRect(find.text('12 entradas no se pudieron leer'));
+    final button = tester.getRect(find.text('Entendido'));
+    expect(button.top, greaterThanOrEqualTo(text.bottom));
+    expect(tester.getSize(find.byKey(bannerKey)).height, lessThan(300));
+  });
+
+  testWidgets('a 100 % el botón va a la derecha del texto', (tester) async {
+    await pump(tester, 12);
+
+    final text = tester.getRect(find.text('12 entradas no se pudieron leer'));
+    final button = tester.getRect(find.text('Entendido'));
+    expect(button.left, greaterThanOrEqualTo(text.right));
+  });
 }

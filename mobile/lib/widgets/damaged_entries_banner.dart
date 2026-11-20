@@ -40,6 +40,25 @@ class _DamagedEntriesBannerState extends State<DamagedEntriesBanner> {
         : '${widget.count} entradas no se pudieron leer';
     final theme = Theme.of(context);
     final error = theme.colorScheme.error;
+    // Con el texto del sistema más grande que un 110 %, "Entendido" deja al
+    // mensaje una columna muy estrecha: pasa debajo, a la derecha.
+    final stacked = MediaQuery.textScalerOf(context).scale(10) / 10 > 1.1;
+    final text = Row(
+      children: [
+        Icon(BovedaIcons.triangleAlert, size: 20, color: error),
+        const SizedBox(width: Space.sm),
+        Expanded(
+          child: Text(
+            message,
+            style: theme.textTheme.bodyMedium?.copyWith(
+              color: theme.colorScheme.onSurface,
+            ),
+          ),
+        ),
+        if (!stacked) const SizedBox(width: Space.sm),
+        if (!stacked) _dismissButton(error),
+      ],
+    );
     // Una tarjeta de `errorContainer` (`DESIGN.md` 6.6), no un
     // `MaterialBanner`: este no admite radio ni borde.
     return Padding(
@@ -53,28 +72,29 @@ class _DamagedEntriesBannerState extends State<DamagedEntriesBanner> {
         ),
         child: Padding(
           padding: const EdgeInsets.all(Space.md),
-          child: Row(
-            children: [
-              Icon(BovedaIcons.triangleAlert, size: 20, color: error),
-              const SizedBox(width: Space.sm),
-              Expanded(
-                child: Text(
-                  message,
-                  style: theme.textTheme.bodyMedium?.copyWith(
-                    color: theme.colorScheme.onSurface,
-                  ),
-                ),
-              ),
-              const SizedBox(width: Space.sm),
-              TextButton(
-                style: TextButton.styleFrom(foregroundColor: error),
-                onPressed: () => setState(() => _dismissed = true),
-                child: const Text('Entendido'),
-              ),
-            ],
-          ),
+          child: stacked
+              ? Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    text,
+                    Align(
+                      alignment: Alignment.centerRight,
+                      child: _dismissButton(error),
+                    ),
+                  ],
+                )
+              : text,
         ),
       ),
+    );
+  }
+
+  Widget _dismissButton(Color error) {
+    return TextButton(
+      style: TextButton.styleFrom(foregroundColor: error),
+      onPressed: () => setState(() => _dismissed = true),
+      child: const Text('Entendido'),
     );
   }
 }
