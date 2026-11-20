@@ -2,14 +2,18 @@
 // 7.6, y el board "Formulario de entrada" de Penpot). El comportamiento sigue
 // en `entry_form_screen_test.dart`.
 
+import 'dart:async';
+
 import 'package:boveda/screens/entry_form_screen.dart';
 import 'package:boveda/src/rust/api/entries.dart';
+import 'package:boveda/src/rust/api/error.dart';
 import 'package:boveda/theme/accents.dart';
 import 'package:boveda/theme/colors.dart';
 import 'package:boveda/theme/icons.dart';
 import 'package:boveda/theme/spacing.dart';
 import 'package:boveda/theme/theme.dart';
 import 'package:boveda/widgets/activity_text_field.dart';
+import 'package:boveda/widgets/primary_glow.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -309,6 +313,171 @@ void main() {
       final button = tester.getRect(changePassword);
       expect(button.top, greaterThanOrEqualTo(text.bottom));
       expect(tester.takeException(), isNull);
+    });
+  });
+
+  group('avisos, guardado y descartar', () {
+    final save = find.byKey(const Key('save'));
+
+    testWidgets('los títulos no cambian', (tester) async {
+      await pumpForm(tester);
+      expect(find.widgetWithText(AppBar, 'Nueva entrada'), findsOneWidget);
+
+      await tester.pumpWidget(const SizedBox.shrink());
+      await pumpForm(tester, editing: gmail);
+      expect(find.widgetWithText(AppBar, 'Editar entrada'), findsOneWidget);
+
+      await tester.pumpWidget(const SizedBox.shrink());
+      await pumpForm(tester, editing: gmail, repair: true);
+      expect(find.widgetWithText(AppBar, 'Reparar entrada'), findsOneWidget);
+    });
+
+    for (final accent in BovedaAccent.values) {
+      testWidgets('con ${accent.name}: el aviso de reparación es una tarjeta '
+          'errorContainer con ícono', (tester) async {
+        await pumpForm(tester, editing: gmail, repair: true, accent: accent);
+
+        final card = find.byKey(const Key('repair-notice'));
+        expect(card, findsOneWidget);
+        final material = tester.widget<Material>(card);
+        expect(material.color, BovedaColors.errorContainer);
+        final shape = material.shape! as RoundedRectangleBorder;
+        expect(shape.borderRadius, BorderRadius.circular(Radii.card));
+        expect(shape.side.color, BovedaColors.error.withValues(alpha: 0.38));
+        final icon = tester.widget<Icon>(
+          find.descendant(
+            of: card,
+            matching: find.byIcon(BovedaIcons.triangleAlert),
+          ),
+        );
+        expect(icon.color, BovedaColors.error);
+        expect(
+          find.descendant(
+            of: card,
+            matching: find.text(
+              'La contraseña y las notas de esta entrada están dañadas. '
+              'Escribe una contraseña nueva para repararla.',
+            ),
+          ),
+          findsOneWidget,
+        );
+      });
+    }
+
+    testWidgets('sin reparar no hay aviso', (tester) async {
+      await pumpForm(tester, editing: gmail);
+
+      expect(find.byKey(const Key('repair-notice')), findsNothing);
+    });
+
+    testWidgets(
+      'el error general lleva ícono de alerta y el texto de siempre',
+      (tester) async {
+        session.onEdit = (_, _, _, _) async => throw VaultError.storageIo;
+        await pumpForm(tester, editing: gmail);
+
+        await tapVisible(tester, save);
+
+        final failed = find.byKey(const Key('save-failed'));
+        expect(
+          find.descendant(
+            of: failed,
+            matching: find.text('No se pudo guardar. Intenta de nuevo.'),
+          ),
+          findsOneWidget,
+        );
+        final icon = tester.widget<Icon>(
+          find.descendant(
+            of: failed,
+            matching: find.byIcon(BovedaIcons.triangleAlert),
+          ),
+        );
+        expect(icon.color, BovedaColors.error);
+      },
+    );
+
+    testWidgets('Guardar conserva su Key y texto, con resplandor que sigue al '
+        'botón', (tester) async {
+      await pumpForm(tester, editing: gmail);
+      await tester.scrollUntilVisible(
+        save,
+        200,
+        scrollable: find.byType(Scrollable).first,
+      );
+
+      expect(tester.widget(save), isA<FilledButton>());
+      expect(find.widgetWithText(FilledButton, 'Guardar'), findsOneWidget);
+      final glow = tester.widget<PrimaryGlow>(
+        find.ancestor(of: save, matching: find.byType(PrimaryGlow)),
+      );
+      expect(glow.enabled, isTrue);
+    });
+
+    testWidgets('mientras guarda: "Guardando…", desactivado y sin resplandor', (
+      tester,
+    ) async {
+      final pending = Completer<void>();
+      session.onEdit = (_, _, _, _) => pending.future;
+      await pumpForm(tester, editing: gmail);
+      await tapVisible(tester, save);
+
+      expect(find.text('Guardando…'), findsOneWidget);
+      expect(tester.widget<FilledButton>(save).onPressed, isNull);
+      final glow = tester.widget<PrimaryGlow>(
+        find.ancestor(of: save, matching: find.byType(PrimaryGlow)),
+      );
+      expect(glow.enabled, isFalse);
+      pending.complete();
+      await tester.pump();
+      await tester.pump();
+    });
+
+    testWidgets('la confirmación de descartar: "Descartar" en error, '
+        '"Seguir editando" sin estilo propio', (tester) async {
+      await pumpForm(tester, editing: gmail);
+      await tester.enterText(username, 'otro');
+      await tester.pump();
+
+      await tester.tap(find.byType(BackButton));
+      await tester.pumpAndSettle();
+
+      expect(find.text('¿Descartar cambios?'), findsOneWidget);
+      final discard = tester.widget<TextButton>(
+        find.widgetWithText(TextButton, 'Descartar'),
+      );
+      expect(
+        discard.style!.foregroundColor!.resolve(const {}),
+        BovedaColors.error,
+      );
+      final keep = tester.widget<TextButton>(
+        find.widgetWithText(TextButton, 'Seguir editando'),
+      );
+      expect(keep.style, isNull);
+
+      // "Seguir editando" conserva lo escrito; "Descartar" sale.
+      await tester.tap(find.widgetWithText(TextButton, 'Seguir editando'));
+      await tester.pumpAndSettle();
+      expect(find.byType(EntryFormScreen), findsOneWidget);
+
+      await tester.tap(find.byType(BackButton));
+      await tester.pumpAndSettle();
+      await tester.tap(find.widgetWithText(TextButton, 'Descartar'));
+      await tester.pumpAndSettle();
+      expect(find.byType(EntryFormScreen), findsNothing);
+    });
+
+    testWidgets('a 200 % con el aviso de reparación y el error no desborda', (
+      tester,
+    ) async {
+      session.onEdit = (_, _, _, _) async => throw VaultError.storageIo;
+      await pumpForm(tester, editing: gmail, repair: true, textScale: 2);
+      await tester.enterText(password, 'una contraseña nueva');
+      await tester.pump();
+
+      await tapVisible(tester, save);
+
+      expect(tester.takeException(), isNull);
+      expect(find.byKey(const Key('save-failed')), findsOneWidget);
     });
   });
 

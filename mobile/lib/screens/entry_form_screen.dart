@@ -12,6 +12,7 @@ import '../theme/text_scale.dart';
 import '../widgets/activity_text_field.dart';
 import '../widgets/labeled_field.dart';
 import '../widgets/password_field.dart';
+import '../widgets/primary_glow.dart';
 import '../widgets/tags_field.dart';
 
 /// Campo del formulario al que corresponde un error de validación.
@@ -375,6 +376,10 @@ class _EntryFormScreenState extends State<EntryFormScreen> {
             child: const Text('Seguir editando'),
           ),
           TextButton(
+            // Acción destructiva: en `error` (`DESIGN.md` 6.8 y 6.11).
+            style: TextButton.styleFrom(
+              foregroundColor: Theme.of(context).colorScheme.error,
+            ),
             onPressed: () => Navigator.of(context).pop(true),
             child: const Text('Descartar'),
           ),
@@ -411,23 +416,7 @@ class _EntryFormScreenState extends State<EntryFormScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                if (_repair) ...[
-                  const Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Icon(Icons.warning_amber),
-                      SizedBox(width: 8),
-                      Expanded(
-                        child: Text(
-                          'La contraseña y las notas de esta entrada están '
-                          'dañadas. Escribe una contraseña nueva para '
-                          'repararla.',
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 16),
-                ],
+                if (_repair) ...[_repairNotice(), const SizedBox(height: 16)],
                 _textField(
                   _FormField.service,
                   key: const Key('service'),
@@ -473,24 +462,80 @@ class _EntryFormScreenState extends State<EntryFormScreen> {
                 const SizedBox(height: 24),
                 if (_generalError)
                   Padding(
-                    padding: const EdgeInsets.only(bottom: 8),
-                    child: Text(
-                      'No se pudo guardar. Intenta de nuevo.',
-                      style: TextStyle(
-                        color: Theme.of(context).colorScheme.error,
-                      ),
+                    padding: const EdgeInsets.only(bottom: Space.sm),
+                    child: Row(
+                      key: const Key('save-failed'),
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Icon(
+                          BovedaIcons.triangleAlert,
+                          size: IconSizes.inline + 2,
+                          color: Theme.of(context).colorScheme.error,
+                        ),
+                        const SizedBox(width: Space.sm),
+                        Expanded(
+                          child: Text(
+                            'No se pudo guardar. Intenta de nuevo.',
+                            style: TextStyle(
+                              color: Theme.of(context).colorScheme.error,
+                            ),
+                          ),
+                        ),
+                      ],
                     ),
                   ),
                 TextFieldTapRegion(
-                  child: FilledButton(
-                    key: const Key('save'),
-                    onPressed: _busy ? null : _save,
-                    child: Text(_saving ? 'Guardando…' : 'Guardar'),
+                  child: PrimaryGlow(
+                    enabled: !_busy,
+                    child: FilledButton(
+                      key: const Key('save'),
+                      onPressed: _busy ? null : _save,
+                      child: Text(_saving ? 'Guardando…' : 'Guardar'),
+                    ),
                   ),
                 ),
               ],
             ),
           ),
+        ),
+      ),
+    );
+  }
+
+  /// Aviso de que la entrada está dañada y hay que escribir una contraseña
+  /// nueva: una tarjeta de `errorContainer`, como las demás entradas dañadas.
+  Widget _repairNotice() {
+    final theme = Theme.of(context);
+    final error = theme.colorScheme.error;
+    return Material(
+      key: const Key('repair-notice'),
+      color: BovedaColors.errorContainer,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(Radii.card),
+        side: BorderSide(color: error.withValues(alpha: 0.38)),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(Space.s14),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Icon(
+              BovedaIcons.triangleAlert,
+              size: IconSizes.control,
+              color: error,
+            ),
+            const SizedBox(width: Space.sm),
+            Expanded(
+              child: Text(
+                'La contraseña y las notas de esta entrada están '
+                'dañadas. Escribe una contraseña nueva para '
+                'repararla.',
+                style: theme.textTheme.bodyMedium?.copyWith(
+                  color: theme.colorScheme.onSurface,
+                ),
+              ),
+            ),
+          ],
         ),
       ),
     );
