@@ -18,4 +18,9 @@ abstract final class BovedaIcons {
   static const settings = IconData(0xe154, fontFamily: _family);
   static const plus = IconData(0xe13d, fontFamily: _family);
   static const vault = IconData(0xe58f, fontFamily: _family);
+  static const pencil = IconData(0xe1f9, fontFamily: _family);
+
+  /// `trash-2` de Lucide.
+  static const trash = IconData(0xe18e, fontFamily: _family);
+  static const chevronLeft = IconData(0xe06e, fontFamily: _family);
 }

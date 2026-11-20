@@ -15,6 +15,9 @@ void main() {
     'settings': BovedaIcons.settings,
     'plus': BovedaIcons.plus,
     'vault': BovedaIcons.vault,
+    'pencil': BovedaIcons.pencil,
+    'trash': BovedaIcons.trash,
+    'chevronLeft': BovedaIcons.chevronLeft,
   };
 
   test('every icon comes from the Lucide font', () {
@@ -37,5 +40,9 @@ void main() {
     expect(BovedaIcons.settings.codePoint, 0xe154);
     expect(BovedaIcons.plus.codePoint, 0xe13d);
     expect(BovedaIcons.vault.codePoint, 0xe58f);
+    expect(BovedaIcons.pencil.codePoint, 0xe1f9);
+    // `trash-2` de Lucide.
+    expect(BovedaIcons.trash.codePoint, 0xe18e);
+    expect(BovedaIcons.chevronLeft.codePoint, 0xe06e);
   });
 }

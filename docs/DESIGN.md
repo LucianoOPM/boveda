@@ -4,7 +4,7 @@ Actualizado: 2026-11-19
 
 Sistema de diseño de las dos apps: Android (`mobile/`, Flutter) y Windows (`desktop/`, Tauri). Reemplaza a `docs/diseno/identidad.md`, `mobile/DESIGN.md` y `desktop/DESIGN.md`. La estética es *stealth neo-brutalista*: negro OLED, un acento eléctrico y densidad de información de herramienta de ingeniería. El comportamiento (qué hace cada pantalla y qué textos fijos usa) lo decide `docs/especificacion.md`; si este archivo y la especificación chocan, manda la especificación hasta que se actualice.
 
-Antes de crear o cambiar una pantalla, un widget o un estilo, lee este archivo.
+Antes de crear o cambiar una pantalla, un widget o un estilo, lee este archivo. Lo que el diseño muestra y la app no hace hoy no se implementa al restilizar una pantalla: está registrado en [`docs/diferencias-diseno.md`](diferencias-diseno.md).
 
 ---
 
@@ -222,7 +222,7 @@ Las maquetas usan un marco de 390 × 820 con esquinas de 54 y pantalla interna d
 
 ### 6.3 Contraseña con sintaxis (`SecretText`)
 
-- Oculta: siempre `••••••••••••` (12 puntos fijos, no revelan el largo) en `secret` y `textSecondary`. Lector de pantalla: "Contraseña oculta".
+- Oculta: siempre `••••••••••••` (12 puntos fijos, no revelan el largo) en `secret` y `textSecondary`. Lector de pantalla: "Contraseña oculta". La app hoy dibuja ocho puntos; ver `docs/diferencias-diseno.md`.
 - Revelada: `Text.rich` con un `TextSpan` por tramo de caracteres del mismo tipo, en `secret` y los colores de 2.4, con salto en cualquier carácter. Nunca `SelectableText`: seleccionar permitiría copiar sin la marca de sensible.
 - Fondo `surface1`, radio 12, relleno 14.
 
@@ -322,7 +322,7 @@ Tarjeta `errorContainer`, borde `error` al 38 %, radio 16, ícono de advertencia
 
 - Encabezado: caja de inicial de 56, servicio en `titleLarge`, etiquetas como insignias y dominio en `bodySmall`.
 - Filas en tarjetas `surface2`: Usuario, Contraseña, URL, Notas. Etiqueta arriba en `meta` y `textSecondary`, valor abajo, acción a la derecha.
-- Contraseña: `SecretText` oculto, con "Mostrar" y "Copiar". Notas: "Mostrar notas" (sin notas, "Sin notas"). Revelar no se oculta por tiempo; sigue visible hasta ocultar o salir.
+- Contraseña: `SecretText` oculto, con "Mostrar" y "Copiar". Notas: "Mostrar notas" (sin notas, "Sin notas"). Revelar no se oculta por tiempo; sigue visible hasta ocultar o salir. La app hoy los ordena "Copiar", "Mostrar" y solo muestra "Sin notas" al revelar las notas; ver `docs/diferencias-diseno.md`.
 - Acción principal al pie: "Copiar contraseña"; desde la etapa 3, "Enviar a PC" y copiar pasa a la fila.
 - Editar en la barra superior.
 - Secreto dañado: tarjeta de `errorContainer` con "La contraseña y las notas de esta entrada están dañadas" y las acciones "Reparar" y "Eliminar".

@@ -5,6 +5,15 @@ import '../services/local_clipboard.dart';
 import '../src/rust/api/entries.dart';
 import '../src/rust/api/error.dart';
 import '../src/rust/api/session.dart';
+import '../theme/button_styles.dart';
+import '../theme/colors.dart';
+import '../theme/extensions.dart';
+import '../theme/icons.dart';
+import '../theme/spacing.dart';
+import '../theme/text_scale.dart';
+import '../widgets/field_label.dart';
+import '../widgets/secret_text.dart';
+import '../widgets/tag_badge.dart';
 import 'entry_form_screen.dart';
 
 /// Abre el formulario de edición de [entry] (en modo reparar si [repair]) y
@@ -350,6 +359,10 @@ class _EntryDetailScreenState extends State<EntryDetailScreen> {
             child: const Text('Cancelar'),
           ),
           TextButton(
+            // Acción destructiva: en `error` (`DESIGN.md` 6.8 y 6.11).
+            style: TextButton.styleFrom(
+              foregroundColor: Theme.of(context).colorScheme.error,
+            ),
             onPressed: () => Navigator.of(context).pop(true),
             child: const Text('Eliminar'),
           ),
@@ -391,12 +404,12 @@ class _EntryDetailScreenState extends State<EntryDetailScreen> {
         actions: [
           IconButton(
             tooltip: 'Editar',
-            icon: const Icon(Icons.edit),
+            icon: const Icon(BovedaIcons.pencil),
             onPressed: canEdit ? () => _openForm(repair: false) : null,
           ),
           IconButton(
             tooltip: 'Eliminar',
-            icon: const Icon(Icons.delete),
+            icon: const Icon(BovedaIcons.trash),
             onPressed: canEdit ? _confirmDelete : null,
           ),
         ],
@@ -404,13 +417,14 @@ class _EntryDetailScreenState extends State<EntryDetailScreen> {
       body: SafeArea(
         child: ListView(
           keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
-          padding: const EdgeInsets.all(16),
+          padding: const EdgeInsets.all(Space.lg),
           children: [
             if (_entry.username case final username?)
               _Field(
                 label: 'Usuario',
                 action: TextButton(
                   key: const Key('copy-username'),
+                  style: secondaryActionStyle(),
                   onPressed: canEdit ? () => _copyUsername(username) : null,
                   child: const Text('Copiar'),
                 ),
@@ -422,10 +436,10 @@ class _EntryDetailScreenState extends State<EntryDetailScreen> {
               _Field(
                 label: 'Etiquetas',
                 child: Wrap(
-                  spacing: 8,
+                  spacing: Space.sm,
+                  runSpacing: Space.sm,
                   children: [
-                    for (final tag in _entry.tags)
-                      Chip(label: Text(tag, overflow: TextOverflow.ellipsis)),
+                    for (final tag in _entry.tags) TagBadge(label: tag),
                   ],
                 ),
               ),
@@ -437,38 +451,69 @@ class _EntryDetailScreenState extends State<EntryDetailScreen> {
   }
 
   Widget _damagedNotice(bool canEdit) {
-    return Padding(
-      padding: const EdgeInsets.only(top: 8),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Icon(Icons.warning_amber),
-              SizedBox(width: 8),
-              Expanded(
-                child: Text(
-                  'La contraseña y las notas de esta entrada están dañadas',
+    final theme = Theme.of(context);
+    final error = theme.colorScheme.error;
+    // Una tarjeta de `errorContainer` (`DESIGN.md` 7.5), como la de entradas
+    // dañadas de la lista.
+    return Material(
+      key: const Key('damaged-secret'),
+      color: BovedaColors.errorContainer,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(Radii.card),
+        side: BorderSide(color: error.withValues(alpha: 0.38)),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(Space.s14),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Icon(
+                  BovedaIcons.triangleAlert,
+                  size: IconSizes.control,
+                  color: error,
                 ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 8),
-          Row(
-            children: [
-              FilledButton(
-                onPressed: canEdit ? () => _openForm(repair: true) : null,
-                child: const Text('Reparar'),
-              ),
-              const SizedBox(width: 8),
-              TextButton(
-                onPressed: canEdit ? _confirmDelete : null,
-                child: const Text('Eliminar'),
-              ),
-            ],
-          ),
-        ],
+                const SizedBox(width: Space.sm),
+                Expanded(
+                  child: Text(
+                    'La contraseña y las notas de esta entrada están dañadas',
+                    style: theme.textTheme.bodyMedium?.copyWith(
+                      color: theme.colorScheme.onSurface,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: Space.md),
+            Wrap(
+              spacing: Space.sm,
+              runSpacing: Space.sm,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              children: [
+                FilledButton(
+                  style: FilledButton.styleFrom(
+                    backgroundColor: BovedaColors.surfaceElevated,
+                    foregroundColor: BovedaColors.textPrimary,
+                    disabledBackgroundColor: BovedaColors.surfaceElevated,
+                    disabledForegroundColor: BovedaColors.textDisabled,
+                    side: const BorderSide(
+                      color: BovedaColors.borderInteractive,
+                    ),
+                  ),
+                  onPressed: canEdit ? () => _openForm(repair: true) : null,
+                  child: const Text('Reparar'),
+                ),
+                TextButton(
+                  style: TextButton.styleFrom(foregroundColor: error),
+                  onPressed: canEdit ? _confirmDelete : null,
+                  child: const Text('Eliminar'),
+                ),
+              ],
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -478,41 +523,58 @@ class _EntryDetailScreenState extends State<EntryDetailScreen> {
     final notes = _notes;
     final passwordBusy =
         _passwordState == _Reveal.loading || _copyingPassword || _deleting;
+    final styles =
+        Theme.of(context).extension<BovedaText>() ?? BovedaText.standard;
+    final revealed = _passwordState == _Reveal.shown && password != null;
     return [
       _Field(
         label: 'Contraseña',
-        action: Row(
-          mainAxisSize: MainAxisSize.min,
+        // Revelada, la contraseña ocupa todo el ancho y las acciones van
+        // debajo; oculta, a su derecha.
+        actionBelow: revealed,
+        // `Wrap`: con letra grande los dos botones no caben en una línea.
+        action: Wrap(
+          spacing: Space.sm,
+          runSpacing: Space.sm,
+          alignment: WrapAlignment.end,
+          crossAxisAlignment: WrapCrossAlignment.center,
           children: [
             TextButton(
               key: const Key('copy-password'),
+              style: secondaryActionStyle(),
               onPressed: passwordBusy ? null : _copyPassword,
               child: const Text('Copiar'),
             ),
             if (_passwordState == _Reveal.shown)
               TextButton(
+                style: secondaryActionStyle(),
                 onPressed: passwordBusy ? null : _hidePassword,
                 child: const Text('Ocultar'),
               )
             else
               TextButton(
+                style: secondaryActionStyle(),
                 onPressed: passwordBusy ? null : _revealPassword,
                 child: const Text('Mostrar'),
               ),
           ],
         ),
         child: switch (_passwordState) {
-          _Reveal.shown when password != null => Text(
-            password,
-            style: const TextStyle(fontFamily: 'monospace'),
-          ),
+          _Reveal.shown when password != null => SecretText(text: password),
           _Reveal.failed => const _RevealFailed(),
           // Ocho puntos fijos: no delatan el largo. El lector de pantalla
           // dice "Contraseña oculta" en lugar de ocho veces "punto".
           _ => Semantics(
             container: true,
             label: 'Contraseña oculta',
-            child: const ExcludeSemantics(child: Text('••••••••')),
+            child: ExcludeSemantics(
+              child: Text(
+                '••••••••',
+                style: styles.secret.copyWith(
+                  color: Theme.of(context).colorScheme.onSurfaceVariant,
+                ),
+              ),
+            ),
           ),
         },
       ),
@@ -520,10 +582,12 @@ class _EntryDetailScreenState extends State<EntryDetailScreen> {
         label: 'Notas',
         action: _notesState == _Reveal.shown
             ? TextButton(
+                style: secondaryActionStyle(),
                 onPressed: _deleting ? null : _hideNotes,
                 child: const Text('Ocultar notas'),
               )
             : TextButton(
+                style: secondaryActionStyle(),
                 onPressed: _notesState == _Reveal.loading || _deleting
                     ? null
                     : _revealNotes,
@@ -541,31 +605,74 @@ class _EntryDetailScreenState extends State<EntryDetailScreen> {
 
 /// Una fila del detalle: etiqueta, contenido y, a la derecha, su acción.
 class _Field extends StatelessWidget {
-  const _Field({required this.label, required this.child, this.action});
+  const _Field({
+    required this.label,
+    required this.child,
+    this.action,
+    this.actionBelow = false,
+  });
 
   final String label;
   final Widget child;
   final Widget? action;
 
+  /// Pone la acción debajo del valor aunque el texto no sea grande (la
+  /// contraseña revelada ocupa todo el ancho).
+  final bool actionBelow;
+
   @override
   Widget build(BuildContext context) {
+    final content = Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // La etiqueta visible va en mayúsculas; el lector de pantalla lee la
+        // original (`FieldLabel` solo es lo que se ve).
+        Semantics(
+          container: true,
+          label: label,
+          child: ExcludeSemantics(child: FieldLabel(label)),
+        ),
+        const SizedBox(height: Space.xs),
+        child,
+      ],
+    );
+    final action = this.action;
+    // Con letra grande, o con la contraseña revelada (ocupa todo el ancho), la
+    // acción pasa debajo del valor: a su lado lo dejaría una columna muy
+    // estrecha. Es un solo `Flex` que cambia de dirección, no un `Row` y un
+    // `Column`: así los botones conservan su elemento y el lector de pantalla
+    // no pierde el foco al revelar u ocultar.
+    final below = actionBelow || isLargeText(context);
     return Padding(
-      padding: const EdgeInsets.only(bottom: 16),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(label, style: Theme.of(context).textTheme.labelMedium),
-                const SizedBox(height: 4),
-                child,
-              ],
-            ),
-          ),
-          ?action,
-        ],
+      padding: const EdgeInsets.only(bottom: Space.s10),
+      child: Container(
+        key: Key('detail-field-${label.toLowerCase()}'),
+        padding: const EdgeInsets.all(Space.s14),
+        decoration: BoxDecoration(
+          color: BovedaColors.surface2,
+          borderRadius: BorderRadius.circular(Radii.card),
+          border: Border.all(color: BovedaColors.borderCard),
+        ),
+        child: action == null
+            ? content
+            : Flex(
+                direction: below ? Axis.vertical : Axis.horizontal,
+                mainAxisSize: below ? MainAxisSize.min : MainAxisSize.max,
+                crossAxisAlignment: below
+                    ? CrossAxisAlignment.stretch
+                    : CrossAxisAlignment.center,
+                children: [
+                  // Horizontal, el valor ocupa el ancho que deja la acción;
+                  // vertical, mide lo que mida (sin `flex`).
+                  Flexible(
+                    flex: below ? 0 : 1,
+                    fit: below ? FlexFit.loose : FlexFit.tight,
+                    child: content,
+                  ),
+                  SizedBox(height: below ? Space.sm : 0),
+                  Align(alignment: Alignment.centerRight, child: action),
+                ],
+              ),
       ),
     );
   }
