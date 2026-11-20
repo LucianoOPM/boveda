@@ -78,7 +78,10 @@ impl PairedPcId {
 }
 
 /// Datos para emparejar una PC nueva.
-#[derive(Debug, Clone)]
+///
+/// Su `Debug` no muestra nada: el nombre y la IP revelan con qué equipos se
+/// usa la bóveda.
+#[derive(Clone)]
 pub struct NewPairedPc {
     /// Llave pública X25519 de la PC. Debe ser única en la lista.
     pub public_key: [u8; PUBLIC_KEY_LEN],
@@ -89,11 +92,25 @@ pub struct NewPairedPc {
 }
 
 /// Cambios a una PC emparejada. `None` conserva el valor actual.
-#[derive(Debug, Clone, Default)]
+///
+/// Su `Debug` no muestra nada, como el de [`NewPairedPc`].
+#[derive(Clone, Default)]
 pub struct PairedPcUpdate {
     pub name: Option<String>,
     /// Una IP nueva también fija `last_seen_at` con la hora actual.
     pub last_ip: Option<IpAddr>,
+}
+
+impl fmt::Debug for NewPairedPc {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("NewPairedPc").finish_non_exhaustive()
+    }
+}
+
+impl fmt::Debug for PairedPcUpdate {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("PairedPcUpdate").finish_non_exhaustive()
+    }
 }
 
 /// PC emparejada ya descifrada.

@@ -741,7 +741,10 @@ fn import_v1_backup_installs_v3_with_one_derivation() {
     assert!(report.corrupt.is_empty());
     assert_eq!(vault.entries().unwrap().len(), 3);
     assert_eq!(vault.storage.read_header().unwrap().format_version(), 3);
-    // El verificador instalado corresponde a la llave en memoria.
+    // El verificador instalado corresponde a la llave en memoria. Se comprueba
+    // en el archivo ANTES de `export_vault_key`, que repara en silencio un
+    // `key_check` dañado y taparía un verificador mal escrito.
+    assert_installed_key_check_is_v3(&vault);
     let key = vault.export_vault_key().unwrap();
     vault.lock();
     vault.unlock_with_key(key).unwrap();
@@ -750,6 +753,18 @@ fn import_v1_backup_installs_v3_with_one_derivation() {
     // El respaldo original no cambió: sigue siendo v1.
     assert_eq!(fs::read(&backup).unwrap(), backup_before);
     assert!(!sibling(&dest, IMPORT_SUFFIX).exists());
+}
+
+/// El `key_check` guardado en el archivo se autentica con la llave en memoria
+/// y la versión 3, y no con la 2.
+fn assert_installed_key_check_is_v3(vault: &Vault) {
+    let header = vault.storage.read_header().unwrap();
+    let key = &vault.unlocked().unwrap().key;
+    assert_eq!(header.verify_key(key), Ok(()));
+    assert_eq!(
+        crate::crypto::keys::verify_key_check(key, 2, header.key_check().unwrap()),
+        Err(Error::WrongVaultKey)
+    );
 }
 
 // --- Respaldos de los formatos 2 y 3: sin identidad ni PCs (#93) -----------
@@ -790,6 +805,49 @@ fn import_v3_backup_discards_identity_and_pcs() {
     assert_eq!(fs::read(&backup).unwrap(), backup_before);
     assert_eq!(pairing_row_counts(&backup), (1, 2));
     assert!(!sibling(&dest, IMPORT_SUFFIX).exists());
+}
+
+/// Un respaldo manipulado con `TRIGGER ... RAISE(IGNORE)` hace que el
+/// `DELETE` no borre nada y no falle: la importación debe comprobar que las
+/// dos tablas quedaron vacías y, si no, no instalar nada.
+#[test]
+fn import_with_a_trigger_that_ignores_the_delete_installs_nothing() {
+    let triggers = [
+        (
+            "identity",
+            "CREATE TRIGGER keep_identity BEFORE DELETE ON identity \
+             BEGIN SELECT RAISE(IGNORE); END;",
+        ),
+        (
+            "paired_pcs",
+            "CREATE TRIGGER keep_pcs BEFORE DELETE ON paired_pcs \
+             BEGIN SELECT RAISE(IGNORE); END;",
+        ),
+    ];
+    for (label, sql) in triggers {
+        let dir = tempfile::tempdir().unwrap();
+        let (backup, _) = make_backup(dir.path());
+        fill_pairing(&backup);
+        raw(&backup).execute_batch(sql).unwrap();
+
+        let existing = dir.path().join("actual.db");
+        make_current(&existing);
+        let before = fs::read(&existing).unwrap();
+        let err = Vault::import(&backup, &existing, &password("respaldo-maestra"))
+            .err()
+            .unwrap();
+        assert_eq!(err, Error::Storage(StorageErrorKind::Corrupt), "{label}");
+        assert_eq!(fs::read(&existing).unwrap(), before, "{label}");
+        assert!(!sibling(&existing, IMPORT_SUFFIX).exists(), "{label}");
+
+        let missing = dir.path().join("nueva.db");
+        let err = Vault::import(&backup, &missing, &password("respaldo-maestra"))
+            .err()
+            .unwrap();
+        assert_eq!(err, Error::Storage(StorageErrorKind::Corrupt), "{label}");
+        assert!(!missing.exists(), "{label}");
+        assert!(!sibling(&missing, IMPORT_SUFFIX).exists(), "{label}");
+    }
 }
 
 #[test]
@@ -836,7 +894,9 @@ fn import_v2_backup_installs_v3_with_empty_identity_and_pcs() {
     assert!(report.corrupt.is_empty());
     assert_eq!(vault.entries().unwrap().len(), 3);
     assert_eq!(vault.storage.read_header().unwrap().format_version(), 3);
-    // El `key_check` instalado es el de la versión 3 y corresponde a la llave.
+    // El `key_check` instalado es el de la versión 3 y corresponde a la llave
+    // (se comprueba en el archivo antes de `export_vault_key`, que lo repararía).
+    assert_installed_key_check_is_v3(&vault);
     let key = vault.export_vault_key().unwrap();
     vault.lock();
     vault.unlock_with_key(key).unwrap();

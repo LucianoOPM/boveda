@@ -21,7 +21,7 @@
 use std::fmt;
 
 use secrecy::{ExposeSecret, ExposeSecretMut, SecretBox};
-use zeroize::{ZeroizeOnDrop, Zeroizing};
+use zeroize::ZeroizeOnDrop;
 
 use crate::crypto::aead::{self, EncryptedPart};
 use crate::crypto::keys::VaultKey;
@@ -56,9 +56,12 @@ impl Identity {
         &self.private_key
     }
 
-    /// Construye la identidad con esos 32 bytes, tal cual.
+    /// Construye la identidad con esos 32 bytes, tal cual. Solo para pruebas
+    /// y para generar la bóveda de ejemplo: `open` y `generate` escriben
+    /// directamente en el `SecretBox`, sin pasar por un arreglo en la pila.
+    #[cfg(test)]
     pub(crate) fn from_bytes(bytes: [u8; IDENTITY_KEY_LEN]) -> Self {
-        let bytes = Zeroizing::new(bytes);
+        let bytes = zeroize::Zeroizing::new(bytes);
         let mut private_key = SecretBox::<[u8; IDENTITY_KEY_LEN]>::default();
         private_key.expose_secret_mut().copy_from_slice(&*bytes);
         Self { private_key }
@@ -110,9 +113,14 @@ pub(crate) fn open(key: &VaultKey, version: u16, sealed: &EncryptedPart) -> Resu
     }
     let plain = aead::open_with_ad(key, &associated_data(version), sealed)
         .map_err(|_| Error::CorruptIdentity)?;
-    let bytes =
-        <[u8; IDENTITY_KEY_LEN]>::try_from(plain.as_slice()).map_err(|_| Error::CorruptIdentity)?;
-    Ok(Identity::from_bytes(bytes))
+    if plain.len() != IDENTITY_KEY_LEN {
+        return Err(Error::CorruptIdentity);
+    }
+    // Se copia directamente dentro del `SecretBox`: un `[u8; 32]` intermedio
+    // (es `Copy`) dejaría una copia de la llave en la pila sin borrar.
+    let mut private_key = SecretBox::<[u8; IDENTITY_KEY_LEN]>::default();
+    private_key.expose_secret_mut().copy_from_slice(&plain);
+    Ok(Identity { private_key })
 }
 
 #[cfg(test)]

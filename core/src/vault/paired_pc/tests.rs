@@ -218,6 +218,24 @@ fn debug_shows_only_the_id() {
 }
 
 #[test]
+fn debug_of_new_and_update_does_not_show_name_or_ip() {
+    let new = NewPairedPc {
+        public_key: [9; PUBLIC_KEY_LEN],
+        name: "equipo-canario".to_owned(),
+        last_ip: Some(IpAddr::V4(Ipv4Addr::new(10, 0, 0, 9))),
+    };
+    let update = PairedPcUpdate {
+        name: Some("equipo-canario".to_owned()),
+        last_ip: Some(IpAddr::V4(Ipv4Addr::new(10, 0, 0, 9))),
+    };
+    for shown in [format!("{new:?}"), format!("{update:?}")] {
+        assert!(!shown.contains("equipo-canario"), "{shown}");
+        assert!(!shown.contains("10.0.0.9"), "{shown}");
+        assert!(!shown.contains("10, 0, 0, 9"), "{shown}");
+    }
+}
+
+#[test]
 fn generated_ids_differ() {
     assert_ne!(
         PairedPcId::generate().unwrap(),

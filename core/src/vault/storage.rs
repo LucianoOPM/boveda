@@ -506,6 +506,19 @@ impl Storage {
         }
         tx.execute_batch("DELETE FROM identity; DELETE FROM paired_pcs;")
             .map_err(map_sqlite_error)?;
+        // Un respaldo manipulado puede traer un `TRIGGER ... RAISE(IGNORE)`
+        // que hace que el `DELETE` no borre nada y tampoco falle: se comprueba
+        // que de verdad quedaron vacías, y si no, no se instala nada.
+        let remaining: i64 = tx
+            .query_row(
+                "SELECT (SELECT count(*) FROM identity) + (SELECT count(*) FROM paired_pcs)",
+                [],
+                |row| row.get(0),
+            )
+            .map_err(map_sqlite_error)?;
+        if remaining != 0 {
+            return Err(Error::Storage(StorageErrorKind::Corrupt));
+        }
         tx.commit().map_err(map_sqlite_error)
     }
 

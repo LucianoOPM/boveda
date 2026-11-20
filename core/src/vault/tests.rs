@@ -1393,11 +1393,21 @@ fn unlock_with_key_migrates_v2_to_v3_and_keystore_copy_still_works() {
     assert_eq!(stored_version_of(&path), 3);
     assert_eq!(pairing_row_counts(&path), (0, 0));
 
-    // La copia del Keystore sigue valiendo: se vuelve a pedir la llave a la
-    // bóveda ya migrada y se desbloquea con ella.
-    let again = vault.export_vault_key().unwrap();
+    // El `key_check` guardado es el de la versión 3 y corresponde a la llave,
+    // comprobado en el archivo SIN pasar por `export_vault_key`, que repara en
+    // silencio un verificador dañado y taparía uno mal escrito.
+    let header = vault.storage.read_header().unwrap();
+    let in_memory = &vault.unlocked().unwrap().key;
+    assert_eq!(header.verify_key(in_memory), Ok(()));
+    assert_eq!(
+        crate::crypto::keys::verify_key_check(in_memory, 2, header.key_check().unwrap()),
+        Err(Error::WrongVaultKey)
+    );
+
+    // La copia del Keystore sigue valiendo: la MISMA llave original (la que
+    // guardó el Keystore antes de migrar), sin pedirla de nuevo a la bóveda.
     vault.lock();
-    assert!(vault.unlock_with_key(again).is_ok());
+    assert!(vault.unlock_with_key(fixture_v2_vault_key()).is_ok());
     // Y la contraseña sigue abriendo.
     vault.lock();
     assert!(vault.unlock(&password(FIXTURE_V2_PASSWORD)).is_ok());
