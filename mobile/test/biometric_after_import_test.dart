@@ -142,5 +142,55 @@ void main() {
     expect(find.byType(SearchScreen), findsNothing);
     expect(find.byType(BiometricOfferScreen), findsNothing);
     expect(session.locked, isTrue);
+    // La llave no salió del núcleo con la bóveda bloqueada y no quedó una
+    // activación a medias.
+    expect(session.exportedKeys, isEmpty);
+    expect(biometric.calls, isNot(contains('completeEnable')));
+    expect(biometric.calls, contains('abortEnable'));
+  });
+
+  testWidgets('una activación vieja que termina no apaga la espera de otra '
+      'nueva', (tester) async {
+    // Primera importación: queda esperando la huella y un bloqueo la deja atrás.
+    final first = Completer<void>();
+    biometric.onBeginEnable = () => first.future;
+    await startImport(tester, enabled: true);
+    await submitRestore(tester);
+    await setLifecycle(tester, AppLifecycleState.hidden);
+    await setLifecycle(tester, AppLifecycleState.resumed);
+    await drain(tester);
+    expect(find.byType(UnlockScreen), findsOneWidget);
+
+    // Se desbloquea con la contraseña y se importa otra vez: espera la huella.
+    biometric
+      ..available = false
+      ..enabled = false;
+    await tester.enterText(find.byKey(const Key('unlock-password')), password);
+    await tester.pump();
+    await tester.tap(find.byKey(const Key('unlock-submit')));
+    await tester.pump();
+    await drain(tester);
+    expect(find.byType(SearchScreen), findsOneWidget);
+    final second = Completer<void>();
+    biometric
+      ..available = true
+      ..enabled = true
+      ..onBeginEnable = () => second.future;
+    await tester.tap(find.byKey(const Key('open-settings')));
+    await tester.pump();
+    await tester.pump(const Duration(seconds: 1));
+    await tester.tap(find.byKey(const Key('settings-import')));
+    await drain(tester);
+    await submitRestore(tester);
+
+    // La primera termina mientras la segunda sigue esperando; si se oculta la
+    // app ahora, debe bloquear.
+    first.complete();
+    await drain(tester);
+    await setLifecycle(tester, AppLifecycleState.hidden);
+    await drain(tester);
+
+    expect(session.locked, isTrue);
+    expect(find.byType(UnlockScreen), findsOneWidget);
   });
 }

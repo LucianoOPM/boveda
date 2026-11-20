@@ -334,10 +334,11 @@ class _VaultGateState extends State<VaultGate> {
       final epoch = _epoch;
       _reenablingBiometric = true;
       final enabled = await _reenableBiometric();
-      _reenablingBiometric = false;
-      // Un bloqueo durante la huella ya montó el desbloqueo: no se monta nada
-      // encima.
+      // Un bloqueo durante la huella ya montó el desbloqueo (y apagó la
+      // marca): no se monta nada encima ni se toca la de otra importación
+      // más nueva.
       if (!mounted || epoch != _epoch) return;
+      _reenablingBiometric = false;
       if (enabled) {
         _enterUnlocked(VaultGateState.unlocked, damagedEntries: damaged);
         return;
@@ -438,6 +439,7 @@ class _VaultGateState extends State<VaultGate> {
     _idle = null;
     _clearAway();
     _openWhileLocked = false;
+    _reenablingBiometric = false;
     unawaited(
       Future.sync(widget.session.lock).then((_) {}, onError: (Object _) {}),
     );

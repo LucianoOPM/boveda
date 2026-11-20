@@ -13,6 +13,13 @@ Un usuario con la huella activa que importa un respaldo no debe tener que volver
 - Si el usuario cancela la huella o la activación falla, se cae en lo de hoy: la pantalla de oferta, desde donde puede reintentar u omitir. Nunca se queda atrapado ni sin bóveda.
 - Solo Ajustes reactiva la huella (`replacesVault`). En el primer uso no hay bóveda anterior y una copia vieja del Keystore no representa nada que conservar: ahí se ofrece como hoy.
 
+## Casos en que la huella no se reactiva
+
+Decididos al revisar; en ninguno se pierde la bóveda y la huella se vuelve a activar con la casilla del desbloqueo:
+
+- **Un bloqueo mientras espera la huella** (la app se oculta): queda el desbloqueo y la huella desactivada; la llave no sale del núcleo con la bóveda bloqueada (`exportVaultKey` falla y se aborta la activación).
+- **Ajustes ya no está a la vista cuando termina la importación** (un bloqueo la quitó): la bóveda queda bloqueada y el aviso habla de la contraseña del respaldo; la huella queda desactivada.
+
 ## No metas
 
 - Tocar la criptografía ni el núcleo. Se reutiliza `enableBiometric` tal cual (`beginEnable`, `exportVaultKey`, `completeEnable`): la llave sale del núcleo solo después de la huella, como al activarla desde cero.
