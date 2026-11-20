@@ -10,15 +10,9 @@
     "frontendDist": "../dist"
   },
   "app": {
-    "windows": [
-      {
-        "title": "Bóveda",
-        "width": 800,
-        "height": 600
-      }
-    ],
+    "windows": [],
     "security": {
-      "csp": null
+      "csp": "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'"
     }
   },
   "bundle": {
