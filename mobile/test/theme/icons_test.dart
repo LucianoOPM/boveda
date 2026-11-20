@@ -18,6 +18,9 @@ void main() {
     'pencil': BovedaIcons.pencil,
     'trash': BovedaIcons.trash,
     'chevronLeft': BovedaIcons.chevronLeft,
+    'download': BovedaIcons.download,
+    'refresh': BovedaIcons.refresh,
+    'chevronRight': BovedaIcons.chevronRight,
   };
 
   test('every icon comes from the Lucide font', () {
@@ -44,5 +47,13 @@ void main() {
     // `trash-2` de Lucide.
     expect(BovedaIcons.trash.codePoint, 0xe18e);
     expect(BovedaIcons.chevronLeft.codePoint, 0xe06e);
+    expect(BovedaIcons.download.codePoint, 0xe0b2);
+    // `refresh-cw` de Lucide.
+    expect(BovedaIcons.refresh.codePoint, 0xe145);
+    expect(BovedaIcons.chevronRight.codePoint, 0xe06f);
+  });
+
+  test('there are sixteen icons, all different', () {
+    expect(icons, hasLength(16));
   });
 }
