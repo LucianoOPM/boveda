@@ -1,5 +1,7 @@
 use tauri::RunEvent;
 
+mod tray;
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let app = tauri::Builder::default()
@@ -12,6 +14,10 @@ pub fn run() {
                 .app_name("Bóveda")
                 .build(),
         )
+        .setup(|app| {
+            tray::setup(app)?;
+            Ok(())
+        })
         .build(tauri::generate_context!())
         .expect("error al construir la aplicación");
 
