@@ -220,4 +220,4 @@
 
 - **Cambio:** el borrado condicional abre con una ventana propietaria (`clipboard/message_window.rs`, `windows-sys`) en vez de `NULL`; ver «Hallazgo» en el diseño. La Task 7 del plan describía `new_attempts(5)`: queda sustituido por `new_attempts_for(hwnd, 5)`.
 - **Pruebas reales:** el usuario cambió la validación a manual; las `#[ignore]` no se ejecutan más (Task 7, paso 4, y la mutación, quedan sin hacer).
-- **Disparador de depuración** `dev_demo.rs`: añadido para el recorrido manual; temporal.
+- **Disparador de depuración** `dev_demo.rs`: se añadió para el recorrido manual y se retiró antes de cerrar la PR (revertido).

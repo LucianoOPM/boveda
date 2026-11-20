@@ -91,7 +91,6 @@ boveda/
             ├── server.rs     # escucha, mDNS, acepta solo emparejados
             ├── clipboard.rs  # API del portapapeles (#98): ClipboardManager con un hilo trabajador, Config, ClipboardError y el aviso «Contraseña lista para pegar»
             ├── clipboard/    # backend.rs (trait), fingerprint.rs (huella), worker.rs (vencimientos y reintentos), windows.rs (arboard y clipboard-win), message_window.rs (ventana propietaria; todo el unsafe de Win32); fake.rs y tests.rs solo en pruebas
-            ├── dev_demo.rs   # SOLO depuración (debug_assertions): entrega contraseñas ficticias de BOVEDA_DEMO_PASSWORDS para las pruebas manuales; se quita con #100 y #104
             │                 # (pruebas con el portapapeles real, #[ignore], en src-tauri/tests/clipboard_windows.rs)
             └── identity.rs   # llave privada protegida con DPAPI
 ```
