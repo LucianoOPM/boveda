@@ -335,6 +335,7 @@ Tarjeta `errorContainer`, borde `error` al 38 %, radio 16, ícono de advertencia
 - El error del núcleo se muestra en su campo, en `error`.
 - Guardar con el botón principal; salir con cambios pregunta "¿Descartar cambios?". Eliminar, con confirmación, dentro de este formulario.
 - Etapa 4: botón del generador junto al campo de contraseña, que abre `EntropyGenerator` en una hoja.
+- La app hoy ordena los campos Servicio, Usuario, URL, Etiquetas, Contraseña y Notas, no muestra "Obligatorio" como ayuda y no elimina desde el formulario; ver `docs/diferencias-diseno.md`.
 
 ### 7.7 Generador (`EntropyGenerator`, etapa 4)
 
