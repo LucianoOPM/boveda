@@ -44,7 +44,7 @@ Entradas o condiciones que el diseño implica y que un usuario puede encontrar; 
 
 ---
 
-### Tarea 1: Dependencias y esqueleto sin ventana
+### Task 1: Dependencias y esqueleto sin ventana
 
 **Archivos:**
 - Modificar: `desktop/src-tauri/Cargo.toml`, `desktop/src-tauri/src/lib.rs`, `desktop/src-tauri/tauri.conf.json`
@@ -63,7 +63,7 @@ Entradas o condiciones que el diseño implica y que un usuario puede encontrar; 
 
 ---
 
-### Tarea 2: Descripción pura del menú y bandeja
+### Task 2: Descripción pura del menú y bandeja
 
 **Archivos:**
 - Crear: `desktop/src-tauri/src/tray.rs`
@@ -89,7 +89,7 @@ Entradas o condiciones que el diseño implica y que un usuario puede encontrar; 
 
 ---
 
-### Tarea 3: «Iniciar con Windows» con el estado real
+### Task 3: «Iniciar con Windows» con el estado real
 
 **Archivos:**
 - Crear: `desktop/src-tauri/src/autostart.rs`
@@ -117,7 +117,7 @@ Entradas o condiciones que el diseño implica y que un usuario puede encontrar; 
 
 ---
 
-### Tarea 4: Frontend sin plantilla y `tokens.css`
+### Task 4: Frontend sin plantilla y `tokens.css`
 
 **Archivos:**
 - Modificar: `desktop/package.json`, `desktop/bun.lock`, `desktop/index.html`, `desktop/src/main.tsx`, `desktop/src/App.tsx`
@@ -135,7 +135,7 @@ Entradas o condiciones que el diseño implica y que un usuario puede encontrar; 
 
 ---
 
-### Tarea 5: Documentación y verificación final
+### Task 5: Documentación y verificación final
 
 **Archivos:**
 - Modificar: `docs/diferencias-diseno.md`, `ARCHITECTURE.md`, `docs/roadmap.md`; `desktop/README.md` si es de la plantilla (reemplazarlo por dos líneas o borrarlo)
