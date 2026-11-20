@@ -365,7 +365,7 @@ void main() {
 
   testWidgets('sin dañadas no hay aviso', (tester) async {
     await pumpSearch(tester);
-    expect(find.byType(MaterialBanner), findsNothing);
+    expect(find.byKey(const Key('damaged-banner')), findsNothing);
   });
 
   testWidgets('sin desbordamiento en una pantalla baja con aviso y teclado', (

@@ -150,12 +150,12 @@ void main() {
 
   testWidgets('DamagedEntriesBanner con 0 no muestra nada', (tester) async {
     await pumpInScaffold(tester, const DamagedEntriesBanner(count: 0));
-    expect(find.byType(MaterialBanner), findsNothing);
+    expect(find.byKey(const Key('damaged-banner')), findsNothing);
   });
 
   testWidgets('DamagedEntriesBanner con 1 usa el singular', (tester) async {
     await pumpInScaffold(tester, const DamagedEntriesBanner(count: 1));
-    expect(find.byType(MaterialBanner), findsOneWidget);
+    expect(find.byKey(const Key('damaged-banner')), findsOneWidget);
     expect(find.text('1 entrada no se pudo leer'), findsOneWidget);
   });
 
@@ -168,7 +168,7 @@ void main() {
     await pumpInScaffold(tester, const DamagedEntriesBanner(count: 2));
     await tester.tap(find.text('Entendido'));
     await tester.pumpAndSettle();
-    expect(find.byType(MaterialBanner), findsNothing);
+    expect(find.byKey(const Key('damaged-banner')), findsNothing);
     expect(find.text('2 entradas no se pudieron leer'), findsNothing);
   });
 

@@ -1,5 +1,9 @@
 import 'package:flutter/material.dart';
 
+import '../theme/colors.dart';
+import '../theme/icons.dart';
+import '../theme/spacing.dart';
+
 /// Aviso de entradas que no se pudieron leer al desbloquear.
 ///
 /// [count] es el total de dañadas del `UnlockReport` (con y sin id). Con 0,
@@ -34,15 +38,43 @@ class _DamagedEntriesBannerState extends State<DamagedEntriesBanner> {
     final message = widget.count == 1
         ? '1 entrada no se pudo leer'
         : '${widget.count} entradas no se pudieron leer';
-    return MaterialBanner(
-      content: Text(message),
-      leading: const Icon(Icons.warning_amber),
-      actions: [
-        TextButton(
-          onPressed: () => setState(() => _dismissed = true),
-          child: const Text('Entendido'),
+    final theme = Theme.of(context);
+    final error = theme.colorScheme.error;
+    // Una tarjeta de `errorContainer` (`DESIGN.md` 6.6), no un
+    // `MaterialBanner`: este no admite radio ni borde.
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(Space.lg, 0, Space.lg, Space.s10),
+      child: Material(
+        key: const Key('damaged-banner'),
+        color: BovedaColors.errorContainer,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(Radii.card),
+          side: BorderSide(color: error.withValues(alpha: 0.38)),
         ),
-      ],
+        child: Padding(
+          padding: const EdgeInsets.all(Space.md),
+          child: Row(
+            children: [
+              Icon(BovedaIcons.triangleAlert, size: 20, color: error),
+              const SizedBox(width: Space.sm),
+              Expanded(
+                child: Text(
+                  message,
+                  style: theme.textTheme.bodyMedium?.copyWith(
+                    color: theme.colorScheme.onSurface,
+                  ),
+                ),
+              ),
+              const SizedBox(width: Space.sm),
+              TextButton(
+                style: TextButton.styleFrom(foregroundColor: error),
+                onPressed: () => setState(() => _dismissed = true),
+                child: const Text('Entendido'),
+              ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 }
