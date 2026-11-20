@@ -112,3 +112,62 @@ fn only_announces_on_private_ipv4() {
     );
     assert!(!over_v6, "el servicio no debe ser visible por IPv6");
 }
+
+mod announcer {
+    use std::collections::BTreeSet;
+    use std::time::Instant;
+
+    use boveda_desktop_lib::announce::{Announcer, MdnsAnnouncer, Service};
+    use vault_core::protocol::KeyPair;
+
+    use super::{local_ipv4, resolves};
+
+    fn service() -> Service {
+        let key = KeyPair::generate().expect("llave");
+        Service::new(
+            BTreeSet::from([local_ipv4()]),
+            47615,
+            &key.public().fingerprint(),
+        )
+    }
+
+    #[test]
+    #[ignore = "usa multidifusión real"]
+    fn mdns_announcer_is_visible_over_ipv4_and_invisible_over_ipv6() {
+        let service = service();
+        let mut announcer = MdnsAnnouncer::new();
+        announcer.announce(&service).expect("announce");
+        // Anunciar dos veces seguidas no es un error ni duplica el registro.
+        announcer.announce(&service).expect("announce otra vez");
+
+        let over_v4 = resolves(true, &service.instance);
+        let over_v6 = resolves(false, &service.instance);
+        announcer.withdraw();
+
+        assert!(over_v4, "el control IPv4 debe ver el servicio");
+        assert!(!over_v6, "el servicio no debe ser visible por IPv6");
+    }
+
+    #[test]
+    #[ignore = "usa multidifusión real"]
+    fn withdraw_makes_service_disappear_and_is_bounded() {
+        let service = service();
+        let mut announcer = MdnsAnnouncer::new();
+        announcer.announce(&service).expect("announce");
+        assert!(resolves(true, &service.instance));
+
+        let started = Instant::now();
+        announcer.withdraw();
+        assert!(
+            started.elapsed().as_secs() < 5,
+            "withdraw debe estar acotado"
+        );
+        // Segunda llamada: idempotente y sin error.
+        announcer.withdraw();
+
+        assert!(
+            !resolves(true, &service.instance),
+            "retirado, ya no debe responder"
+        );
+    }
+}

@@ -16,6 +16,9 @@ use vault_core::protocol::Fingerprint;
 
 use crate::backoff::Backoff;
 
+mod mdns;
+pub use mdns::MdnsAnnouncer;
+
 #[cfg(test)]
 mod tests;
 
