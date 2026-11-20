@@ -16,10 +16,15 @@
 //! la contraseña y son de la #98.
 
 use std::io::ErrorKind;
-use std::time::Duration;
+use std::time::{Duration, Instant};
+
+use secrecy::ExposeSecret;
+use snow::params::NoiseParams;
+use snow::{Builder, HandshakeState, TransportState};
 
 use super::error::ProtocolError;
-use super::pairing::PairingError;
+use super::identity::{KeyPair, PublicKey};
+use super::pairing::{Frame, PairingError};
 
 /// Patrón Noise del envío: el celular conoce la llave de la PC y la PC aprende
 /// la del celular en la primera trama.
@@ -122,6 +127,146 @@ impl Default for SendTimeouts {
             ack_wait: Duration::from_secs(10),
         }
     }
+}
+
+/// Parámetros de Noise del envío. Un patrón que no se pueda leer es
+/// `Handshake`: no ocurre con la constante, pero la API no hace panic.
+fn noise_params() -> Result<NoiseParams, SendError> {
+    SEND_PATTERN.parse().map_err(|_| SendError::Handshake)
+}
+
+/// Configuración común de Noise: patrón, prólogo y llave estática propia. La
+/// llave se pasa como referencia para no hacer copias propias (ver el borrado
+/// de memoria en el diseño).
+fn noise_builder(private_key: &[u8; 32]) -> Result<Builder<'_>, SendError> {
+    Builder::new(noise_params()?)
+        .local_private_key(private_key)
+        .and_then(|builder| builder.prologue(SEND_PROLOGUE))
+        .map_err(|_| SendError::Handshake)
+}
+
+/// Tamaño del búfer de las tramas del apretón de manos (96 la mayor).
+const HANDSHAKE_BUFFER: usize = 128;
+
+/// La PC, antes de leer la primera trama de una conexión.
+pub struct Responder<'a> {
+    identity: &'a KeyPair,
+}
+
+impl<'a> Responder<'a> {
+    /// Prepara a la PC con su identidad.
+    pub fn new(identity: &'a KeyPair) -> Self {
+        Self { identity }
+    }
+
+    /// Lee la primera trama (`e, es, s, ss`, 96 bytes) y decide si contesta.
+    ///
+    /// Con la llave estática que recupera `snow` (nunca una identidad que
+    /// declare el cliente) consulta `is_paired` **antes** de escribir nada: si
+    /// no está emparejada es [`SendError::NotPaired`] y no hay segunda trama.
+    /// Una trama de otro largo, que no descifra o con carga es `Handshake`. Los
+    /// 30 s de [`SEND_TTL`] cuentan desde `now`.
+    pub fn read_first(
+        self,
+        now: Instant,
+        frame: &[u8],
+        is_paired: impl Fn(&PublicKey) -> bool,
+    ) -> Result<(AwaitingSend, Frame), SendError> {
+        if frame.len() != SEND_FIRST_FRAME_LEN {
+            return Err(SendError::Handshake);
+        }
+        let mut handshake = noise_builder(self.identity.private().expose_secret())?
+            .build_responder()
+            .map_err(|_| SendError::Handshake)?;
+        let mut buffer = [0u8; HANDSHAKE_BUFFER];
+        let payload = handshake
+            .read_message(frame, &mut buffer)
+            .map_err(|_| SendError::Handshake)?;
+        if payload != 0 {
+            return Err(SendError::Handshake);
+        }
+        let peer: [u8; 32] = handshake
+            .get_remote_static()
+            .and_then(|key| key.try_into().ok())
+            .ok_or(SendError::Handshake)?;
+        let peer = PublicKey::from_bytes(peer);
+        if !is_paired(&peer) {
+            return Err(SendError::NotPaired);
+        }
+        let len = handshake
+            .write_message(&[], &mut buffer)
+            .map_err(|_| SendError::Handshake)?;
+        let second = buffer[..len].to_vec();
+        let transport = handshake
+            .into_transport_mode()
+            .map_err(|_| SendError::Handshake)?;
+        Ok((
+            AwaitingSend {
+                transport,
+                peer,
+                deadline: now + SEND_TTL,
+            },
+            second,
+        ))
+    }
+}
+
+/// La PC contestó la segunda trama y espera el mensaje. El celular ya está
+/// autenticado y autorizado; todavía no se leyó ningún contenido.
+pub struct AwaitingSend {
+    // Se usa al leer el mensaje (Task 4).
+    #[allow(dead_code)]
+    transport: TransportState,
+    peer: PublicKey,
+    // Se usa al leer el mensaje (Task 4).
+    #[allow(dead_code)]
+    deadline: Instant,
+}
+
+impl AwaitingSend {
+    /// Llave pública del celular, probada por el apretón de manos.
+    pub fn peer(&self) -> PublicKey {
+        self.peer
+    }
+}
+
+/// Celular que va a enviar.
+pub struct Sender {
+    handshake: HandshakeState,
+}
+
+impl Sender {
+    /// Prepara el envío con la identidad del celular y la llave de la PC.
+    pub fn new(identity: &KeyPair, pc_key: &PublicKey) -> Result<Self, SendError> {
+        let handshake = noise_builder(identity.private().expose_secret())?
+            .remote_public_key(pc_key.as_bytes())
+            .and_then(|builder| builder.build_initiator())
+            .map_err(|_| SendError::Handshake)?;
+        Ok(Self { handshake })
+    }
+
+    /// Escribe la primera trama (96 bytes, sin datos de aplicación).
+    pub fn first_message(mut self) -> Result<(AwaitingResponse, Frame), SendError> {
+        let mut buffer = [0u8; HANDSHAKE_BUFFER];
+        let len = self
+            .handshake
+            .write_message(&[], &mut buffer)
+            .map_err(|_| SendError::Handshake)?;
+        let frame = buffer[..len].to_vec();
+        Ok((
+            AwaitingResponse {
+                handshake: self.handshake,
+            },
+            frame,
+        ))
+    }
+}
+
+/// El celular mandó la primera trama y espera la segunda.
+pub struct AwaitingResponse {
+    // Se usa al leer la segunda trama (Task 4).
+    #[allow(dead_code)]
+    handshake: HandshakeState,
 }
 
 #[cfg(test)]
