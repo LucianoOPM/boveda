@@ -7,6 +7,7 @@ mod error;
 mod identity;
 mod message;
 mod pairing;
+mod transport;
 
 pub use error::{InvalidField, ProtocolError, Result};
 pub use identity::{Fingerprint, KeyPair, PublicKey};
@@ -21,3 +22,4 @@ pub use pairing::{
     PAIRING_PROLOGUE, PairedDevice, PairedPc, PairingError, PairingSession, PendingPairing,
     Refusal,
 };
+pub use transport::{CANCEL_POLL, CancelToken, PairingTimeouts, TimedStream};
