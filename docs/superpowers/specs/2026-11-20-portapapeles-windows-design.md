@@ -149,7 +149,7 @@ Con `NULL`, además, otro proceso pudo **escribir** (`WRITE=ok`) y **ejecutar el
 
 **Validación.** El usuario prefirió validar el comportamiento funcional **a mano** en su Windows; no se ejecutan más pruebas `#[ignore]`, sondas ni mutaciones sobre su portapapeles. Las pruebas `#[ignore]` (`tests/clipboard_windows.rs`, con `examples/clipboard_probe.rs` como segundo proceso) quedan adaptadas a este comportamiento (retienen el portapapeles con una ventana propietaria) y disponibles para verificaciones futuras, pero no se han ejecutado contra el código corregido. La mutación de «dos aperturas» tampoco se ha hecho.
 
-**Disparador temporal para las pruebas manuales** (`src/dev_demo.rs`, solo `debug_assertions`): como #100 todavía no llama al gestor, con `BOVEDA_DEMO_PASSWORDS` (contraseñas ficticias separadas por comas) la app de depuración entrega la primera a los 10 s y cada siguiente 5 s después, con el mismo `deliver_and_notify`. No existe en `tauri build`; se quita con #100 y #104.
+**Disparador temporal para las pruebas manuales** (`src/dev_demo.rs`, solo `debug_assertions`): como #100 todavía no llama al gestor, con `BOVEDA_DEMO_PASSWORDS` (contraseñas ficticias separadas por comas; se define en `desktop/.env`, que está en `.gitignore`, o como variable de entorno, que gana) la app de depuración entrega la primera a los 10 s y cada siguiente 5 s después, con el mismo `deliver_and_notify`. No existe en `tauri build`; se quita con #100 y #104.
 
 ## Limitaciones conocidas
 
