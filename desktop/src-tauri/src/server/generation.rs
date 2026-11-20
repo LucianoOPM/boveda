@@ -10,12 +10,14 @@ use std::net::{Ipv4Addr, TcpListener, TcpStream};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex, PoisonError};
 use std::thread::{self, JoinHandle};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use vault_core::protocol::{CancelToken, PublicKey, SendTimeouts, receive_send};
 
 use super::bind::{BindError, bind_all};
 use super::{Config, Deps};
+use crate::announce::{AnnounceSlot, Service};
+use crate::backoff::Backoff;
 use crate::paired_devices::PairedDeviceStore;
 
 #[cfg(test)]
@@ -90,6 +92,8 @@ pub(crate) struct Generation {
     accept: Option<JoinHandle<()>>,
     shared: Arc<Shared>,
     stop_wait: Duration,
+    announce: AnnounceSlot,
+    stopped: bool,
 }
 
 impl Generation {
@@ -121,6 +125,18 @@ impl Generation {
                 })
                 .map_err(|error| BindError::Io(error.kind()))?
         };
+        // Los listeners ya están enlazados y atendiendo: solo ahora se anuncia.
+        let service = Service::new(
+            ips.clone(),
+            bound.port,
+            &deps.identity.public().fingerprint(),
+        );
+        let mut announce = AnnounceSlot::new(
+            (deps.announcer)(),
+            service,
+            Backoff::new(config.retry_base, config.retry_max),
+        );
+        announce.poll(Instant::now());
         Ok(Self {
             port: bound.port,
             token,
@@ -128,6 +144,8 @@ impl Generation {
             accept: Some(accept),
             shared,
             stop_wait: config.stop_wait,
+            announce,
+            stopped: false,
         })
     }
 
@@ -139,6 +157,16 @@ impl Generation {
     /// `false` si el hilo de `accept` terminó (error no recuperable).
     pub(crate) fn is_alive(&self) -> bool {
         self.alive.load(Ordering::SeqCst)
+    }
+
+    /// Reintenta el anuncio mDNS si falló y ya toca. No toca el listener.
+    pub(crate) fn poll_announce(&mut self, now: Instant) {
+        self.announce.poll(now);
+    }
+
+    /// ¿Está anunciada ahora?
+    pub(crate) fn is_announced(&self) -> bool {
+        self.announce.is_announced()
     }
 
     /// Conexiones que se están atendiendo ahora.
@@ -155,6 +183,9 @@ impl Generation {
     /// trabajadores como máximo `stop_wait`. Un trabajador atascado (por ejemplo
     /// en el portapapeles) no retiene el cierre: se deja terminar solo.
     pub(crate) fn stop(mut self) {
+        // Primero se retira el anuncio, con el listener todavía abierto.
+        self.announce.withdraw();
+        self.stopped = true;
         self.token.cancel();
         if let Some(accept) = self.accept.take() {
             let _ = accept.join();
@@ -165,7 +196,11 @@ impl Generation {
 
 impl Drop for Generation {
     fn drop(&mut self) {
-        // Soltarla sin `stop` también cancela: nada queda atendiendo.
+        // Soltarla sin `stop` también retira el anuncio y cancela: nada queda
+        // publicado ni atendiendo.
+        if !self.stopped {
+            self.announce.withdraw();
+        }
         self.token.cancel();
     }
 }

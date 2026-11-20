@@ -237,3 +237,89 @@ fn is_alive_until_stopped() {
     assert!(generation.is_alive());
     generation.stop();
 }
+
+#[test]
+fn announces_once_after_binding_with_its_port_and_ips() {
+    let fixture = Fixture::new();
+    let generation = start(&fixture, &config());
+    assert_eq!(fixture.announce.calls.load(Ordering::SeqCst), 1);
+    let service = fixture
+        .announce
+        .last
+        .lock()
+        .expect("candado")
+        .clone()
+        .expect("servicio anunciado");
+    assert_eq!(service.port, generation.port());
+    assert_eq!(service.addrs, BTreeSet::from([LOCAL]));
+    assert!(generation.is_announced());
+    generation.stop();
+}
+
+#[test]
+fn withdraw_happens_before_listeners_close() {
+    let fixture = Fixture::new();
+    let generation = start(&fixture, &config());
+    generation.stop();
+    let events = fixture.announce.events.lock().expect("candado");
+    assert_eq!(
+        *events,
+        ["announce:ok", "withdraw:listener_open"],
+        "el anuncio se retira con el listener todavía abierto"
+    );
+}
+
+#[test]
+fn mdns_failure_does_not_stop_the_listener() {
+    let fixture = Fixture::new();
+    fixture
+        .announce
+        .fail_remaining
+        .store(1000, Ordering::SeqCst);
+    let generation = start(&fixture, &config());
+    assert!(!generation.is_announced());
+    assert!(generation.is_alive());
+    assert_eq!(fixture.send(addr(&generation)), Ok(AckOutcome::Copied));
+    assert!(!generation.token().is_cancelled());
+    generation.stop();
+}
+
+#[test]
+fn mdns_retries_without_rebuilding_generation() {
+    let fixture = Fixture::new();
+    fixture.announce.fail_remaining.store(2, Ordering::SeqCst);
+    let mut generation = start(&fixture, &config());
+    let port = generation.port();
+    let token = generation.token().clone();
+    assert_eq!(fixture.announce.calls.load(Ordering::SeqCst), 1);
+
+    // Antes de que toque el reintento no se llama otra vez.
+    generation.poll_announce(Instant::now());
+    assert_eq!(fixture.announce.calls.load(Ordering::SeqCst), 1);
+
+    let mut later = Instant::now();
+    for _ in 0..10 {
+        later += Duration::from_secs(1);
+        generation.poll_announce(later);
+        if generation.is_announced() {
+            break;
+        }
+    }
+    assert!(generation.is_announced());
+    assert_eq!(fixture.announce.calls.load(Ordering::SeqCst), 3);
+    assert_eq!(fixture.announce.created.load(Ordering::SeqCst), 1);
+    assert_eq!(generation.port(), port);
+    assert!(!token.is_cancelled());
+    generation.stop();
+}
+
+#[test]
+fn no_announcement_without_valid_listener() {
+    let fixture = Fixture::new();
+    // 203.0.113.1 (TEST-NET-3) no está asignada a esta máquina.
+    let ips = BTreeSet::from([LOCAL, Ipv4Addr::new(203, 0, 113, 1)]);
+    let result = Generation::start(&config(), &ips, &fixture.deps());
+    assert!(result.is_err());
+    assert_eq!(fixture.announce.calls.load(Ordering::SeqCst), 0);
+    assert_eq!(fixture.announce.created.load(Ordering::SeqCst), 0);
+}

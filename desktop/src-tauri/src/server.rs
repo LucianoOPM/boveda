@@ -6,7 +6,7 @@
 mod bind;
 mod generation;
 #[cfg(test)]
-mod test_support;
+pub(crate) mod test_support;
 
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -14,6 +14,7 @@ use std::time::Duration;
 use secrecy::SecretString;
 use vault_core::protocol::{KeyPair, SendTimeouts};
 
+use crate::announce::AnnouncerFactory;
 use crate::paired_devices::PairedDeviceStore;
 
 /// Dónde acaba una contraseña recibida. El servidor no sabe de portapapeles ni
@@ -42,6 +43,9 @@ pub struct Config {
     pub bind_attempts: u32,
     /// Lo máximo que `stop` espera a los trabajadores.
     pub stop_wait: Duration,
+    /// Espera inicial y máxima entre reintentos (anuncio mDNS y listener caído).
+    pub retry_base: Duration,
+    pub retry_max: Duration,
     /// Cada cuánto el supervisor revisa las redes.
     pub check_interval: Duration,
 }
@@ -55,6 +59,8 @@ impl Default for Config {
             timeouts: SendTimeouts::default(),
             bind_attempts: 5,
             stop_wait: Duration::from_secs(2),
+            retry_base: Duration::from_secs(5),
+            retry_max: Duration::from_secs(60),
             check_interval: Duration::from_secs(5),
         }
     }
@@ -69,4 +75,6 @@ pub struct Deps {
     pub paired: Arc<Mutex<PairedDeviceStore>>,
     /// Destino de las contraseñas recibidas.
     pub sink: Arc<dyn PasswordSink>,
+    /// Fábrica del anunciante mDNS (uno por generación).
+    pub announcer: AnnouncerFactory,
 }

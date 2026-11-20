@@ -1,7 +1,7 @@
 //! Dobles y ayudas compartidas por las pruebas del servidor.
 
 use std::net::{SocketAddr, TcpStream};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -12,6 +12,7 @@ use vault_core::protocol::{
 };
 
 use super::{Config, DeliverFailed, Deps, PasswordSink};
+use crate::announce::{AnnounceError, Announcer, AnnouncerFactory, Service};
 use crate::paired_devices::{PairedDevice, PairedDeviceStore};
 
 /// Contraseña que envían las pruebas.
@@ -58,6 +59,7 @@ pub(crate) struct Fixture {
     pub(crate) phone: KeyPair,
     pub(crate) paired: Arc<Mutex<PairedDeviceStore>>,
     pub(crate) sink: Arc<TestSink>,
+    pub(crate) announce: Arc<AnnounceLog>,
     _dir: tempfile::TempDir,
 }
 
@@ -79,6 +81,7 @@ impl Fixture {
             phone,
             paired: Arc::new(Mutex::new(store)),
             sink: Arc::new(TestSink::default()),
+            announce: Arc::new(AnnounceLog::default()),
             _dir: dir,
         }
     }
@@ -88,6 +91,7 @@ impl Fixture {
             identity: Arc::clone(&self.identity),
             paired: Arc::clone(&self.paired),
             sink: Arc::clone(&self.sink) as Arc<dyn PasswordSink>,
+            announcer: announcer_factory(&self.announce),
         }
     }
 
@@ -131,6 +135,8 @@ pub(crate) fn config() -> Config {
             ack_wait: Duration::from_secs(2),
         },
         stop_wait: Duration::from_secs(1),
+        retry_base: Duration::from_millis(10),
+        retry_max: Duration::from_millis(40),
         check_interval: Duration::from_millis(10),
         ..Config::default()
     }
@@ -146,4 +152,83 @@ pub(crate) fn wait_until(condition: impl Fn() -> bool, within: Duration) -> bool
         thread::sleep(Duration::from_millis(5));
     }
     condition()
+}
+
+/// Registro compartido del anunciante de pruebas.
+#[derive(Default)]
+pub(crate) struct AnnounceLog {
+    /// `announce:ok`, `announce:fail` y `withdraw:<estado del listener>`.
+    pub(crate) events: Mutex<Vec<String>>,
+    /// Veces que se llamó a `announce`.
+    pub(crate) calls: AtomicUsize,
+    /// Anunciantes creados por la fábrica.
+    pub(crate) created: AtomicUsize,
+    /// Cuántas llamadas a `announce` deben fallar todavía.
+    pub(crate) fail_remaining: AtomicUsize,
+    /// Último servicio anunciado con éxito.
+    pub(crate) last: Mutex<Option<Service>>,
+}
+
+/// Anunciante de pruebas: en `withdraw` anota si el listener seguía aceptando,
+/// para comprobar el orden de la parada.
+pub(crate) struct FakeAnnouncer {
+    log: Arc<AnnounceLog>,
+    service: Option<Service>,
+}
+
+impl FakeAnnouncer {
+    pub(crate) fn new(log: Arc<AnnounceLog>) -> Self {
+        Self { log, service: None }
+    }
+}
+
+impl Announcer for FakeAnnouncer {
+    fn announce(&mut self, service: &Service) -> Result<(), AnnounceError> {
+        self.log.calls.fetch_add(1, Ordering::SeqCst);
+        let failing = self
+            .log
+            .fail_remaining
+            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |left| {
+                left.checked_sub(1)
+            })
+            .is_ok();
+        let mut events = self.log.events.lock().expect("candado");
+        if failing {
+            events.push("announce:fail".to_owned());
+            return Err(AnnounceError);
+        }
+        events.push("announce:ok".to_owned());
+        *self.log.last.lock().expect("candado") = Some(service.clone());
+        self.service = Some(service.clone());
+        Ok(())
+    }
+
+    fn withdraw(&mut self) {
+        let state = match &self.service {
+            Some(service) => {
+                let ip = *service.addrs.iter().next().expect("una dirección");
+                let addr = SocketAddr::from((ip, service.port));
+                if TcpStream::connect_timeout(&addr, Duration::from_millis(500)).is_ok() {
+                    "listener_open"
+                } else {
+                    "listener_closed"
+                }
+            }
+            None => "never_announced",
+        };
+        self.log
+            .events
+            .lock()
+            .expect("candado")
+            .push(format!("withdraw:{state}"));
+    }
+}
+
+/// Fábrica que entrega un [`FakeAnnouncer`] por generación.
+pub(crate) fn announcer_factory(log: &Arc<AnnounceLog>) -> AnnouncerFactory {
+    let log = Arc::clone(log);
+    Arc::new(move || {
+        log.created.fetch_add(1, Ordering::SeqCst);
+        Box::new(FakeAnnouncer::new(Arc::clone(&log)))
+    })
 }

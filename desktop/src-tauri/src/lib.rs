@@ -5,6 +5,8 @@ use tauri::{Manager, RunEvent};
 use clipboard::ClipboardManager;
 
 #[cfg(windows)]
+pub mod announce;
+#[cfg(windows)]
 pub mod atomic_file;
 mod autostart;
 #[cfg(windows)]
