@@ -28,6 +28,9 @@ abstract final class Radii {
   /// Insignias y chips de etiqueta (6 a 8).
   static const double badge = 8;
 
+  /// Insignia de etiqueta de la tarjeta de entrada (`DESIGN.md` 6.2).
+  static const double tag = 6;
+
   /// Cápsulas, barras de progreso e indicadores.
   static const double full = 999;
 }

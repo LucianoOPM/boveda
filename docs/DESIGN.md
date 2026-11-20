@@ -35,6 +35,7 @@ Antes de crear o cambiar una pantalla, un widget o un estilo, lee este archivo.
 | `borderSubtle` | `#22222C` | Divisores internos |
 | `borderCard` | `#242430` | Borde de tarjetas, barras flotantes y diálogos |
 | `borderInteractive` | `#282836` | Borde de contenedores activos |
+| `borderPressed` | `#52525B` | Borde de una tarjeta presionada (6.2); decorativo |
 | `outline` | `#71717A` | Borde de campos y controles (necesario para el 3:1, ver 2.5) |
 | `lockScrim` | `#09090C` | Fondo de la pantalla de desbloqueo |
 | `capsuleBg` | `#000000` | Fondo de la cápsula de estado (6.1) |

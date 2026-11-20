@@ -200,6 +200,20 @@ ThemeData buildTheme(BovedaAccent accent) {
       actionTextColor: accent.accent,
       shape: cardShape,
     ),
+    // Botón "+" (`DESIGN.md` 6.8): 56 × 56, radio 16, sin elevación; el
+    // resplandor lo pone `PrimaryGlow`.
+    floatingActionButtonTheme: FloatingActionButtonThemeData(
+      backgroundColor: accent.accent,
+      foregroundColor: accent.onAccent,
+      elevation: 0,
+      focusElevation: 0,
+      hoverElevation: 0,
+      highlightElevation: 0,
+      disabledElevation: 0,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(Radii.card),
+      ),
+    ),
     progressIndicatorTheme: ProgressIndicatorThemeData(
       color: accent.accent,
       linearTrackColor: BovedaColors.borderInteractive,

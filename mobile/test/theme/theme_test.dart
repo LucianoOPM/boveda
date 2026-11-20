@@ -219,6 +219,19 @@ void main() {
         expect(style.foregroundColor!.resolve({}), accent.onAccent);
       });
 
+      test('floating action button follows the design', () {
+        final fab = t.floatingActionButtonTheme;
+        expect(fab.backgroundColor, accent.accent);
+        expect(fab.foregroundColor, accent.onAccent);
+        // El resplandor lo pone `PrimaryGlow`, no la elevación de Material.
+        expect(fab.elevation, 0);
+        expect(fab.focusElevation, 0);
+        expect(fab.hoverElevation, 0);
+        expect(fab.highlightElevation, 0);
+        final shape = fab.shape! as RoundedRectangleBorder;
+        expect(shape.borderRadius, BorderRadius.circular(Radii.card));
+      });
+
       test('disabled primary button stands out on every surface', () {
         // Dentro de un diálogo (surfaceElevated), sobre la pantalla (bgBase) y
         // sobre una tarjeta (surface2): el fondo deshabilitado no puede

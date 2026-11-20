@@ -207,6 +207,38 @@ void main() {
     handle.dispose();
   });
 
+  testWidgets('PrimaryGlow redondea con el radio que se le pide', (
+    tester,
+  ) async {
+    await pump(
+      tester,
+      defaultAccent,
+      const PrimaryGlow(
+        enabled: true,
+        radius: Radii.card,
+        child: SizedBox(width: 80),
+      ),
+    );
+
+    final box = tester.widget<DecoratedBox>(
+      find
+          .descendant(
+            of: find.byType(PrimaryGlow),
+            matching: find.byType(DecoratedBox),
+          )
+          .first,
+    );
+    expect(
+      (box.decoration as BoxDecoration).borderRadius,
+      BorderRadius.circular(Radii.card),
+    );
+  });
+
+  test('tokens nuevos de la pantalla de Bóveda', () {
+    expect(BovedaColors.borderPressed, const Color(0xFF52525B));
+    expect(Radii.tag, 6);
+  });
+
   testWidgets('PrimaryGlow redondea con el radio de los controles', (
     tester,
   ) async {
