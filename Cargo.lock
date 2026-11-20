@@ -497,12 +497,16 @@ version = "0.1.0"
 dependencies = [
  "arboard",
  "clipboard-win",
+ "postcard",
  "secrecy",
+ "serde",
  "tauri",
  "tauri-build",
  "tauri-plugin-autostart",
  "tauri-plugin-notification",
  "tauri-plugin-single-instance",
+ "tempfile",
+ "vault-core",
  "windows-sys 0.61.2",
  "zeroize",
 ]
