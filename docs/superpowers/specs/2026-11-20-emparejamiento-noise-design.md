@@ -122,6 +122,7 @@ PairingSession::new(identity: KeyPair, code: PairingCode, now: Instant) -> Pairi
 fn accept_first(&mut self, now: Instant, frame: &[u8]) -> Result<AwaitingThird, Refusal>
 fn note_malformed(&mut self, now: Instant) -> Refusal   // la trama 1 no mide 48 bytes
 fn cancel(&mut self)
+AwaitingThird::second_message(&self) -> &[u8]            // la trama 2, sin prefijo de largo
 ```
 
 La app crea la sesión en el mismo momento en que genera el código y muestra el QR: los 2 minutos cuentan desde `new`.
@@ -160,14 +161,15 @@ AwaitingReply::read_reply(self, frame: &[u8]) -> Result<PairedPc>
 ### PC: del apretón de manos a la decisión
 
 ```rust
-AwaitingThird::read_third(self, now: Instant, frame: &[u8]) -> Result<PendingPairing>
+AwaitingThird::read_third(self, now: Instant, frame: &[u8]) -> Result<PendingPairing, PairingError>
 PendingPairing: peer_public_key(), fingerprint(), peer_name(), deadline()   // solo lectura
-PendingPairing::accept(self, now: Instant) -> Result<(PairedDevice, Frame)> // Frame: trama 4
-PendingPairing::reject(self) -> Frame
+PendingPairing::accept(self, now: Instant) -> Result<Decision, PairingError>
+enum Decision { Accepted { device: PairedDevice, frame: Frame }, TimedOut { frame: Frame } }
+PendingPairing::reject(self) -> Result<Frame, PairingError>   // la trama 4 con `Rejected`
 ```
 
 - `PendingPairing` **no es** un emparejamiento: no tiene llaves ni nombre que se puedan cambiar, y la única forma de llegar a `PairedDevice` es `accept`. No existe conversión directa desde el apretón de manos.
-- `accept` antes de `deadline` (creación + 60 s) cifra `Accepted`; pasado el plazo, devuelve `PairingError::ConfirmationTimeout` y la trama de `Rejected`.
+- `accept` antes de `deadline` (creación + 60 s) cifra `Accepted`; pasado el plazo, devuelve `Decision::TimedOut` con la trama de `Rejected`: el conductor la escribe y da `ConfirmationTimeout`. El plazo de `read_third` es `CONFIRMATION_TIMEOUT` y el conductor lo ajusta a `PairingTimeouts::confirmation`.
 - `PairedDevice { public_key, name }` es lo que la app guarda **solo si** el conductor pudo escribir la trama 4 completa (ver abajo). Su `Debug` muestra solo la huella.
 - La app muestra el nombre y la huella (`Fingerprint`, que no autentica) y no puede editar la identidad durante el diálogo.
 
@@ -229,6 +231,7 @@ Las dos funciones reciben la conexión **por valor**: se cierra al soltarse, en 
 
 - **Ninguna lectura ni escritura bloquea sin límite.** Antes de cada lectura, el conductor fija `set_read_timeout(min(CANCEL_POLL, lo que falte del plazo))` y lee. Si vuelve `WouldBlock` o `TimedOut` (Unix y Windows usan uno u otro), revisa el `CancelToken` y los plazos y vuelve a intentar; con `Interrupted` reintenta sin más. Las escrituras hacen lo mismo con `set_write_timeout`. Así, una lectura bloqueada vuelve en **como máximo `CANCEL_POLL` (250 ms)** y la cancelación surte efecto dentro de ese plazo, no solo "antes de llamar a `read()`".
 - **No se usa `read_exact`.** Ante un error de tiempo, `read_exact` descarta los bytes ya leídos; el conductor lleva su propia posición dentro de la trama, así que un tiempo agotado a la mitad no pierde ni mezcla bytes (y de todos modos el error cierra la conexión).
+- **El encabezado se lee sin validar el largo.** `read_frame_header` devuelve el largo tal cual llegó, para que la PC cuente como intento cualquier primera trama de largo distinto de 48; el largo (1 a 512) lo valida `read_frame_body` **antes** de reservar memoria.
 - **Contrato de `TimedStream`:** `read` y `write` deben volver con `WouldBlock` o `TimedOut` una vez cumplido el tiempo configurado. `TcpStream` lo cumple. Una implementación que lo ignore pierde la garantía, y esa condición se documenta en el trait.
 - **Cancelar** un `CancelToken` solo afecta a las operaciones que lo usan; cancelar el **código** es `PairingSession::cancel`, que es otra cosa y solo la app decide.
 - **Plazos:** 10 s por paso (lectura o escritura de una trama) y 20 s en total desde que la PC acepta la conexión hasta tener la trama 3. Los 65 s del celular para la respuesta empiezan al terminar de escribir la trama 3.
@@ -248,7 +251,8 @@ Toda salida con error **consume** el estado de la máquina (se pasa por valor), 
 | Falla al escribir la trama 2, o la trama 3 llega incompleta, vence, se cancela o no descifra | PC | `Closed`, `Timeout`, `Cancelled`, `Io` o `Handshake` | No | `Consumed` (ya se gastó) |
 | La app no decide a tiempo | PC | `accept` da `ConfirmationTimeout` y trama `Rejected`; si la app suelta el `PendingConnection`, se cierra | No | `Consumed` |
 | El celular se desconecta durante el diálogo | PC | `confirm` falla al escribir (`Closed` o `Io`); no hay `PairedDevice` | No | `Consumed` |
-| La trama 2 no descifra (la PC no tiene la llave del QR) | Celular | `PeerNotAuthentic`; **no manda la trama 3** | — | — |
+| La trama 2 no se autentica (falsificada o alterada) | Celular | `PeerNotAuthentic`; **no manda la trama 3** | — | — |
+| La PC tiene otra llave privada que la del QR | Ambos | No descifra la trama 1 (el `es` usa la llave del QR): la PC rechaza (`WrongCode`) y cierra sin responder; el celular ve `Closed` y no manda nada más | Sí | `failed + 1` |
 | La PC cierra tras la trama 1 (código rechazado) o hay un corte de red | Celular | `Closed` (**mismo error en ambos casos**) | — | — |
 | Vence un paso o los 65 s | Celular | `Timeout` o `ConfirmationTimeout` | — | — |
 | Respuesta alterada, sin cifrar o de otro tipo | Celular | `Handshake` o `Protocol(...)`; no hay `PairedPc` | — | — |
