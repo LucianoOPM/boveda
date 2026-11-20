@@ -65,12 +65,13 @@ Resultado: un gestor de contraseñas usable en tu celular, con búsqueda y respa
 Resultado: tocas "Enviar a PC" en el celular, pones la huella y pegas la contraseña en Windows.
 
 - [ ] Protocolo en `vault-core`: identidades X25519, emparejamiento con Noise y código de un solo uso, mensaje de envío con tiempo de vida de 30 s, y pruebas con ambos extremos por localhost.
+  - [x] Formato v3 de la bóveda (#93): la llave privada X25519 del celular y la lista de PCs emparejadas viven cifradas en la bóveda, con migración v1→v2→v3 al desbloquear (con contraseña, y la v2 también con la llave del Keystore) y al importar un respaldo.
 - [ ] App Tauri en la bandeja: menú de cuatro opciones, iniciar con Windows y ventana con el QR.
 - [ ] Llave privada de la PC protegida con DPAPI.
 - [ ] Servidor en la PC: escucha solo en redes privadas, anuncio por mDNS, confirmación al emparejar y rechazo de dispositivos no emparejados.
 - [ ] Portapapeles: escribir con `arboard` excluido del historial y la nube, notificación, y borrado a los 30 s solo si sigue la misma contraseña.
 - [ ] Android: escanear el QR y guardar la llave privada del celular dentro de la bóveda.
-- [ ] Al restaurar un respaldo, regenerar la identidad del celular y pedir emparejar de nuevo (ver "Formato de la bóveda" en la especificación).
+- [ ] Al restaurar un respaldo, descartar la identidad del celular y la lista de PCs, y pedir emparejar de nuevo (ver "Formato de la bóveda" en la especificación). La limpieza ya la hace `Vault::import` (#93); falta el aviso al usuario y sus pruebas de interfaz (#106).
 - [ ] Android: enviar con huella obligatoria, buscando la PC por última IP, luego mDNS y luego IP manual.
 - [ ] Android: aviso si no se encuentra la PC, con la opción de copiar localmente.
 - [ ] Lista de dispositivos emparejados y revocación en ambas apps.
