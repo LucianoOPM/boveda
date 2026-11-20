@@ -1,6 +1,7 @@
 use tauri::RunEvent;
 
 mod autostart;
+pub mod clipboard;
 mod tray;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
