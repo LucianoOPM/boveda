@@ -85,7 +85,7 @@
 
 **Interfaces:**
 - Consumes: `KeyPair`, `PublicKey` (`identity.rs`), `SendError`, constantes de la Task 2, `Frame` (`pairing.rs`), `MAX_SEND_FRAME_LEN` como tamaño de los búferes de trabajo.
-- Produces: `Responder::new(identity: &KeyPair) -> Responder`; `Responder::read_first(self, now: Instant, frame: &[u8], is_paired: impl Fn(&PublicKey) -> bool) -> Result<(AwaitingSend, Frame), SendError>`; `Sender::new(identity: &KeyPair, pc_key: &PublicKey) -> Result<Sender, SendError>`; `Sender::first_message(self) -> Result<(AwaitingSecond, Frame), SendError>`; `AwaitingSend` (con `peer() -> PublicKey` y el `deadline: Instant = now + SEND_TTL`) y `AwaitingSecond`. Los pasos de transporte (`read_send`, `read_second`) llegan en la Task 4.
+- Produces: `Responder::new(identity: &KeyPair) -> Responder`; `Responder::read_first(self, now: Instant, frame: &[u8], is_paired: impl Fn(&PublicKey) -> bool) -> Result<(AwaitingSend, Frame), SendError>`; `Sender::new(identity: &KeyPair, pc_key: &PublicKey) -> Result<Sender, SendError>`; `Sender::first_message(self) -> Result<(AwaitingResponse, Frame), SendError>`; `AwaitingSend` (con `peer() -> PublicKey` y el `deadline: Instant = now + SEND_TTL`) y `AwaitingResponse`. Los pasos de transporte (`read_send`, `read_second`) llegan en la Task 4.
 
 - [ ] **Step 1: Escribir las pruebas que fallan** (claves `[1;32]` PC y `[2;32]` celular, como el emparejamiento):
   - `first_frame_is_96_bytes_and_second_is_48`.
@@ -108,7 +108,7 @@
 
 **Interfaces:**
 - Consumes: Task 3, `SendMessage::{new, encode, decode, password}`, `Ack::{new, encode, decode, outcome}`, `AckOutcome`.
-- Produces: `AwaitingSecond::read_second(self, frame: &[u8], message: &SendMessage) -> Result<(AwaitingAck, Frame), SendError>` (trama 3; `PeerNotAuthentic` si la 2 no se autentica, sin producir trama 3); `AwaitingAck::read_ack(self, frame: &[u8]) -> Result<AckOutcome, SendError>`; `AwaitingSend::read_send(self, now: Instant, frame: &[u8]) -> Result<ReceivedSend, SendError>`; `ReceivedSend::{ peer() -> PublicKey, message() -> &SendMessage, ack(self, outcome: AckOutcome) -> Result<Frame, SendError> }`.
+- Produces: `AwaitingResponse::read_second(self, frame: &[u8], message: &SendMessage) -> Result<(AwaitingAck, Frame), SendError>` (trama 3; `PeerNotAuthentic` si la 2 no se autentica, sin producir trama 3); `AwaitingAck::read_ack(self, frame: &[u8]) -> Result<AckOutcome, SendError>`; `AwaitingSend::read_send(self, now: Instant, frame: &[u8]) -> Result<ReceivedSend, SendError>`; `ReceivedSend::{ peer() -> PublicKey, message() -> &SendMessage, ack(self, outcome: AckOutcome) -> Result<Frame, SendError> }`.
 
 - [ ] **Step 1: Escribir las pruebas que fallan**:
   - `full_exchange_in_memory_delivers_the_password_and_copied` (la contraseña llega igual; `ack(Copied)` y `read_ack` da `Copied`).

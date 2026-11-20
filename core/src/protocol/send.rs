@@ -21,10 +21,13 @@ use std::time::{Duration, Instant};
 use secrecy::ExposeSecret;
 use snow::params::NoiseParams;
 use snow::{Builder, HandshakeState, TransportState};
+use zeroize::Zeroizing;
 
 use super::error::ProtocolError;
 use super::identity::{KeyPair, PublicKey};
+use super::message::{Ack, AckOutcome, SendMessage};
 use super::pairing::{Frame, PairingError};
+use super::transport::MAX_SEND_FRAME_LEN;
 
 /// Patrón Noise del envío: el celular conoce la llave de la PC y la PC aprende
 /// la del celular en la primera trama.
@@ -214,12 +217,8 @@ impl<'a> Responder<'a> {
 /// La PC contestó la segunda trama y espera el mensaje. El celular ya está
 /// autenticado y autorizado; todavía no se leyó ningún contenido.
 pub struct AwaitingSend {
-    // Se usa al leer el mensaje (Task 4).
-    #[allow(dead_code)]
     transport: TransportState,
     peer: PublicKey,
-    // Se usa al leer el mensaje (Task 4).
-    #[allow(dead_code)]
     deadline: Instant,
 }
 
@@ -228,7 +227,83 @@ impl AwaitingSend {
     pub fn peer(&self) -> PublicKey {
         self.peer
     }
+
+    /// Lee la trama 3: el `SendMessage` cifrado por el canal Noise.
+    ///
+    /// `now` es el instante en que la trama llegó completa. Desde `deadline`
+    /// (apretón de manos más [`SEND_TTL`]) el mensaje **caduca**: es
+    /// [`SendError::Expired`] y ni siquiera se descifra, así que el secreto no
+    /// llega a la app. Una trama alterada, sin cifrar o de otra sesión no se
+    /// autentica (`Handshake`). Esto consume el estado: una conexión acepta un
+    /// solo envío. El texto plano vive solo en búferes `Zeroizing` y en el
+    /// `SendMessage`, que se borra al soltarse.
+    pub fn read_send(self, now: Instant, frame: &[u8]) -> Result<ReceivedSend, SendError> {
+        if now >= self.deadline {
+            return Err(SendError::Expired);
+        }
+        if frame.len() > MAX_SEND_FRAME_LEN {
+            return Err(SendError::FrameTooLarge);
+        }
+        let Self {
+            mut transport,
+            peer,
+            ..
+        } = self;
+        let mut plain = Zeroizing::new(vec![0u8; frame.len()]);
+        let len = transport
+            .read_message(frame, &mut plain)
+            .map_err(|_| SendError::Handshake)?;
+        let message = SendMessage::decode(&plain[..len])?;
+        Ok(ReceivedSend {
+            transport,
+            peer,
+            message,
+        })
+    }
 }
+
+/// Un envío autenticado, autorizado y dentro de plazo, a la espera de que la
+/// app escriba la contraseña en el portapapeles y responda.
+///
+/// Su `Debug` solo muestra la huella del celular.
+pub struct ReceivedSend {
+    transport: TransportState,
+    peer: PublicKey,
+    message: SendMessage,
+}
+
+impl ReceivedSend {
+    /// Llave pública del celular.
+    pub fn peer(&self) -> PublicKey {
+        self.peer
+    }
+
+    /// El mensaje recibido (la contraseña se borra al soltarse).
+    pub fn message(&self) -> &SendMessage {
+        &self.message
+    }
+
+    /// Cifra la confirmación (trama 4). Consume el envío: la contraseña se
+    /// borra al terminar.
+    pub fn ack(mut self, outcome: AckOutcome) -> Result<Frame, SendError> {
+        let plain = Ack::new(outcome).encode()?;
+        let mut buffer = [0u8; ACK_BUFFER];
+        let len = self
+            .transport
+            .write_message(&plain, &mut buffer)
+            .map_err(|_| SendError::Handshake)?;
+        Ok(buffer[..len].to_vec())
+    }
+}
+
+impl std::fmt::Debug for ReceivedSend {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "ReceivedSend({})", self.peer.fingerprint())
+    }
+}
+
+/// Tamaño del búfer de la confirmación (19 bytes cifrada).
+const ACK_BUFFER: usize = 64;
 
 /// Celular que va a enviar.
 pub struct Sender {
@@ -264,10 +339,70 @@ impl Sender {
 
 /// El celular mandó la primera trama y espera la segunda.
 pub struct AwaitingResponse {
-    // Se usa al leer la segunda trama (Task 4).
-    #[allow(dead_code)]
     handshake: HandshakeState,
 }
+
+impl AwaitingResponse {
+    /// Lee la trama 2 y escribe la trama 3: el `SendMessage` cifrado.
+    ///
+    /// Una trama 2 que no se autentica (otra llave privada que la de la PC
+    /// conocida, otra sesión o alterada) es [`SendError::PeerNotAuthentic`]: la
+    /// contraseña **no sale**. Solo tras autenticarla se cifra el mensaje.
+    pub fn read_second(
+        mut self,
+        frame: &[u8],
+        message: &SendMessage,
+    ) -> Result<(AwaitingAck, Frame), SendError> {
+        if frame.len() != SEND_SECOND_FRAME_LEN {
+            return Err(SendError::PeerNotAuthentic);
+        }
+        let mut buffer = [0u8; HANDSHAKE_BUFFER];
+        let payload = self
+            .handshake
+            .read_message(frame, &mut buffer)
+            .map_err(|_| SendError::PeerNotAuthentic)?;
+        if payload != 0 {
+            return Err(SendError::Handshake);
+        }
+        let mut transport = self
+            .handshake
+            .into_transport_mode()
+            .map_err(|_| SendError::Handshake)?;
+        let plain = message.encode()?;
+        // El búfer recibe primero el texto plano y queda con el cifrado: va en
+        // `Zeroizing` por ese paso intermedio.
+        let mut sealed = Zeroizing::new(vec![0u8; plain.len() + TAG_LEN]);
+        let len = transport
+            .write_message(&plain, &mut sealed)
+            .map_err(|_| SendError::Handshake)?;
+        let third = sealed[..len].to_vec();
+        Ok((AwaitingAck { transport }, third))
+    }
+}
+
+/// El celular mandó el mensaje y espera la confirmación de la PC.
+pub struct AwaitingAck {
+    transport: TransportState,
+}
+
+impl AwaitingAck {
+    /// Lee la trama 4 (la confirmación, cifrada por el canal Noise). Una trama
+    /// alterada, sin cifrar o de otra sesión no se autentica (`Handshake`).
+    pub fn read_ack(mut self, frame: &[u8]) -> Result<AckOutcome, SendError> {
+        if frame.len() > ACK_BUFFER {
+            return Err(SendError::FrameTooLarge);
+        }
+        let mut buffer = [0u8; ACK_BUFFER];
+        let len = self
+            .transport
+            .read_message(frame, &mut buffer)
+            .map_err(|_| SendError::Handshake)?;
+        Ok(Ack::decode(&buffer[..len])?.outcome())
+    }
+}
+
+/// Etiqueta de autenticación de ChaCha20-Poly1305.
+const TAG_LEN: usize = 16;
 
 #[cfg(test)]
 mod tests;

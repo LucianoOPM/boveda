@@ -78,13 +78,13 @@ ReceivedSend::{ peer(), message() -> &SendMessage, ack(self, outcome) -> Result<
 
 // Celular
 Sender::new(identity: &KeyPair, pc_key: &PublicKey) -> Result<Sender, SendError>
-Sender::first_message(self) -> Result<(AwaitingSecond, Frame), SendError>
-AwaitingSecond::read_second(self, frame: &[u8], message: &SendMessage)
+Sender::first_message(self) -> Result<(AwaitingResponse, Frame), SendError>
+AwaitingResponse::read_second(self, frame: &[u8], message: &SendMessage)
     -> Result<(AwaitingAck, Frame), SendError>       // la trama 3; PeerNotAuthentic si la 2 no se autentica
 AwaitingAck::read_ack(self, frame: &[u8]) -> Result<AckOutcome, SendError>
 ```
 
-- `read_first` guarda `deadline = now + SEND_TTL`. `read_send` revisa `now >= deadline` **después** de descifrar y decodificar y, si venció, suelta el mensaje (se borra) y da `Expired`: el secreto no llega a la app.
+- `read_first` guarda `deadline = now + SEND_TTL`. `read_send` revisa `now >= deadline` **antes** de descifrar (`now` es el instante en que la trama llegó completa) y, si venció, da `Expired` sin descifrar: el texto plano ni siquiera se produce y el secreto no llega a la app (ajuste de la implementación: la spec decía "después", pero comprobar antes evita crear el texto plano de un mensaje que se va a descartar).
 - Consultar `is_paired` es lo primero que hace `read_first` tras autenticar la trama 1; la trama 2 no se escribe antes. Una llave no emparejada es `NotPaired` (**solo para la app local**: por la conexión se ve igual que un fallo).
 - `PeerNotAuthentic` en el celular: la trama 2 no se autentica (otra llave privada que la conocida o trama falsificada) y **no se manda la trama 3**: la contraseña no sale.
 - Los pasos fuera de orden no compilan; todo error consume el estado.
@@ -131,7 +131,8 @@ pub fn send_to_pc<S: TimedStream>(
 ## Borrado de memoria
 
 - `SendMessage` se borra al soltarse. Los búferes de trabajo que reciben la contraseña en claro (el descifrado de la trama 3 en la PC y la codificación en el celular) van en `Zeroizing`.
-- `snow` 0.10.0 sigue sin borrar sus secretos: las llaves privadas, el estado simétrico y las llaves de transporte de IK quedan en su memoria al soltarse, igual que en el emparejamiento (excepción (5) de `ARCHITECTURE.md`, que se amplía a "#95 y #96"). **A verificar al implementar** leyendo `resolvers/default.rs` de `snow` 0.10.0: si el cifrado de transporte deja una copia de la contraseña en claro dentro de su estado, se agrega a esa excepción; no se promete más borrado del que se pueda mostrar.
+- `snow` 0.10.0 sigue sin borrar sus secretos: las llaves privadas, el estado simétrico y las llaves de transporte de IK quedan en su memoria al soltarse, igual que en el emparejamiento (excepción (5) de `ARCHITECTURE.md`, que se amplía a "#95 y #96").
+- **Verificado en el código fuente de `snow` 0.10.0** (`resolvers/default.rs`, `CipherChaChaPoly`; `transportstate.rs`, `cipherstate.rs`): el estado de transporte **no guarda el texto plano**. Al cifrar, `snow` copia el texto plano al búfer de salida **que da el llamador** (`copy_slices!(plaintext, out)`) y cifra ahí mismo con `encrypt_in_place_detached`; al descifrar copia el texto cifrado a ese búfer y descifra en el lugar, así que el texto plano solo queda en el búfer del llamador (aquí, `Zeroizing`). Lo que **sí** queda sin borrar: la llave de cifrado de cada sentido (`CipherChaChaPoly.key`, `[u8; 32]` sin `Drop` que la borre) y las copias de esa llave que `ChaCha20Poly1305::new(&self.key.into())` deja por valor en la pila en cada llamada. Un fallo de autenticación deja en el búfer el texto **cifrado**, no el claro. Además, el cifrado y el descifrado de `snow` usan `unwrap`/`expect` internos que solo disparan con mensajes de más de 2^38 bytes: los límites de 2048 bytes de las tramas lo impiden. Las copias que dejen los registros y la pila del compilador durante el cifrado ChaCha20 y Poly1305 tampoco se pueden borrar. Por tanto, **la contraseña en claro se borra al soltar `SendMessage` y los búferes `Zeroizing`; las llaves de transporte no se borran** (excepción aceptada).
 - La contraseña nunca aparece en `Debug`, errores ni `Display`: `SendError` no lleva datos.
 
 ## Pruebas

@@ -239,3 +239,261 @@ fn first_frame_for_another_protocol_prologue_is_rejected() {
     let result = Responder::new(&keys(1)).read_first(Instant::now(), &buffer[..len], |_| true);
     assert_eq!(result.err(), Some(SendError::Handshake));
 }
+
+// --- Envío y confirmación por el canal de transporte (Task 4) ---
+
+use secrecy::SecretString;
+
+use crate::protocol::{AckOutcome, SendMessage};
+
+fn message(text: &str) -> SendMessage {
+    SendMessage::new(SecretString::from(text.to_string())).unwrap()
+}
+
+/// Un apretón de manos completo: los dos extremos listos para el mensaje.
+struct Session {
+    pc: AwaitingSend,
+    phone: AwaitingResponse,
+    second: Vec<u8>,
+    now: Instant,
+}
+
+fn session() -> Session {
+    let now = Instant::now();
+    let (phone, first) = Sender::new(&keys(2), &pc_key())
+        .unwrap()
+        .first_message()
+        .unwrap();
+    let (pc, second) = Responder::new(&keys(1))
+        .read_first(now, &first, |_| true)
+        .unwrap();
+    Session {
+        pc,
+        phone,
+        second,
+        now,
+    }
+}
+
+/// Un celular nuevo cuya trama 2 no corresponde a ninguna sesión.
+fn lone_phone() -> AwaitingResponse {
+    Sender::new(&keys(2), &pc_key())
+        .unwrap()
+        .first_message()
+        .unwrap()
+        .0
+}
+
+/// Una sesión nueva con la trama 3 ya armada: el estado de la PC, el del
+/// celular que espera el `Ack`, la trama 3 y el instante del apretón de manos.
+fn sent(text: &str) -> (AwaitingSend, AwaitingAck, Vec<u8>, Instant) {
+    let s = session();
+    let (ack, third) = s.phone.read_second(&s.second, &message(text)).unwrap();
+    (s.pc, ack, third, s.now)
+}
+
+#[test]
+fn full_exchange_in_memory_delivers_the_password_and_copied() {
+    let (pc, awaiting_ack, third, now) = sent("hunter2 ñ");
+    let received = pc.read_send(now, &third).unwrap();
+    assert_eq!(received.message().password().expose_secret(), "hunter2 ñ");
+    assert_eq!(received.message().ttl_secs(), 30);
+    assert_eq!(received.peer(), keys(2).public());
+    let ack = received.ack(AckOutcome::Copied).unwrap();
+    assert_eq!(awaiting_ack.read_ack(&ack).unwrap(), AckOutcome::Copied);
+}
+
+#[test]
+fn ack_failed_roundtrips() {
+    let (pc, awaiting_ack, third, now) = sent("x");
+    let ack = pc
+        .read_send(now, &third)
+        .unwrap()
+        .ack(AckOutcome::Failed)
+        .unwrap();
+    assert_eq!(awaiting_ack.read_ack(&ack).unwrap(), AckOutcome::Failed);
+}
+
+#[test]
+fn send_frame_with_a_1024_byte_password_is_1045_bytes_and_fits_2048() {
+    let (pc, awaiting_ack, third, now) = sent(&"a".repeat(1024));
+    assert_eq!(third.len(), 1045);
+    assert!(third.len() <= crate::protocol::MAX_SEND_FRAME_LEN);
+    let received = pc.read_send(now, &third).unwrap();
+    assert_eq!(received.message().password().expose_secret().len(), 1024);
+    let ack = received.ack(AckOutcome::Copied).unwrap();
+    assert_eq!(ack.len(), 19);
+    assert_eq!(awaiting_ack.read_ack(&ack).unwrap(), AckOutcome::Copied);
+}
+
+#[test]
+fn second_frame_from_another_session_or_altered_is_peer_not_authentic() {
+    let other = session().second;
+    assert_eq!(
+        lone_phone().read_second(&other, &message("x")).err(),
+        Some(SendError::PeerNotAuthentic)
+    );
+
+    let genuine = session();
+    for i in [0, 20, 47] {
+        let mut altered = genuine.second.clone();
+        altered[i] ^= 1;
+        assert_eq!(
+            lone_phone().read_second(&altered, &message("x")).err(),
+            Some(SendError::PeerNotAuthentic)
+        );
+    }
+    // De otro largo, vacía y de ceros: tampoco se autentican.
+    for frame in [vec![0u8; 47], vec![0u8; 48], Vec::new(), vec![0u8; 49]] {
+        assert_eq!(
+            lone_phone().read_second(&frame, &message("x")).err(),
+            Some(SendError::PeerNotAuthentic)
+        );
+    }
+}
+
+#[test]
+fn send_just_before_the_deadline_is_accepted_and_at_the_deadline_expired() {
+    let (pc, _, third, now) = sent("x");
+    let before = now + SEND_TTL - Duration::from_nanos(1);
+    assert!(pc.read_send(before, &third).is_ok());
+
+    let (pc, _, third, now) = sent("x");
+    assert_eq!(
+        pc.read_send(now + SEND_TTL, &third).err(),
+        Some(SendError::Expired)
+    );
+    let (pc, _, third, now) = sent("x");
+    let late = now + SEND_TTL + Duration::from_secs(60);
+    assert_eq!(pc.read_send(late, &third).err(), Some(SendError::Expired));
+}
+
+#[test]
+fn expired_send_does_not_deliver_a_message_even_if_it_decrypts() {
+    let (pc, _, third, now) = sent("secreto");
+    let result = pc.read_send(now + SEND_TTL, &third);
+    assert!(matches!(result, Err(SendError::Expired)));
+}
+
+#[test]
+fn replayed_first_frame_gets_a_second_frame_but_no_valid_send() {
+    let now = Instant::now();
+    let (phone, first) = Sender::new(&keys(2), &pc_key())
+        .unwrap()
+        .first_message()
+        .unwrap();
+    // La sesión real.
+    let (pc1, second1) = Responder::new(&keys(1))
+        .read_first(now, &first, |_| true)
+        .unwrap();
+    let (_, third1) = phone.read_second(&second1, &message("real")).unwrap();
+    assert!(pc1.read_send(now, &third1).is_ok());
+    // Un atacante reenvía la misma primera trama: la PC contesta con una
+    // llave efímera nueva...
+    let (pc2, second2) = Responder::new(&keys(1))
+        .read_first(now, &first, |_| true)
+        .unwrap();
+    assert_ne!(second1, second2);
+    // ...pero la trama 3 capturada de la primera sesión no sirve en la segunda.
+    assert_eq!(
+        pc2.read_send(now, &third1).err(),
+        Some(SendError::Handshake)
+    );
+}
+
+#[test]
+fn send_frame_from_another_session_is_rejected() {
+    let (_, _, third_a, _) = sent("a");
+    let (pc_b, _, _, now_b) = sent("b");
+    assert_eq!(
+        pc_b.read_send(now_b, &third_a).err(),
+        Some(SendError::Handshake)
+    );
+}
+
+#[test]
+fn altered_send_frame_is_rejected() {
+    let len = sent("hola").2.len();
+    for i in [0, len / 2, len - 1] {
+        let (pc, _, mut third, now) = sent("hola");
+        third[i] ^= 0x01;
+        assert_eq!(pc.read_send(now, &third).err(), Some(SendError::Handshake));
+    }
+}
+
+#[test]
+fn unencrypted_empty_short_or_oversized_send_frame_is_rejected() {
+    let plain = message("hola").encode().unwrap().to_vec();
+    let cases = [
+        (plain, SendError::Handshake),
+        (Vec::new(), SendError::Handshake),
+        (vec![0u8; 15], SendError::Handshake),
+        (vec![0u8; 16], SendError::Handshake),
+        (
+            vec![0u8; crate::protocol::MAX_SEND_FRAME_LEN + 1],
+            SendError::FrameTooLarge,
+        ),
+    ];
+    for (frame, expected) in cases {
+        let s = session();
+        assert_eq!(s.pc.read_send(s.now, &frame).err(), Some(expected));
+    }
+}
+
+#[test]
+fn altered_or_foreign_ack_is_rejected() {
+    // `read_ack` consume el estado: una sesión por caso.
+    let (pc, _, third, now) = sent("x");
+    let foreign = pc
+        .read_send(now, &third)
+        .unwrap()
+        .ack(AckOutcome::Copied)
+        .unwrap();
+    let (_, awaiting_ack, _, _) = sent("x");
+    assert_eq!(
+        awaiting_ack.read_ack(&foreign).err(),
+        Some(SendError::Handshake)
+    );
+
+    let (pc, awaiting_ack, third, now) = sent("x");
+    let mut altered = pc
+        .read_send(now, &third)
+        .unwrap()
+        .ack(AckOutcome::Copied)
+        .unwrap();
+    altered[0] ^= 1;
+    assert_eq!(
+        awaiting_ack.read_ack(&altered).err(),
+        Some(SendError::Handshake)
+    );
+}
+
+#[test]
+fn authentic_frame_that_is_not_an_ack_is_a_protocol_error() {
+    // Un cifrado válido de la sesión cuyo contenido no es un `Ack`.
+    let (pc, awaiting_ack, third, now) = sent("x");
+    let mut received = pc.read_send(now, &third).unwrap();
+    let mut buffer = [0u8; 64];
+    let len = received
+        .transport
+        .write_message(&[1, 3], &mut buffer)
+        .unwrap();
+    assert!(matches!(
+        awaiting_ack.read_ack(&buffer[..len]).err(),
+        Some(SendError::Protocol(_))
+    ));
+}
+
+#[test]
+fn password_never_shows_in_debug_or_errors() {
+    let secret = "CENTINELA-contraseña-0451";
+    let (pc, _, third, now) = sent(secret);
+    let received = pc.read_send(now, &third).unwrap();
+    let shown = format!("{received:?} {:?}", received.message());
+    assert!(!shown.contains(secret) && !shown.contains("0451"));
+    // Un error de una trama alterada tampoco la lleva.
+    let (pc, _, mut third, now) = sent(secret);
+    third[3] ^= 1;
+    let error = pc.read_send(now, &third).err().unwrap();
+    assert!(!format!("{error} {error:?}").contains(secret));
+}
