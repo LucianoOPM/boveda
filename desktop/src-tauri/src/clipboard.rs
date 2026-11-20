@@ -86,9 +86,10 @@ pub struct ClipboardManager {
 }
 
 impl ClipboardManager {
-    /// El gestor real: portapapeles de Windows y los plazos de producción.
+    /// Arranca el gestor real (lanza su hilo): portapapeles de Windows y los
+    /// plazos de producción. Se llama `start` y no `new` porque tiene ese efecto.
     #[cfg(windows)]
-    pub fn new() -> Self {
+    pub fn start() -> Self {
         Self::with_backend(WindowsBackend::new(), Config::default())
     }
 
@@ -122,6 +123,21 @@ impl ClipboardManager {
         wait.recv().map_err(|_| ClipboardError::Stopped)?
     }
 
+    /// `deliver` y, solo si la copia salió bien, el aviso. Si el aviso falla se
+    /// registra (sin datos sensibles) y no cambia el resultado: la contraseña ya
+    /// está en el portapapeles y su borrado sigue armado.
+    pub fn deliver_and_notify<E: fmt::Display>(
+        &self,
+        password: &SecretString,
+        notify: impl FnOnce() -> Result<(), E>,
+    ) -> Result<(), ClipboardError> {
+        self.deliver(password)?;
+        if let Err(error) = notify() {
+            eprintln!("No se pudo mostrar el aviso del portapapeles: {error}");
+        }
+        Ok(())
+    }
+
     /// Último intento de limpieza al salir de la app. Espera como mucho
     /// `timeout`: si Windows no deja comprobar el portapapeles no se borra
     /// nada y el cierre sigue. Después, `deliver` devuelve `Stopped`; llamarlo
@@ -134,4 +150,18 @@ impl ClipboardManager {
         }
         let _ = wait.recv_timeout(timeout);
     }
+}
+
+/// El aviso «Contraseña lista para pegar». No lleva la contraseña ni el nombre
+/// del servicio.
+pub fn notify_ready<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
+) -> tauri_plugin_notification::Result<()> {
+    use tauri_plugin_notification::NotificationExt;
+
+    app.notification()
+        .builder()
+        .title("Bóveda")
+        .body("Contraseña lista para pegar")
+        .show()
 }

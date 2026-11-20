@@ -593,3 +593,59 @@ fn shutdown_without_pending_entries_returns_quickly() {
     assert!(start.elapsed() < Duration::from_millis(500));
     assert!(fake.calls().is_empty());
 }
+
+#[test]
+fn notification_runs_after_a_successful_write() {
+    let fake = FakeBackend::default();
+    let manager = manager(&fake);
+    let notified = std::cell::Cell::new(false);
+
+    let result = manager.deliver_and_notify(&secret("prueba-no-real-1"), || {
+        // El aviso sale cuando la contraseña ya está en el portapapeles.
+        assert_eq!(fake.content(), text("prueba-no-real-1"));
+        notified.set(true);
+        Ok::<(), String>(())
+    });
+
+    assert_eq!(result, Ok(()));
+    assert!(notified.get());
+}
+
+#[test]
+fn notification_does_not_run_when_the_write_fails_or_the_password_is_invalid() {
+    let fake = FakeBackend::default();
+    let manager = manager(&fake);
+    let notified = std::cell::Cell::new(false);
+    let notify = || {
+        notified.set(true);
+        Ok::<(), String>(())
+    };
+
+    fake.fail_next_write(WriteError::NotWritten, false);
+    assert_eq!(
+        manager.deliver_and_notify(&secret("prueba-no-real-1"), notify),
+        Err(ClipboardError::WriteFailed)
+    );
+    assert_eq!(
+        manager.deliver_and_notify(&secret("prueba\0no-real"), notify),
+        Err(ClipboardError::InvalidPassword)
+    );
+
+    assert!(!notified.get());
+}
+
+#[test]
+fn failed_notification_keeps_the_timer_and_the_clear() {
+    let fake = FakeBackend::default();
+    let manager = manager(&fake);
+
+    let result = manager.deliver_and_notify(&secret("prueba-no-real-1"), || {
+        Err::<(), _>("el aviso falló".to_owned())
+    });
+
+    // Un fallo del aviso no cambia el resultado de la copia ni deja la
+    // contraseña sin borrar.
+    assert_eq!(result, Ok(()));
+    assert_eq!(fake.content(), text("prueba-no-real-1"));
+    assert!(wait_until(|| fake.content() == FakeContent::Empty));
+}

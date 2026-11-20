@@ -207,7 +207,7 @@ fn occupied_clipboard_is_unavailable_and_nothing_is_cleared() {
 #[ignore = "usa el portapapeles real: sobrescribe y vacía el del usuario"]
 fn manual_demo_writes_waits_and_clears() {
     let _cleanup = EmptyOnDrop;
-    let manager = ClipboardManager::new();
+    let manager = ClipboardManager::start();
 
     manager
         .deliver(&SecretString::from(
