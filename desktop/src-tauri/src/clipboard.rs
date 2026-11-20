@@ -6,6 +6,8 @@
 mod backend;
 mod fingerprint;
 #[cfg(windows)]
+mod message_window;
+#[cfg(windows)]
 mod windows;
 mod worker;
 
