@@ -48,6 +48,8 @@ void main() {
       'lib/widgets/vault_card.dart',
       'lib/widgets/vault_header.dart',
       'lib/widgets/tag_badge.dart',
+      'lib/screens/entry_detail_screen.dart',
+      'lib/widgets/secret_text.dart',
     ];
     final offenders = [
       for (final path in migrated)
