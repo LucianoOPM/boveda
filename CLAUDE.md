@@ -4,7 +4,7 @@ Gestor de contraseñas personal: bóveda cifrada en Android y envío de contrase
 
 - Antes de crear archivos o mover código entre carpetas, lee `ARCHITECTURE.md`.
 - El alcance y las decisiones de diseño están en `docs/especificacion.md`; el orden de trabajo, en `docs/roadmap.md`.
-- El diseño visual (colores, tipografía, componentes y pantallas) está en `docs/DESIGN.md`; léelo antes de crear o cambiar una pantalla, un widget o un estilo. Por ahora es solo referencia: si choca con `docs/especificacion.md`, manda la especificación.
+- El diseño visual (colores, tipografía, componentes y pantallas) está en `docs/DESIGN.md`; léelo antes de crear o cambiar una pantalla, un widget o un estilo. Las pantallas de la etapa 2 ya lo siguen; lo que el diseño muestra y la app no hace está en `docs/diferencias-diseno.md`. Si choca con `docs/especificacion.md`, manda la especificación.
 - Cada carpeta (`core/`, `mobile/`, `desktop/`) tiene su propio CLAUDE.md con reglas específicas.
 
 ## Comandos (desde la raíz)

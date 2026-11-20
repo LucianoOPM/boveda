@@ -55,6 +55,11 @@ Resultado: un gestor de contraseñas usable en tu celular, con búsqueda y respa
 
 **Cerrada el 2026-11-19:** las nueve tareas están hechas. Se guardó una entrada real en el celular, se exportó un respaldo y se restauró en un emulador limpio con su entrada y su contraseña intactas; `integration_test/` pasa en el emulador y en el celular, y la integración continua pasa en `dev` (commit `8ce8fcc`). Quedan fuera, sin bloquear el cierre: la pantalla de entradas dañadas (#65, etapa 4) y validar un respaldo sin perder la sesión (#69).
 
+**Después del cierre (2026-11-19):**
+
+- **Rediseño de las pantallas de esta etapa** según el diseño de Penpot y `docs/DESIGN.md` (#81 a #87): tema base, arranque (desbloqueo, primer uso y oferta de huella), Bóveda, detalle, formulario y Ajustes con el diálogo de importar. Se trabajó solo sobre lo que la app ya tenía; lo que el diseño muestra y la app no hace está en [`docs/diferencias-diseno.md`](diferencias-diseno.md).
+- **La huella se reactiva sola al importar un respaldo desde Ajustes** si estaba activa (#90, corrige el flujo de la #44).
+
 ## Etapa 3 — App Windows, emparejamiento y envío
 
 Resultado: tocas "Enviar a PC" en el celular, pones la huella y pegas la contraseña en Windows.
@@ -85,6 +90,14 @@ Resultado: el MVP completo, con el flujo diario reducido a segundos y los ajuste
 - [ ] Compilación firmada de Android instalada en tu celular e instalador de Windows en tu PC.
 
 **Se cierra cuando** todo el alcance de la primera versión de la especificación funciona en tus dispositivos: ese es el MVP.
+
+## Ideas fuera del MVP
+
+Funciones que surgieron al usar la app y que no entran en la primera versión. Cada una necesita su propio diseño antes de planearse.
+
+- **Clave de recuperación** para abrir la bóveda si se olvida la contraseña maestra (#88). Cambia el formato de la bóveda y la promesa del primer uso ("no se puede recuperar").
+- **Fusionar un respaldo con la bóveda actual**, importando solo las entradas (#89). Hoy importar reemplaza toda la bóveda.
+- Lo que el diseño muestra y la app aún no hace (acento seleccionable, generador con modo frase, aviso de portapapeles con cuenta regresiva y otras): [`docs/diferencias-diseno.md`](diferencias-diseno.md).
 
 ## Del roadmap al plan detallado
 
