@@ -2064,3 +2064,230 @@ fn create_next_to_all_orphans() {
     assert!(sibling(&dest, "-journal").exists() && sibling(&dest, "-wal").exists());
     assert_create_ignores_orphans(&dest);
 }
+
+// --- Identidad perezosa (#93) ---------------------------------------------
+
+/// `data` de la fila de `identity`, tal como está en el archivo.
+fn identity_data(path: &Path) -> Vec<u8> {
+    raw(path)
+        .query_row("SELECT data FROM identity WHERE id = 1", [], |row| {
+            row.get(0)
+        })
+        .unwrap()
+}
+
+/// Invierte un bit del byte `index` de `identity.data`.
+fn flip_identity_byte(path: &Path, index: usize) {
+    let mut data = identity_data(path);
+    data[index] ^= 0x01;
+    raw(path)
+        .execute("UPDATE identity SET data = ?1 WHERE id = 1", [data])
+        .unwrap();
+}
+
+fn key_bytes(identity: &Identity) -> [u8; 32] {
+    *identity.private_key().expose_secret()
+}
+
+#[test]
+fn identity_is_none_on_a_new_vault() {
+    let (_dir, path, vault) = new_vault();
+    assert!(vault.identity().unwrap().is_none());
+    // Ausente no es un error y leerla no crea nada.
+    assert_eq!(pairing_row_counts(&path), (0, 0));
+}
+
+#[test]
+fn ensure_identity_creates_the_first_when_absent() {
+    let (_dir, path, mut vault) = new_vault();
+    let created = vault.ensure_identity().unwrap();
+    assert_eq!(pairing_row_counts(&path), (1, 0));
+    let read = vault.identity().unwrap().unwrap();
+    assert_eq!(key_bytes(&read), key_bytes(&created));
+}
+
+#[test]
+fn ensure_identity_creates_once_and_returns_the_same() {
+    let (_dir, path, mut vault) = new_vault();
+    let first = vault.ensure_identity().unwrap();
+    let data = identity_data(&path);
+    let second = vault.ensure_identity().unwrap();
+    assert_eq!(key_bytes(&first), key_bytes(&second));
+    // La segunda llamada no volvió a escribir.
+    assert_eq!(identity_data(&path), data);
+}
+
+#[test]
+fn identity_survives_lock_and_reopen() {
+    let (_dir, path, mut vault) = new_vault();
+    let created = vault.ensure_identity().unwrap();
+    vault.lock();
+    drop(vault);
+
+    let mut reopened = Vault::open(&path).unwrap();
+    reopened.unlock(&password("correcta-larga")).unwrap();
+    let read = reopened.identity().unwrap().unwrap();
+    assert_eq!(key_bytes(&read), key_bytes(&created));
+}
+
+#[test]
+fn identity_requires_the_vault_unlocked() {
+    let (_dir, _path, mut vault) = new_vault();
+    vault.ensure_identity().unwrap();
+    vault.lock();
+    assert_eq!(vault.identity().err(), Some(Error::Locked));
+    assert_eq!(vault.ensure_identity().err(), Some(Error::Locked));
+}
+
+#[test]
+fn absent_and_damaged_identity_are_distinct() {
+    let (_dir, path, mut vault) = new_vault();
+    assert!(matches!(vault.identity(), Ok(None)));
+    vault.ensure_identity().unwrap();
+    assert!(matches!(vault.identity(), Ok(Some(_))));
+    flip_identity_byte(&path, 30);
+    assert_eq!(vault.identity().err(), Some(Error::CorruptIdentity));
+}
+
+#[test]
+fn flipped_byte_in_identity_data_is_corrupt() {
+    let (_dir, path, mut vault) = new_vault();
+    vault.ensure_identity().unwrap();
+    let len = identity_data(&path).len();
+    assert_eq!(len, 72);
+    for index in [0, 23, 24, 40, 55, 56, 71] {
+        flip_identity_byte(&path, index);
+        assert_eq!(
+            vault.identity().err(),
+            Some(Error::CorruptIdentity),
+            "byte {index}"
+        );
+        flip_identity_byte(&path, index);
+        assert!(vault.identity().unwrap().is_some(), "restaurado {index}");
+    }
+}
+
+#[test]
+fn changed_identity_schema_version_is_corrupt() {
+    let (_dir, path, mut vault) = new_vault();
+    vault.ensure_identity().unwrap();
+    for version in ["2", "0", "70000", "-1"] {
+        raw(&path)
+            .execute(
+                &format!("UPDATE identity SET identity_schema_version = {version}"),
+                [],
+            )
+            .unwrap();
+        assert_eq!(
+            vault.identity().err(),
+            Some(Error::CorruptIdentity),
+            "versión {version}"
+        );
+    }
+}
+
+#[test]
+fn identity_data_of_the_wrong_length_is_corrupt() {
+    // El `CHECK` solo se aplica al escribir: un archivo alterado puede traer
+    // otra longitud. Se simula desactivando el `CHECK` en la conexión de la
+    // prueba.
+    let (_dir, path, mut vault) = new_vault();
+    vault.ensure_identity().unwrap();
+    let conn = raw(&path);
+    conn.execute_batch("PRAGMA ignore_check_constraints = ON")
+        .unwrap();
+    conn.execute("UPDATE identity SET data = zeroblob(10)", [])
+        .unwrap();
+    assert_eq!(vault.identity().err(), Some(Error::CorruptIdentity));
+}
+
+#[test]
+fn damaged_identity_does_not_block_unlock_or_entries() {
+    let (_dir, path, mut vault) = new_vault();
+    let id = add_sample(&mut vault, "banco");
+    vault.ensure_identity().unwrap();
+    flip_identity_byte(&path, 30);
+    vault.lock();
+    drop(vault);
+
+    let mut reopened = Vault::open(&path).unwrap();
+    let report = reopened.unlock(&password("correcta-larga")).unwrap();
+    assert!(report.corrupt.is_empty());
+    assert_eq!(reopened.entries().unwrap().len(), 1);
+    assert_eq!(revealed_password(&mut reopened, id), "clave-banco");
+    // Y con la llave de bóveda también.
+    let key = reopened.export_vault_key().unwrap();
+    reopened.lock();
+    assert!(reopened.unlock_with_key(key).is_ok());
+}
+
+#[test]
+fn ensure_identity_on_a_damaged_one_never_overwrites_it() {
+    let (_dir, path, mut vault) = new_vault();
+    vault.ensure_identity().unwrap();
+    flip_identity_byte(&path, 30);
+    let before = (
+        identity_data(&path),
+        raw(&path)
+            .query_row("SELECT identity_schema_version FROM identity", [], |r| {
+                r.get::<_, i64>(0)
+            })
+            .unwrap(),
+    );
+
+    assert_eq!(vault.ensure_identity().err(), Some(Error::CorruptIdentity));
+    assert_eq!(vault.ensure_identity().err(), Some(Error::CorruptIdentity));
+    vault.lock();
+    drop(vault);
+
+    // También tras reabrir.
+    let mut reopened = Vault::open(&path).unwrap();
+    reopened.unlock(&password("correcta-larga")).unwrap();
+    assert_eq!(
+        reopened.ensure_identity().err(),
+        Some(Error::CorruptIdentity)
+    );
+    let after = (
+        identity_data(&path),
+        raw(&path)
+            .query_row("SELECT identity_schema_version FROM identity", [], |r| {
+                r.get::<_, i64>(0)
+            })
+            .unwrap(),
+    );
+    assert_eq!(after, before);
+    assert_eq!(pairing_row_counts(&path).0, 1);
+}
+
+#[test]
+fn identity_is_not_plaintext_in_the_file() {
+    let (_dir, path, mut vault) = new_vault();
+    let identity = vault.ensure_identity().unwrap();
+    vault.lock();
+    drop(vault);
+    let bytes = fs::read(&path).unwrap();
+    assert!(!contains(&bytes, &key_bytes(&identity)));
+}
+
+#[test]
+fn identity_is_bound_to_the_vault_key() {
+    // La misma fila en otra bóveda (otra llave) no se autentica.
+    let (_dir, path, mut vault) = new_vault();
+    vault.ensure_identity().unwrap();
+    let data = identity_data(&path);
+
+    let (_dir2, other_path, mut other) = new_vault();
+    other.ensure_identity().unwrap();
+    raw(&other_path)
+        .execute("UPDATE identity SET data = ?1", [data])
+        .unwrap();
+    assert_eq!(other.identity().err(), Some(Error::CorruptIdentity));
+}
+
+#[test]
+fn set_identity_for_test_stores_the_given_key() {
+    let (_dir, path, mut vault) = new_vault();
+    vault.set_identity_for_test([7u8; 32]).unwrap();
+    assert_eq!(key_bytes(&vault.identity().unwrap().unwrap()), [7u8; 32]);
+    assert_eq!(pairing_row_counts(&path), (1, 0));
+}

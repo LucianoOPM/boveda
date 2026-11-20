@@ -1044,6 +1044,56 @@ fn migrate_v2_to_v3_without_header_row_is_corrupt() {
     );
 }
 
+// --- Identidad (#93) ---------------------------------------------------
+
+fn sealed_blob(len: usize) -> EncryptedPart {
+    EncryptedPart::from_bytes(vec![0xCD; len])
+}
+
+#[test]
+fn get_identity_is_none_when_absent() {
+    let (_dir, _path, storage) = new_vault();
+    assert!(storage.get_identity().unwrap().is_none());
+}
+
+#[test]
+fn insert_and_get_identity_round_trip() {
+    let (_dir, _path, mut storage) = new_vault();
+    assert!(storage.insert_identity(1, &sealed_blob(72)).unwrap());
+    let stored = storage.get_identity().unwrap().unwrap();
+    assert_eq!(stored.version, 1);
+    assert!(stored.sealed == sealed_blob(72));
+}
+
+#[test]
+fn insert_identity_does_not_overwrite_an_existing_row() {
+    let (_dir, path, mut storage) = new_vault();
+    assert!(storage.insert_identity(1, &sealed_blob(72)).unwrap());
+    let before = fs::read(&path).unwrap();
+    assert!(
+        !storage
+            .insert_identity(1, &EncryptedPart::from_bytes(vec![0xEE; 72]))
+            .unwrap()
+    );
+    drop(storage);
+    assert_eq!(fs::read(&path).unwrap(), before);
+}
+
+#[test]
+fn get_identity_with_version_out_of_u16_is_corrupt_identity() {
+    let (_dir, path, mut storage) = new_vault();
+    storage.insert_identity(1, &sealed_blob(72)).unwrap();
+    for version in ["70000", "-1"] {
+        raw(&path)
+            .execute(
+                &format!("UPDATE identity SET identity_schema_version = {version}"),
+                [],
+            )
+            .unwrap();
+        assert_eq!(storage.get_identity().err(), Some(Error::CorruptIdentity));
+    }
+}
+
 // --- Preparar la copia temporal de una importación (#93) -----------------
 
 /// Rellena `identity` y `paired_pcs` con blobs de longitud válida.

@@ -793,6 +793,36 @@ fn import_v3_backup_discards_identity_and_pcs() {
 }
 
 #[test]
+fn import_discards_a_real_identity_and_a_new_one_is_different() {
+    let dir = tempfile::tempdir().unwrap();
+    let origin = dir.path().join("origen.db");
+    let mut source =
+        Vault::create_with_params(&origin, &password("respaldo-maestra"), KdfParams::MIN).unwrap();
+    add_sample(&mut source, "gmail");
+    let old = *source
+        .ensure_identity()
+        .unwrap()
+        .private_key()
+        .expose_secret();
+    let backup = dir.path().join("respaldo.db");
+    source.export(&backup).unwrap();
+    assert_eq!(pairing_row_counts(&backup), (1, 0));
+
+    let dest = dir.path().join("boveda.db");
+    let (mut vault, _) = Vault::import(&backup, &dest, &password("respaldo-maestra")).unwrap();
+    // Ausente (no dañada) y sin generar una nueva al importar.
+    assert!(matches!(vault.identity(), Ok(None)));
+    assert_eq!(pairing_row_counts(&dest), (0, 0));
+    // La identidad nueva se crea al emparejar y no es la del respaldo.
+    let new = *vault
+        .ensure_identity()
+        .unwrap()
+        .private_key()
+        .expose_secret();
+    assert_ne!(new, old);
+}
+
+#[test]
 fn import_v2_backup_installs_v3_with_empty_identity_and_pcs() {
     let (_dir, backup) = fixture_v2_copy();
     let (_dir2, dest) = temp_path();

@@ -18,6 +18,7 @@ use crate::crypto::keys::{self, VAULT_KEY_LEN, VaultKey};
 mod backup;
 pub(crate) mod entry;
 pub(crate) mod header;
+mod identity;
 mod password;
 pub(crate) mod storage;
 #[cfg(test)]
@@ -27,6 +28,7 @@ pub use crate::error::{Error, InvalidEntryField, InvalidPairedPcField, Result, S
 use entry::sealed::SealedEntry;
 pub use entry::{EntryId, SearchData, Secret};
 use header::{FORMAT_VERSION, FORMAT_VERSION_V2, VaultHeader};
+pub use identity::{IDENTITY_KEY_LEN, Identity};
 use password::require_master_password;
 pub use password::{
     MIN_MASTER_PASSWORD_CHARS, PasswordStrength, STRONG_MASTER_PASSWORD_CHARS, password_strength,
@@ -619,6 +621,60 @@ impl Vault {
         let (unlocked, report) = Self::load_entries(&self.storage, key)?;
         self.unlocked = Some(unlocked);
         Ok(report)
+    }
+
+    /// La identidad del celular (llave privada X25519), o `None` si todavía
+    /// no hay ninguna: una bóveda sin identidad es válida, y la identidad se
+    /// crea de forma perezosa, al emparejar ([`Vault::ensure_identity`]).
+    ///
+    /// **Ausente y dañada son distintas**: una fila que no se puede leer
+    /// (no se autentica, versión de estructura desconocida o forma
+    /// inesperada) da [`Error::CorruptIdentity`], nunca `Ok(None)`. Exige la
+    /// bóveda desbloqueada. No se carga al desbloquear, así que una identidad
+    /// dañada nunca impide abrir la bóveda ni las entradas.
+    pub fn identity(&self) -> Result<Option<Identity>> {
+        let key = &self.unlocked()?.key;
+        match self.storage.get_identity()? {
+            None => Ok(None),
+            Some(stored) => identity::open(key, stored.version, &stored.sealed).map(Some),
+        }
+    }
+
+    /// La identidad del celular; si no hay ninguna, la crea. Exige la bóveda
+    /// desbloqueada.
+    ///
+    /// Solo crea cuando la identidad está **ausente**. Si existe pero está
+    /// dañada devuelve [`Error::CorruptIdentity`] sin sobrescribirla: las PCs
+    /// ya emparejadas conocen esa llave. Si otra conexión la crea entre la
+    /// lectura y la escritura, devuelve la de esa conexión.
+    pub fn ensure_identity(&mut self) -> Result<Identity> {
+        if let Some(identity) = self.identity()? {
+            return Ok(identity);
+        }
+        let identity = identity::generate()?;
+        self.store_identity(identity)
+    }
+
+    /// Guarda `identity` si no hay ninguna fila y la devuelve; si ya había una
+    /// (otra conexión), devuelve esa.
+    fn store_identity(&mut self, identity: Identity) -> Result<Identity> {
+        let sealed = identity::seal(&self.unlocked()?.key, &identity)?;
+        if self
+            .storage
+            .insert_identity(identity::IDENTITY_SCHEMA_VERSION, &sealed)?
+        {
+            return Ok(identity);
+        }
+        // Ya existía una fila: se lee en vez de sobrescribirla.
+        self.identity()?
+            .ok_or(Error::Storage(StorageErrorKind::Corrupt))
+    }
+
+    /// Fija una identidad conocida. Solo para pruebas y para generar la
+    /// bóveda de ejemplo.
+    #[cfg(test)]
+    pub(crate) fn set_identity_for_test(&mut self, key: [u8; 32]) -> Result<()> {
+        self.store_identity(Identity::from_bytes(key)).map(|_| ())
     }
 
     fn unlocked(&self) -> Result<&Unlocked> {

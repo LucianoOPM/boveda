@@ -508,6 +508,42 @@ impl Storage {
         tx.commit().map_err(map_sqlite_error)
     }
 
+    /// La identidad guardada, o `None` si no hay fila (identidad ausente).
+    ///
+    /// Una versión de estructura fuera de `u16` o una columna con otro tipo
+    /// dan [`Error::CorruptIdentity`]: una fila que existe pero no se puede
+    /// leer no es una identidad ausente. Descifrarla corresponde a quien
+    /// llama, que tiene la llave.
+    pub(crate) fn get_identity(&self) -> Result<Option<StoredIdentity>> {
+        let row = self.conn.query_row(
+            "SELECT identity_schema_version, data FROM identity WHERE id = 1",
+            [],
+            |row| Ok((row.get::<_, i64>(0)?, row.get::<_, Vec<u8>>(1)?)),
+        );
+        match row {
+            Ok((version, data)) => Ok(Some(StoredIdentity {
+                version: u16::try_from(version).map_err(|_| Error::CorruptIdentity)?,
+                sealed: EncryptedPart::from_bytes(data),
+            })),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) if is_conversion_error(&e) => Err(Error::CorruptIdentity),
+            Err(e) => Err(map_sqlite_error(e)),
+        }
+    }
+
+    /// Guarda la identidad si todavía no hay ninguna. Devuelve `false` y no
+    /// escribe nada si ya existía una fila (válida o dañada): nunca la
+    /// sobrescribe, ni siquiera si otra conexión la creó entre la lectura y
+    /// esta escritura.
+    pub(crate) fn insert_identity(&mut self, version: u16, data: &EncryptedPart) -> Result<bool> {
+        let changed = self.write(
+            "INSERT OR IGNORE INTO identity (id, identity_schema_version, data) \
+             VALUES (1, ?1, ?2)",
+            params![version, data.as_bytes()],
+        )?;
+        Ok(changed == 1)
+    }
+
     /// Copia consistente y compacta de la bóveda en `dest` con `VACUUM INTO`.
     /// `dest` debe no existir o estar vacío. La ruta va como parámetro,
     /// nunca dentro del SQL; una que no es UTF-8 o relativa da
@@ -676,6 +712,12 @@ impl Storage {
             _ => Ok(()),
         }
     }
+}
+
+/// Identidad leída del archivo, todavía cifrada.
+pub(crate) struct StoredIdentity {
+    pub(crate) version: u16,
+    pub(crate) sealed: EncryptedPart,
 }
 
 /// Entrada viva leída del archivo.
