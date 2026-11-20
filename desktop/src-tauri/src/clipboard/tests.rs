@@ -351,3 +351,155 @@ fn unavailable_then_available_clears() {
         ]
     );
 }
+
+fn manager_with(fake: &FakeBackend, ttl_ms: u64, retry_ms: u64) -> ClipboardManager {
+    ClipboardManager::with_backend(
+        fake.clone(),
+        Config {
+            ttl: Duration::from_millis(ttl_ms),
+            retry_interval: Duration::from_millis(retry_ms),
+            ..fast_config()
+        },
+    )
+}
+
+#[test]
+fn uncertain_write_that_left_the_text_is_cleared_immediately() {
+    let fake = FakeBackend::default();
+    fake.fail_next_write(WriteError::Uncertain, true);
+    let manager = manager_with(&fake, 200, 20);
+
+    assert_eq!(
+        manager.deliver(&secret("prueba-no-real-1")),
+        Err(ClipboardError::WriteFailed)
+    );
+
+    // Vacío en cuanto `deliver` contesta, sin esperar ningún plazo.
+    assert_eq!(fake.content(), FakeContent::Empty);
+    // Y no quedó ninguna entrada: pasa el plazo y no hay más llamadas.
+    std::thread::sleep(Duration::from_millis(300));
+    assert_eq!(
+        fake.calls(),
+        vec![FakeCall::Write, FakeCall::Clear(ClearOutcome::Cleared)]
+    );
+}
+
+#[test]
+fn uncertain_write_with_unavailable_clipboard_keeps_a_cleanup_entry() {
+    let fake = FakeBackend::default();
+    fake.fail_next_write(WriteError::Uncertain, true);
+    fake.set_unavailable_for(1);
+    let manager = manager_with(&fake, 5_000, 30);
+
+    assert_eq!(
+        manager.deliver(&secret("prueba-no-real-1")),
+        Err(ClipboardError::WriteFailed)
+    );
+
+    assert!(wait_until(|| fake.content() == FakeContent::Empty));
+    assert_eq!(
+        fake.calls(),
+        vec![
+            FakeCall::Write,
+            FakeCall::Clear(ClearOutcome::Unavailable),
+            FakeCall::Clear(ClearOutcome::Cleared),
+        ]
+    );
+}
+
+#[test]
+fn uncertain_cleanup_does_not_remove_other_content() {
+    let fake = FakeBackend::default();
+    fake.fail_next_write(WriteError::Uncertain, true);
+    fake.set_unavailable_for(1);
+    let manager = manager_with(&fake, 5_000, 100);
+    assert_eq!(
+        manager.deliver(&secret("prueba-no-real-1")),
+        Err(ClipboardError::WriteFailed)
+    );
+    // Otra aplicación copia algo antes del reintento.
+    fake.set_content(text("copiado-por-otra-app"));
+
+    assert!(wait_until(|| clear_calls(&fake) == 2));
+
+    assert_eq!(fake.content(), text("copiado-por-otra-app"));
+    assert_eq!(
+        fake.calls().last(),
+        Some(&FakeCall::Clear(ClearOutcome::NotOurs))
+    );
+}
+
+#[test]
+fn uncertain_write_keeps_the_previous_expiry() {
+    let fake = FakeBackend::default();
+    let manager = manager_with(&fake, 300, 20);
+    let start = Instant::now();
+    assert_eq!(manager.deliver(&secret("prueba-no-real-1")), Ok(()));
+    // La escritura dudosa no dejó su texto: el portapapeles sigue con el primero.
+    fake.fail_next_write(WriteError::Uncertain, false);
+    assert_eq!(
+        manager.deliver(&secret("prueba-no-real-2")),
+        Err(ClipboardError::WriteFailed)
+    );
+
+    assert!(wait_until(|| fake.content() == FakeContent::Empty));
+
+    assert!(start.elapsed() >= Duration::from_millis(300));
+    assert_eq!(
+        fake.calls(),
+        vec![
+            FakeCall::Write,
+            FakeCall::Write,
+            FakeCall::Clear(ClearOutcome::NotOurs),
+            FakeCall::Clear(ClearOutcome::Cleared),
+        ]
+    );
+}
+
+#[test]
+fn old_cleanup_never_removes_a_newer_password() {
+    let fake = FakeBackend::default();
+    fake.fail_next_write(WriteError::Uncertain, true);
+    fake.set_unavailable_for(1);
+    let manager = manager_with(&fake, 600, 100);
+    assert_eq!(
+        manager.deliver(&secret("prueba-no-real-1")),
+        Err(ClipboardError::WriteFailed)
+    );
+    // Un envío correcto reemplaza la limpieza pendiente.
+    assert_eq!(manager.deliver(&secret("prueba-no-real-2")), Ok(()));
+
+    // Pasa el momento del reintento viejo (100 ms): la contraseña nueva sigue.
+    std::thread::sleep(Duration::from_millis(250));
+    assert_eq!(fake.content(), text("prueba-no-real-2"));
+    assert_eq!(
+        fake.calls(),
+        vec![
+            FakeCall::Write,
+            FakeCall::Clear(ClearOutcome::Unavailable),
+            FakeCall::Write,
+        ]
+    );
+    // Y se borra a su propio vencimiento.
+    assert!(wait_until(|| fake.content() == FakeContent::Empty));
+}
+
+#[test]
+fn cleanup_entries_are_bounded() {
+    let fake = FakeBackend::default();
+    fake.set_unavailable_for(usize::MAX);
+    let manager = manager_with(&fake, 5_000, 100);
+    for attempt in 1..=3 {
+        fake.fail_next_write(WriteError::Uncertain, true);
+        assert_eq!(
+            manager.deliver(&secret(&format!("prueba-no-real-{attempt}"))),
+            Err(ClipboardError::WriteFailed)
+        );
+    }
+
+    // Tres intentos inmediatos y, de la última entrada (las anteriores fueron
+    // reemplazadas), tres reintentos más: seis llamadas y ninguna después.
+    assert!(wait_until(|| clear_calls(&fake) == 6));
+    std::thread::sleep(Duration::from_millis(400));
+    assert_eq!(clear_calls(&fake), 6);
+}

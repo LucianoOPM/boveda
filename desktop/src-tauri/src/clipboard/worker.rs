@@ -6,7 +6,7 @@ use std::time::Instant;
 
 use secrecy::{ExposeSecret, SecretString};
 
-use super::backend::{ClearOutcome, ClipboardBackend};
+use super::backend::{ClearOutcome, ClipboardBackend, WriteError};
 use super::fingerprint::{Fingerprint, FingerprintKey};
 use super::{ClipboardError, Config};
 
@@ -23,6 +23,9 @@ struct Pending {
     fingerprint: Fingerprint,
     due: Instant,
     retries_left: u8,
+    /// `true` en la limpieza de una escritura de resultado dudoso. Hay como
+    /// máximo una de limpieza y una vigente (la de la última escritura correcta).
+    cleanup: bool,
 }
 
 pub(super) fn run<B: ClipboardBackend>(
@@ -105,9 +108,28 @@ fn deliver<B: ClipboardBackend>(
                 fingerprint,
                 due: Instant::now() + config.ttl,
                 retries_left: config.max_retries,
+                cleanup: false,
             });
             Ok(())
         }
-        Err(_) => Err(ClipboardError::WriteFailed),
+        Err(WriteError::NotWritten) => Err(ClipboardError::WriteFailed),
+        // El texto pudo quedar puesto (p. ej. falló al agregar las exclusiones):
+        // se intenta limpiar de inmediato, con la huella de ESTA contraseña. Si
+        // no se puede comprobar, queda una entrada de limpieza con reintentos
+        // acotados; la entrada vigente anterior conserva su vencimiento.
+        Err(WriteError::Uncertain) => {
+            let outcome = backend.clear_if_matches(&|bytes| key.fingerprint(bytes) == fingerprint);
+            if outcome == ClearOutcome::Unavailable && config.max_retries > 0 {
+                pending.retain(|entry| !entry.cleanup);
+                pending.push(Pending {
+                    fingerprint,
+                    due: Instant::now() + config.retry_interval,
+                    // El intento inmediato fue el primero.
+                    retries_left: config.max_retries - 1,
+                    cleanup: true,
+                });
+            }
+            Err(ClipboardError::WriteFailed)
+        }
     }
 }
