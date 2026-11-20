@@ -19,9 +19,15 @@ sealed class RestoreResult {
 /// La bóveda quedó reemplazada y desbloqueada, con el total de entradas
 /// dañadas (con y sin id) del `UnlockReport`.
 class RestoreImported extends RestoreResult {
-  const RestoreImported(this.damagedEntries);
+  const RestoreImported(this.damagedEntries, {this.reenableBiometric = false});
 
   final int damagedEntries;
+
+  /// La huella estaba activa antes de reemplazar la bóveda: la copia del
+  /// Keystore ya se borró (era de la bóveda anterior) y quien lo recibe debe
+  /// activarla de nuevo con la llave de la bóveda importada (#86). Solo al
+  /// reemplazar una bóveda; en el primer uso no hay nada que conservar.
+  final bool reenableBiometric;
 }
 
 /// La importación falló: la fachada dejó la bóveda anterior bloqueada (o la
@@ -104,6 +110,15 @@ Future<RestoreResult?> runRestore(
   // corriendo en Rust: hay que esperarla, o la bóveda se reemplazaría sin que
   // nadie lo supiera y el temporal se borraría con la copia en marcha.
   Future<RestoreResult>? importing;
+  // Si la huella estaba activa, se anota antes de importar: la importación
+  // la desactiva y después ya no hay forma de saberlo. Un fallo del Keystore
+  // no impide importar: se ofrece la huella como si no estuviera activa.
+  var wasBiometricEnabled = false;
+  if (replacesVault) {
+    try {
+      wasBiometricEnabled = await biometric.isEnabled();
+    } catch (_) {}
+  }
   try {
     // `mounted` no basta: el bloqueo quita la ruta con `removeRoute` y el
     // `State` sigue montado hasta el siguiente cuadro.
@@ -132,6 +147,10 @@ Future<RestoreResult?> runRestore(
     try {
       await biometric.disable();
     } catch (_) {}
+    return RestoreImported(
+      result.damagedEntries,
+      reenableBiometric: wasBiometricEnabled,
+    );
   }
   return result;
 }
