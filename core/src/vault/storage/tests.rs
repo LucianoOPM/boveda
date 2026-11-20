@@ -1,7 +1,7 @@
 //! Pruebas unitarias de `vault/storage.rs`.
 
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use secrecy::{ExposeSecret, SecretString};
 
@@ -1042,6 +1042,76 @@ fn migrate_v2_to_v3_without_header_row_is_corrupt() {
         storage.migrate_v2_to_v3(&v3_key_check()).err(),
         Some(Error::Storage(StorageErrorKind::Corrupt))
     );
+}
+
+// --- Preparar la copia temporal de una importación (#93) -----------------
+
+/// Rellena `identity` y `paired_pcs` con blobs de longitud válida.
+fn fill_pairing(path: &Path) {
+    raw(path)
+        .execute_batch(
+            "INSERT INTO identity (id, identity_schema_version, data) VALUES (1, 1, zeroblob(72));
+             INSERT INTO paired_pcs (id, pc_schema_version, data) VALUES (randomblob(16), 1, zeroblob(80));",
+        )
+        .unwrap();
+}
+
+#[test]
+fn prepare_import_copy_on_v3_empties_identity_and_pcs() {
+    let (_dir, path, mut storage) = new_vault();
+    fill_pairing(&path);
+    assert_eq!(pairing_row_counts(&path), (1, 1));
+
+    storage.prepare_import_copy(None).unwrap();
+    drop(storage);
+    assert_eq!(pairing_row_counts(&path), (0, 0));
+    assert_eq!(stored_version_of(&path), 3);
+}
+
+#[test]
+fn prepare_import_copy_from_v2_migrates_and_leaves_empty_tables() {
+    let (_dir, path, storage) = new_vault();
+    storage.close().unwrap();
+    downgrade_to_v2(&path);
+    let mut storage = Storage::open(&path).unwrap();
+
+    let key_check = v3_key_check();
+    storage.prepare_import_copy(Some(&key_check)).unwrap();
+    let header = storage.read_header().unwrap();
+    assert_eq!(header.format_version(), 3);
+    assert_eq!(header.key_check(), Some(&key_check));
+    drop(storage);
+    assert_eq!(pairing_row_counts(&path), (0, 0));
+}
+
+#[test]
+fn prepare_import_copy_expecting_v2_on_a_v3_copy_is_corrupt_and_writes_nothing() {
+    // La copia cambió de versión después de validarla: no se instala algo
+    // distinto de lo validado.
+    let (_dir, path, mut storage) = new_vault();
+    fill_pairing(&path);
+    let before = fs::read(&path).unwrap();
+    assert_eq!(
+        storage.prepare_import_copy(Some(&v3_key_check())).err(),
+        Some(Error::Storage(StorageErrorKind::Corrupt))
+    );
+    drop(storage);
+    assert_eq!(fs::read(&path).unwrap(), before);
+}
+
+#[test]
+fn prepare_import_copy_expecting_v3_on_a_v2_copy_is_corrupt_and_writes_nothing() {
+    let (_dir, path, storage) = new_vault();
+    storage.close().unwrap();
+    downgrade_to_v2(&path);
+    let before = fs::read(&path).unwrap();
+    let mut storage = Storage::open(&path).unwrap();
+    assert_eq!(
+        storage.prepare_import_copy(None).err(),
+        Some(Error::Storage(StorageErrorKind::Corrupt))
+    );
+    drop(storage);
+    assert_eq!(fs::read(&path).unwrap(), before);
 }
 
 #[test]

@@ -223,7 +223,7 @@ pub(crate) fn pairing_row_counts(path: &Path) -> (i64, i64) {
 }
 
 /// `format_version` guardada en el archivo.
-pub(crate) fn stored_format_version(path: &Path) -> i64 {
+pub(crate) fn stored_version_of(path: &Path) -> i64 {
     raw(path)
         .query_row(
             "SELECT format_version FROM header WHERE id = 1",

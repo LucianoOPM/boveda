@@ -1343,12 +1343,12 @@ fn unlock_with_key_migrates_v2_to_v3_and_keystore_copy_still_works() {
     let key = fixture_v2_vault_key();
     let (_dir, path) = fixture_v2_copy();
     let mut vault = Vault::open(&path).unwrap();
-    assert_eq!(stored_format_version(&path), 2);
+    assert_eq!(stored_version_of(&path), 2);
 
     let report = vault.unlock_with_key(key).unwrap();
     assert!(report.corrupt.is_empty());
     assert_eq!(vault.entries().unwrap().len(), 3);
-    assert_eq!(stored_format_version(&path), 3);
+    assert_eq!(stored_version_of(&path), 3);
     assert_eq!(pairing_row_counts(&path), (0, 0));
 
     // La copia del Keystore sigue valiendo: se vuelve a pedir la llave a la
@@ -1387,7 +1387,7 @@ fn wrong_vault_key_on_v2_writes_nothing() {
     assert!(vault.is_locked());
     drop(vault);
     assert_eq!(fs::read(&path).unwrap(), before);
-    assert_eq!(stored_format_version(&path), 2);
+    assert_eq!(stored_version_of(&path), 2);
 }
 
 #[test]
@@ -1419,7 +1419,7 @@ fn v1_to_v2_committed_then_v2_to_v3_failed_leaves_valid_v2_locked() {
     assert!(vault.is_locked());
     drop(vault);
 
-    assert_eq!(stored_format_version(&path), 2);
+    assert_eq!(stored_version_of(&path), 2);
     let integrity: String = raw(&path)
         .query_row("PRAGMA integrity_check", [], |row| row.get(0))
         .unwrap();

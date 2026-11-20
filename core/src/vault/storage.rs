@@ -467,6 +467,47 @@ impl Storage {
         Ok(Migration::Done)
     }
 
+    /// Prepara la copia temporal de una importación (#93), en una sola
+    /// transacción `IMMEDIATE`: la migra a la versión 3 si hace falta y le
+    /// borra la identidad y las PCs emparejadas.
+    ///
+    /// `from_v2` es el `key_check` de la versión 3 si la copia validada era de
+    /// la versión 1 o 2 (la 1 ya pasó a la 2): entonces espera la versión 2 y
+    /// la migra. `None` si era de la versión 3: espera la 3. Si la versión que
+    /// lee dentro de la transacción no es la esperada, la copia cambió después
+    /// de validarla y da `Storage(Corrupt)` sin escribir nada: no se instala
+    /// algo distinto de lo validado.
+    ///
+    /// La limpieza es lógica: la bóveda instalada no tiene filas en
+    /// `identity` ni en `paired_pcs`. No promete que los bytes cifrados
+    /// desaparezcan del archivo. Si algo falla, la transacción se revierte.
+    pub(crate) fn prepare_import_copy(
+        &mut self,
+        from_v2: Option<&[u8; KEY_CHECK_LEN]>,
+    ) -> Result<()> {
+        let tx = self
+            .conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(map_sqlite_error)?;
+        let current = stored_format_version(&tx)?;
+        match from_v2 {
+            Some(key_check) => {
+                if current != i64::from(FORMAT_VERSION_V2) {
+                    return Err(Error::Storage(StorageErrorKind::Corrupt));
+                }
+                upgrade_v2_to_v3(&tx, key_check)?;
+            }
+            None => {
+                if current != i64::from(FORMAT_VERSION) {
+                    return Err(Error::Storage(StorageErrorKind::Corrupt));
+                }
+            }
+        }
+        tx.execute_batch("DELETE FROM identity; DELETE FROM paired_pcs;")
+            .map_err(map_sqlite_error)?;
+        tx.commit().map_err(map_sqlite_error)
+    }
+
     /// Copia consistente y compacta de la bóveda en `dest` con `VACUUM INTO`.
     /// `dest` debe no existir o estar vacío. La ruta va como parámetro,
     /// nunca dentro del SQL; una que no es UTF-8 o relativa da
