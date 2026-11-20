@@ -180,7 +180,7 @@ Las maquetas usan un marco de 390 × 820 con esquinas de 54 y pantalla interna d
   - `extensions.dart`: `ThemeExtension<StatusColors>` (`success`, `warning`, `lan`, `errorStrong` y contenedores), `ThemeExtension<SyntaxColors>` y `ThemeExtension<BovedaText>`.
   - `spacing.dart`: la escala (`Space.xs = 4` … `Space.xxl = 48`) y los radios (`Radii.card = 16`…).
 - Los widgets leen todo del tema (`Theme.of(context).colorScheme`, `textTheme`, `extension<…>()`). Nunca un `Color(0x…)` ni un `TextStyle` con tamaño fijo fuera de `lib/theme/`.
-- Íconos: [Lucide](https://lucide.dev) (licencia ISC), trazo de 2 px y esquinas redondeadas, el mismo ícono para la misma acción en toda la app. Se empaquetan con la app, sin descargas en tiempo de ejecución. Si se usa un paquete de Flutter para ellos, es una dependencia nueva: se consulta antes de agregarla (la alternativa son los SVG como assets).
+- Íconos: [Lucide](https://lucide.dev) (licencia ISC), trazo de 2 px y esquinas redondeadas, el mismo ícono para la misma acción en toda la app. Van como fuente empaquetada (`assets/fonts/lucide.ttf`) con una clase de constantes, `BovedaIcons` en `lib/theme/icons.dart`: sin paquete ni descargas en tiempo de ejecución. Un ícono nuevo se agrega ahí con su código del `info.json` de la misma versión de la fuente.
 
 ### 5.2 Windows (Tauri)
 
