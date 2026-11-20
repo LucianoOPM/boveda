@@ -7,6 +7,7 @@ mod error;
 mod identity;
 mod message;
 mod pairing;
+mod send;
 mod transport;
 
 pub use error::{InvalidField, ProtocolError, Result};
@@ -21,5 +22,9 @@ pub use pairing::{
     Frame, Initiator, MAX_FAILED_ATTEMPTS, MAX_FRAME_LEN, PAIRING_CODE_TTL, PAIRING_PATTERN,
     PAIRING_PROLOGUE, PairedDevice, PairedPc, PairingError, PairingSession, PendingConnection,
     PendingPairing, Refusal, pair_with_pc, serve_pairing,
+};
+pub use send::{
+    SEND_FIRST_FRAME_LEN, SEND_PATTERN, SEND_PROLOGUE, SEND_SECOND_FRAME_LEN, SEND_TTL, SendError,
+    SendTimeouts,
 };
 pub use transport::{CANCEL_POLL, CancelToken, MAX_SEND_FRAME_LEN, PairingTimeouts, TimedStream};
