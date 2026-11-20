@@ -16,7 +16,8 @@ pub use message::{
     PairingOffer, PairingReply, PairingRequest, SEND_TTL_SECS, SendMessage,
 };
 pub use pairing::{
-    AwaitingReply, AwaitingSecond, AwaitingThird, FIRST_FRAME_LEN, Frame, Initiator,
-    MAX_FAILED_ATTEMPTS, MAX_FRAME_LEN, PAIRING_CODE_TTL, PAIRING_PATTERN, PAIRING_PROLOGUE,
-    PairedDevice, PairedPc, PairingError, PairingSession, Refusal,
+    AwaitingReply, AwaitingSecond, AwaitingThird, CONFIRMATION_TIMEOUT, Decision, FIRST_FRAME_LEN,
+    Frame, Initiator, MAX_FAILED_ATTEMPTS, MAX_FRAME_LEN, PAIRING_CODE_TTL, PAIRING_PATTERN,
+    PAIRING_PROLOGUE, PairedDevice, PairedPc, PairingError, PairingSession, PendingPairing,
+    Refusal,
 };

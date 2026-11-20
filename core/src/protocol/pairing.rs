@@ -25,8 +25,10 @@ use snow::params::NoiseParams;
 use snow::{Builder, HandshakeState, TransportState};
 
 use super::error::ProtocolError;
-use super::identity::{KeyPair, PublicKey};
-use super::message::{DeviceName, PairingCode, PairingOffer, PairingRequest};
+use super::identity::{Fingerprint, KeyPair, PublicKey};
+use super::message::{
+    AckDecision, DeviceName, PairingCode, PairingOffer, PairingReply, PairingRequest,
+};
 use crate::vault::NewPairedPc;
 
 /// Patrón Noise del emparejamiento: el celular conoce la llave de la PC (QR)
@@ -38,6 +40,10 @@ pub const PAIRING_PROLOGUE: &[u8] = b"boveda/emparejamiento/v1";
 
 /// Vida del código de un solo uso, desde que se crea la sesión.
 pub const PAIRING_CODE_TTL: Duration = Duration::from_secs(120);
+
+/// Tiempo que tiene el usuario para aceptar o rechazar en la PC, desde que
+/// se presenta el diálogo.
+pub const CONFIRMATION_TIMEOUT: Duration = Duration::from_secs(60);
 
 /// Intentos fallidos que aguanta un código antes de invalidarse.
 pub const MAX_FAILED_ATTEMPTS: u8 = 3;
@@ -135,8 +141,6 @@ pub struct PairedPc {
 }
 
 impl PairedPc {
-    // Lo construye `AwaitingReply::read_reply` (Task 5).
-    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn new(public_key: PublicKey, address: SocketAddr) -> Self {
         Self {
             public_key,
@@ -181,8 +185,6 @@ pub struct PairedDevice {
 }
 
 impl PairedDevice {
-    // Lo construye `PendingPairing::accept` (Task 5).
-    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn new(public_key: PublicKey, name: DeviceName) -> Self {
         Self { public_key, name }
     }
@@ -359,8 +361,6 @@ fn noise_builder<'a>(
 }
 
 /// La PC autenticó la trama 1 y tiene lista la trama 2.
-// El apretón de manos lo consume `read_third` (Task 5).
-#[allow(dead_code)]
 pub struct AwaitingThird {
     handshake: HandshakeState,
     second: Frame,
@@ -370,6 +370,114 @@ impl AwaitingThird {
     /// La trama 2, sin prefijo de largo, para mandarla al celular.
     pub fn second_message(&self) -> &[u8] {
         &self.second
+    }
+
+    /// Lee la trama 3 (`s, se` y la petición con el nombre del celular).
+    ///
+    /// El resultado **no es un emparejamiento**: es un [`PendingPairing`]
+    /// que espera la decisión del usuario durante `CONFIRMATION_TIMEOUT`,
+    /// contados desde `now`. El apretón de manos se suelta aquí; solo queda el
+    /// canal de transporte para cifrar la respuesta.
+    pub fn read_third(
+        mut self,
+        now: Instant,
+        frame: &[u8],
+    ) -> Result<PendingPairing, PairingError> {
+        let mut buffer = [0u8; MAX_FRAME_LEN];
+        let len = self
+            .handshake
+            .read_message(frame, &mut buffer)
+            .map_err(|_| PairingError::Handshake)?;
+        let request = PairingRequest::decode(&buffer[..len])?;
+        let peer: [u8; 32] = self
+            .handshake
+            .get_remote_static()
+            .and_then(|key| key.try_into().ok())
+            .ok_or(PairingError::Handshake)?;
+        let transport = self
+            .handshake
+            .into_transport_mode()
+            .map_err(|_| PairingError::Handshake)?;
+        Ok(PendingPairing {
+            peer: PublicKey::from_bytes(peer),
+            name: request.name().clone(),
+            transport,
+            deadline: now + CONFIRMATION_TIMEOUT,
+        })
+    }
+}
+
+/// Resultado de [`PendingPairing::accept`].
+pub enum Decision {
+    /// Dentro del plazo: el dispositivo que la app puede guardar **cuando la
+    /// trama se haya escrito completa**, y la trama de aceptación (cifrada).
+    Accepted { device: PairedDevice, frame: Frame },
+    /// Pasó el plazo: no hay dispositivo; la trama es un rechazo.
+    TimedOut { frame: Frame },
+}
+
+/// Apretón de manos terminado, a la espera de la decisión del usuario.
+///
+/// No es un emparejamiento: solo permite leer la llave, la huella y el nombre
+/// (no se pueden cambiar durante el diálogo), y la única forma de llegar a un
+/// [`PairedDevice`] es [`accept`](Self::accept).
+pub struct PendingPairing {
+    peer: PublicKey,
+    name: DeviceName,
+    transport: TransportState,
+    deadline: Instant,
+}
+
+impl PendingPairing {
+    /// Llave pública del celular, probada por el apretón de manos.
+    pub fn peer_public_key(&self) -> PublicKey {
+        self.peer
+    }
+
+    /// Huella de esa llave, para mostrarla en el diálogo. No autentica.
+    pub fn fingerprint(&self) -> Fingerprint {
+        self.peer.fingerprint()
+    }
+
+    /// Nombre que el celular dio (solo informativo).
+    pub fn peer_name(&self) -> &DeviceName {
+        &self.name
+    }
+
+    /// Hasta cuándo puede aceptarse. La app debe mostrar el diálogo de
+    /// inmediato y rechazar al llegar aquí.
+    pub fn deadline(&self) -> Instant {
+        self.deadline
+    }
+
+    /// El usuario acepta. A partir de `deadline` ya no: da `TimedOut` con la
+    /// trama de rechazo. Si `Accepted`, la app guarda el dispositivo solo
+    /// después de escribir la trama completa.
+    pub fn accept(mut self, now: Instant) -> Result<Decision, PairingError> {
+        if now >= self.deadline {
+            let frame = self.reply(AckDecision::Rejected)?;
+            return Ok(Decision::TimedOut { frame });
+        }
+        let frame = self.reply(AckDecision::Accepted)?;
+        Ok(Decision::Accepted {
+            device: PairedDevice::new(self.peer, self.name),
+            frame,
+        })
+    }
+
+    /// El usuario rechaza: la trama de rechazo, cifrada.
+    pub fn reject(mut self) -> Result<Frame, PairingError> {
+        self.reply(AckDecision::Rejected)
+    }
+
+    fn reply(&mut self, decision: AckDecision) -> Result<Frame, PairingError> {
+        let message = PairingReply::new(decision).encode()?;
+        let mut buffer = [0u8; MAX_FRAME_LEN];
+        let len = self
+            .transport
+            .write_message(&message, &mut buffer)
+            .map_err(|_| PairingError::Handshake)?;
+        Ok(buffer[..len].to_vec())
     }
 }
 
@@ -469,12 +577,28 @@ impl AwaitingSecond {
 
 /// El celular mandó la trama 3: espera la decisión de la PC. Aquí termina el
 /// intercambio Noise, **no** el emparejamiento.
-// `read_reply` lo agrega la Task 5.
-#[allow(dead_code)]
 pub struct AwaitingReply {
     transport: TransportState,
     pc_key: PublicKey,
     address: SocketAddr,
+}
+
+impl AwaitingReply {
+    /// Lee la trama 4, cifrada por el canal Noise. Solo una decisión
+    /// `Accepted` autenticada da el [`PairedPc`]; `Rejected` es
+    /// `PairingError::Rejected`, y una trama alterada, sin cifrar o de otra
+    /// sesión no se autentica (`Handshake`).
+    pub fn read_reply(mut self, frame: &[u8]) -> Result<PairedPc, PairingError> {
+        let mut buffer = [0u8; MAX_FRAME_LEN];
+        let len = self
+            .transport
+            .read_message(frame, &mut buffer)
+            .map_err(|_| PairingError::Handshake)?;
+        match PairingReply::decode(&buffer[..len])?.decision() {
+            AckDecision::Accepted => Ok(PairedPc::new(self.pc_key, self.address)),
+            AckDecision::Rejected => Err(PairingError::Rejected),
+        }
+    }
 }
 
 #[cfg(test)]

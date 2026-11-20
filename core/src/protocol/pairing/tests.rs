@@ -311,3 +311,182 @@ fn forged_second_message_is_peer_not_authentic() {
         Some(PairingError::PeerNotAuthentic)
     );
 }
+
+// ---- Tercer mensaje, confirmación y respuesta (Task 5) ----
+
+fn phone_named(name: &str) -> Initiator {
+    let offer = PairingOffer::new(keypair(1).public(), address(), code(7)).unwrap();
+    Initiator::new(&keypair(2), &offer, DeviceName::new(name).unwrap()).unwrap()
+}
+
+/// Intercambio completo hasta la decisión: la PC con su `PendingPairing`, la
+/// trama 3 que recibió y el celular esperando la respuesta.
+fn exchange_with(t0: Instant, name: &str) -> (PendingPairing, Frame, AwaitingReply) {
+    let mut session = PairingSession::new(keypair(1), code(7), t0);
+    let (awaiting, frame1) = phone_named(name).first_message().unwrap();
+    let third = session.accept_first(t0, &frame1).unwrap();
+    let (reply, frame3) = awaiting.read_second(third.second_message()).unwrap();
+    let pending = third.read_third(t0, &frame3).unwrap();
+    (pending, frame3, reply)
+}
+
+fn exchange(t0: Instant) -> (PendingPairing, AwaitingReply) {
+    let (pending, _, reply) = exchange_with(t0, "Pixel de Ana");
+    (pending, reply)
+}
+
+fn accepted_frame(pending: PendingPairing, now: Instant) -> Frame {
+    match pending.accept(now).unwrap() {
+        Decision::Accepted { frame, .. } => frame,
+        Decision::TimedOut { .. } => panic!("no debía caducar"),
+    }
+}
+
+#[test]
+fn full_exchange_in_memory() {
+    let t0 = Instant::now();
+    let (pending, reply) = exchange(t0);
+    assert_eq!(pending.peer_public_key(), keypair(2).public());
+    assert_eq!(pending.fingerprint(), keypair(2).public().fingerprint());
+    assert_eq!(pending.peer_name().as_str(), "Pixel de Ana");
+    let Decision::Accepted { device, frame } = pending.accept(t0).unwrap() else {
+        panic!("debía aceptar");
+    };
+    assert_eq!(device.public_key(), keypair(2).public());
+    assert_eq!(device.name().as_str(), "Pixel de Ana");
+    let pc = reply.read_reply(&frame).unwrap();
+    assert_eq!(pc.public_key(), keypair(1).public());
+    assert_eq!(pc.address(), address());
+}
+
+#[test]
+fn third_frame_max_is_196_bytes() {
+    let (_, frame3, _) = exchange_with(Instant::now(), &"a".repeat(128));
+    assert_eq!(frame3.len(), 196);
+}
+
+#[test]
+fn reply_frame_is_19_bytes() {
+    let t0 = Instant::now();
+    let (pending, _) = exchange(t0);
+    assert_eq!(accepted_frame(pending, t0).len(), 19);
+}
+
+#[test]
+fn all_frames_fit_in_max_frame_len() {
+    let t0 = Instant::now();
+    let mut session = PairingSession::new(keypair(1), code(7), t0);
+    let (awaiting, frame1) = phone_named(&"é".repeat(64)).first_message().unwrap();
+    let third = session.accept_first(t0, &frame1).unwrap();
+    let frame2 = third.second_message().to_vec();
+    let (reply, frame3) = awaiting.read_second(&frame2).unwrap();
+    let pending = third.read_third(t0, &frame3).unwrap();
+    let frame4 = accepted_frame(pending, t0);
+    reply.read_reply(&frame4).unwrap();
+    for (frame, expected) in [(&frame1, 48), (&frame2, 48), (&frame3, 196), (&frame4, 19)] {
+        assert_eq!(frame.len(), expected);
+        assert!(frame.len() <= MAX_FRAME_LEN);
+    }
+}
+
+#[test]
+fn accept_after_deadline_times_out() {
+    let t0 = Instant::now();
+    let (pending, _) = exchange(t0);
+    assert_eq!(pending.deadline(), t0 + CONFIRMATION_TIMEOUT);
+    let before = pending.deadline() - Duration::from_millis(1);
+    assert!(matches!(
+        pending.accept(before).unwrap(),
+        Decision::Accepted { .. }
+    ));
+    let (pending, _) = exchange(t0);
+    assert!(matches!(
+        pending.accept(t0 + CONFIRMATION_TIMEOUT).unwrap(),
+        Decision::TimedOut { .. }
+    ));
+}
+
+#[test]
+fn timed_out_frame_is_a_rejection_for_the_phone() {
+    let t0 = Instant::now();
+    let (pending, reply) = exchange(t0);
+    let Decision::TimedOut { frame } = pending.accept(t0 + CONFIRMATION_TIMEOUT).unwrap() else {
+        panic!("debía caducar");
+    };
+    assert_eq!(reply.read_reply(&frame).err(), Some(PairingError::Rejected));
+}
+
+#[test]
+fn reject_gives_rejected_to_the_phone() {
+    let (pending, reply) = exchange(Instant::now());
+    let frame = pending.reject().unwrap();
+    assert_eq!(reply.read_reply(&frame).err(), Some(PairingError::Rejected));
+}
+
+#[test]
+fn altered_reply_does_not_pair() {
+    let t0 = Instant::now();
+    let (pending, reply) = exchange(t0);
+    let mut frame = accepted_frame(pending, t0);
+    frame[5] ^= 0x01;
+    assert_eq!(
+        reply.read_reply(&frame).err(),
+        Some(PairingError::Handshake)
+    );
+}
+
+#[test]
+fn plaintext_reply_does_not_pair() {
+    let (_, reply) = exchange(Instant::now());
+    assert_eq!(
+        reply.read_reply(&[1, 5, 0]).err(),
+        Some(PairingError::Handshake)
+    );
+}
+
+#[test]
+fn reply_from_another_session_does_not_pair() {
+    let t0 = Instant::now();
+    let (_, reply_a) = exchange(t0);
+    let (pending_b, _) = exchange(t0);
+    let frame_b = accepted_frame(pending_b, t0);
+    assert_eq!(
+        reply_a.read_reply(&frame_b).err(),
+        Some(PairingError::Handshake)
+    );
+}
+
+#[test]
+fn third_frame_with_invalid_name_fails() {
+    let t0 = Instant::now();
+    let mut session = PairingSession::new(keypair(1), code(7), t0);
+    let (awaiting, frame1) = phone_named("Pixel").first_message().unwrap();
+    let third = session.accept_first(t0, &frame1).unwrap();
+    // El celular escribe a mano una carga con U+202E dentro de un mensaje 4
+    // bien formado, en un apretón de manos auténtico.
+    let mut handshake = awaiting.handshake;
+    let mut buffer = [0u8; MAX_FRAME_LEN];
+    handshake
+        .read_message(third.second_message(), &mut buffer)
+        .unwrap();
+    let payload = [1, 4, 5, b'a', 0xE2, 0x80, 0xAE, b'b'];
+    let len = handshake.write_message(&payload, &mut buffer).unwrap();
+    assert_eq!(
+        third.read_third(t0, &buffer[..len]).err(),
+        Some(PairingError::Protocol(ProtocolError::InvalidField(
+            crate::protocol::InvalidField::DeviceName
+        )))
+    );
+}
+
+#[test]
+fn garbage_third_frame_fails() {
+    let t0 = Instant::now();
+    let mut session = PairingSession::new(keypair(1), code(7), t0);
+    let (_, frame1) = phone_named("Pixel").first_message().unwrap();
+    let third = session.accept_first(t0, &frame1).unwrap();
+    assert_eq!(
+        third.read_third(t0, &[0x42; 196]).err(),
+        Some(PairingError::Handshake)
+    );
+}
