@@ -69,7 +69,9 @@ Resultado: tocas "Enviar a PC" en el celular, pones la huella y pegas la contras
   - [x] Emparejamiento Noise con código de un solo uso (#95): máquinas de estado y conductor síncrono por `TcpStream` en localhost, con confirmación obligatoria en la PC; el celular solo guarda la PC con una aceptación autenticada. El servidor real, mDNS y el envío siguen en sus issues.
   - [x] Envío con Noise IK (#96): el celular emparejado envía una contraseña con plazo de 30 s y confirmación (`Copied` o `Failed`), la PC rechaza en el apretón de manos, sin contestar, a cualquier llave no emparejada, y una conexión acepta un solo envío; probado con ambos extremos por `TcpStream` en localhost. El servidor real, mDNS y el portapapeles siguen en sus issues.
   - [x] Formato v3 de la bóveda (#93): la llave privada X25519 del celular y la lista de PCs emparejadas viven cifradas en la bóveda, con migración v1→v2→v3 al desbloquear (con contraseña, y la v2 también con la llave del Keystore) y al importar un respaldo.
-- [ ] App Tauri en la bandeja: menú de cuatro opciones, iniciar con Windows y ventana con el QR.
+- [ ] App Tauri en la bandeja:
+  - [x] Bandeja con el menú de cuatro opciones, instancia única e iniciar con Windows (#97); sin ventana al arrancar y con las opciones de ventanas deshabilitadas.
+  - [ ] Ventana con el QR (#101) y dispositivos emparejados (#107).
 - [ ] Llave privada de la PC protegida con DPAPI.
 - [ ] Servidor en la PC: escucha solo en redes privadas, anuncio por mDNS, confirmación al emparejar y rechazo de dispositivos no emparejados.
 - [ ] Portapapeles: escribir con `arboard` excluido del historial y la nube, notificación, y borrado a los 30 s solo si sigue la misma contraseña.
