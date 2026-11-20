@@ -37,6 +37,8 @@ Antes de crear o cambiar una pantalla, un widget o un estilo, lee este archivo.
 | `borderInteractive` | `#282836` | Borde de contenedores activos |
 | `outline` | `#71717A` | Borde de campos y controles (necesario para el 3:1, ver 2.5) |
 | `lockScrim` | `#09090C` | Fondo de la pantalla de desbloqueo |
+| `capsuleBg` | `#000000` | Fondo de la cápsula de estado (6.1) |
+| `capsuleBorder` | `#24242F` | Borde de la cápsula de estado; decorativo, como `borderCard` |
 
 ### 2.2 Texto
 
@@ -89,6 +91,8 @@ Cuatro acentos intercambiables en tiempo real. Cada uno define el mismo juego de
 | `onAccent` / `accent` (Lime · Emerald · Amber · Crimson) | 16.46 · 13.85 · 9.75 · 5.64 |
 | `accent` / `surface2` (Lime · Emerald · Amber · Crimson) | 15.07 · 12.69 · 8.93 · 5.17 |
 | `error` / `surfaceElevated` | 6.04 |
+| `accent` / `capsuleBg` (Lime · Emerald · Amber · Crimson) | 17.27 · 14.53 · 10.23 · 5.92 |
+| `error` / `capsuleBg` | 7.59 |
 | `error` / `errorContainer` | 6.57 |
 | `warning` / `surfaceElevated` | 10.01 |
 | `success` / `surfaceElevated` | 9.59 |
