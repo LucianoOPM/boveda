@@ -5,6 +5,8 @@
 
 mod backend;
 mod fingerprint;
+#[cfg(windows)]
+mod windows;
 mod worker;
 
 #[cfg(test)]
@@ -20,6 +22,8 @@ use std::time::{Duration, Instant};
 use secrecy::{ExposeSecret, SecretString};
 
 pub use backend::{ClearOutcome, ClipboardBackend, WriteError};
+#[cfg(windows)]
+pub use windows::WindowsBackend;
 
 use fingerprint::FingerprintKey;
 use worker::Command;
@@ -82,6 +86,12 @@ pub struct ClipboardManager {
 }
 
 impl ClipboardManager {
+    /// El gestor real: portapapeles de Windows y los plazos de producción.
+    #[cfg(windows)]
+    pub fn new() -> Self {
+        Self::with_backend(WindowsBackend::new(), Config::default())
+    }
+
     pub fn with_backend<B: ClipboardBackend>(backend: B, config: Config) -> Self {
         let (tx, rx) = std::sync::mpsc::channel();
         let key = FingerprintKey::new();
