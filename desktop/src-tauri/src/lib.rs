@@ -7,6 +7,8 @@ use clipboard::ClipboardManager;
 #[cfg(windows)]
 pub mod atomic_file;
 mod autostart;
+#[cfg(windows)]
+mod backoff;
 pub mod clipboard;
 #[cfg(windows)]
 pub mod dpapi;

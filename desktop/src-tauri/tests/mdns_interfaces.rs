@@ -75,8 +75,14 @@ fn control_default_config_visibility() {
     announcer
         .register(service(ip, "boveda-ctrl0001"))
         .expect("register");
-    println!("por defecto, visible por IPv4: {}", resolves(true, "boveda-ctrl0001"));
-    println!("por defecto, visible por IPv6: {}", resolves(false, "boveda-ctrl0001"));
+    println!(
+        "por defecto, visible por IPv4: {}",
+        resolves(true, "boveda-ctrl0001")
+    );
+    println!(
+        "por defecto, visible por IPv6: {}",
+        resolves(false, "boveda-ctrl0001")
+    );
     let _ = announcer.shutdown();
 }
 
@@ -86,7 +92,9 @@ fn control_default_config_visibility() {
 fn only_announces_on_private_ipv4() {
     let ip = local_ipv4();
     let announcer = ServiceDaemon::new().expect("announcer");
-    announcer.disable_interface(IfKind::All).expect("disable all");
+    announcer
+        .disable_interface(IfKind::All)
+        .expect("disable all");
     announcer
         .enable_interface(IfKind::Addr(IpAddr::V4(ip)))
         .expect("enable addr");
@@ -98,6 +106,9 @@ fn only_announces_on_private_ipv4() {
     let over_v6 = resolves(false, "boveda-test0001");
     let _ = announcer.shutdown();
 
-    assert!(over_v4, "el control IPv4 debe ver el servicio (si no, la prueba no vale)");
+    assert!(
+        over_v4,
+        "el control IPv4 debe ver el servicio (si no, la prueba no vale)"
+    );
     assert!(!over_v6, "el servicio no debe ser visible por IPv6");
 }
