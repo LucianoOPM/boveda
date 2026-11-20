@@ -56,6 +56,26 @@ class PasswordField extends StatefulWidget {
 class _PasswordFieldState extends State<PasswordField> {
   bool _obscured = true;
 
+  /// Nodo transparente alrededor del campo: no toma el foco ni entra al
+  /// recorrido, solo deja a la etiqueta llegar al nodo del `TextField` sin
+  /// obligar a pasarle uno (el campo conserva su `focusNode` por omisión).
+  final _wrapper = FocusNode(
+    debugLabel: 'PasswordField',
+    canRequestFocus: false,
+    skipTraversal: true,
+  );
+
+  /// Enfoca el campo al tocar su etiqueta, como hacía `labelText`. Con el
+  /// campo deshabilitado no hay nodo que pueda tomar el foco: no hace nada.
+  void _focusField() =>
+      _wrapper.traversalDescendants.firstOrNull?.requestFocus();
+
+  @override
+  void dispose() {
+    _wrapper.dispose();
+    super.dispose();
+  }
+
   @override
   Widget build(BuildContext context) {
     final secret =
@@ -67,38 +87,48 @@ class _PasswordFieldState extends State<PasswordField> {
       children: [
         // La etiqueta visible va en mayúsculas; el lector de pantalla lee la
         // original desde el campo.
-        ExcludeSemantics(child: FieldLabel(widget.label)),
+        // Tocar la etiqueta enfoca el campo, como con `labelText`.
+        ExcludeSemantics(
+          child: GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTap: widget.enabled ? _focusField : null,
+            child: FieldLabel(widget.label, enabled: widget.enabled),
+          ),
+        ),
         const SizedBox(height: Space.sm),
         Semantics(
           label: widget.label,
-          child: ActivityTextField(
-            controller: widget.controller,
-            enabled: widget.enabled,
-            onChanged: widget.onChanged,
-            textInputAction: widget.textInputAction,
-            onSubmitted: widget.onSubmitted,
-            focusNode: widget.focusNode,
-            obscureText: _obscured,
-            enableSuggestions: false,
-            autocorrect: false,
-            enableIMEPersonalizedLearning: false,
-            keyboardType: TextInputType.visiblePassword,
-            maxLines: 1,
-            style: secret,
-            // Con el ojo, la contraseña queda a la vista: no se copia desde
-            // aquí.
-            copyable: false,
-            decoration: InputDecoration(
-              errorText: widget.errorText,
-              suffixIcon: IconButton(
-                tooltip: _obscured
-                    ? 'Mostrar contraseña'
-                    : 'Ocultar contraseña',
-                icon: Icon(
-                  _obscured ? BovedaIcons.eye : BovedaIcons.eyeOff,
-                  size: 20,
+          child: Focus(
+            focusNode: _wrapper,
+            child: ActivityTextField(
+              controller: widget.controller,
+              enabled: widget.enabled,
+              onChanged: widget.onChanged,
+              textInputAction: widget.textInputAction,
+              onSubmitted: widget.onSubmitted,
+              focusNode: widget.focusNode,
+              obscureText: _obscured,
+              enableSuggestions: false,
+              autocorrect: false,
+              enableIMEPersonalizedLearning: false,
+              keyboardType: TextInputType.visiblePassword,
+              maxLines: 1,
+              style: secret,
+              // Con el ojo, la contraseña queda a la vista: no se copia desde
+              // aquí.
+              copyable: false,
+              decoration: InputDecoration(
+                errorText: widget.errorText,
+                suffixIcon: IconButton(
+                  tooltip: _obscured
+                      ? 'Mostrar contraseña'
+                      : 'Ocultar contraseña',
+                  icon: Icon(
+                    _obscured ? BovedaIcons.eye : BovedaIcons.eyeOff,
+                    size: 20,
+                  ),
+                  onPressed: () => setState(() => _obscured = !_obscured),
                 ),
-                onPressed: () => setState(() => _obscured = !_obscured),
               ),
             ),
           ),

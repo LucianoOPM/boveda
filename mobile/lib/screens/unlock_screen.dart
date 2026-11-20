@@ -469,10 +469,14 @@ class _UnlockScreenState extends State<UnlockScreen> {
                 ),
               ),
               const SizedBox(height: Space.lg),
-              Text(
-                'Bóveda bloqueada',
-                textAlign: TextAlign.center,
-                style: theme.textTheme.headlineSmall,
+              // La cápsula de abajo ya anuncia "Bóveda bloqueada": el título no
+              // se lee otra vez.
+              ExcludeSemantics(
+                child: Text(
+                  'Bóveda bloqueada',
+                  textAlign: TextAlign.center,
+                  style: theme.textTheme.headlineSmall,
+                ),
               ),
               const SizedBox(height: Space.md),
               const Center(
@@ -626,7 +630,7 @@ class _UnlockScreenState extends State<UnlockScreen> {
                       // El tooltip ya lo anuncia: el texto no se lee dos veces.
                       ExcludeSemantics(
                         child: Text(
-                          'Usar huella',
+                          'Usar huella'.toUpperCase(),
                           style: meta.copyWith(
                             color: theme.colorScheme.onSurfaceVariant,
                           ),

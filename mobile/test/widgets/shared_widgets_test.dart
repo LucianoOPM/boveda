@@ -230,6 +230,17 @@ void main() {
     );
   });
 
+  testWidgets('FieldLabel se atenúa con enabled: false', (tester) async {
+    await pump(
+      tester,
+      defaultAccent,
+      const FieldLabel('Contraseña maestra', enabled: false),
+    );
+
+    final text = tester.widget<Text>(find.text('CONTRASEÑA MAESTRA'));
+    expect(text.style!.color, BovedaColors.textDisabled);
+  });
+
   testWidgets('FieldLabel muestra el texto en mayúsculas, en meta', (
     tester,
   ) async {

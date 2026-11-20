@@ -143,7 +143,8 @@ void main() {
     final handle = tester.ensureSemantics();
     await pumpScreen(tester);
 
-    expect(find.bySemanticsLabel('Bóveda bloqueada'), findsWidgets);
+    // Una sola vez: el título visible no se lee aparte de la cápsula.
+    expect(find.bySemanticsLabel('Bóveda bloqueada'), findsOneWidget);
     expect(find.bySemanticsLabel('BLOQUEADA'), findsNothing);
     handle.dispose();
   });
@@ -244,7 +245,7 @@ void main() {
     );
     expect(find.byTooltip('Usar huella'), findsOneWidget);
     // El texto de siempre, debajo del círculo.
-    expect(find.text('Usar huella'), findsOneWidget);
+    expect(find.text('USAR HUELLA'), findsOneWidget);
   });
 
   testWidgets('el botón de huella se anuncia como botón y sigue al estado', (
@@ -312,6 +313,47 @@ void main() {
     expect(tester.takeException(), isNull);
     pending.complete(emptyReport);
     await drain(tester);
+  });
+
+  testWidgets('"Activando huella…" a 200 % a 360 dp no desborda', (
+    tester,
+  ) async {
+    biometric.available = true;
+    final pending = Completer<void>();
+    biometric.onBeginEnable = () => pending.future;
+    await pumpScreen(tester, textScale: 2);
+    await drain(tester);
+    await tester.ensureVisible(find.byKey(enableKey));
+    await tester.pump();
+    await tester.tap(find.byKey(enableKey));
+    await typePassword(tester);
+    await tester.ensureVisible(find.byKey(submitKey));
+    await tester.pump();
+    await tester.tap(find.byKey(submitKey));
+    await tester.pump();
+
+    expect(find.text('Activando huella…'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+    pending.complete();
+    await drain(tester);
+  });
+
+  testWidgets('el círculo de huella con su texto a 200 % no desborda', (
+    tester,
+  ) async {
+    biometric
+      ..enabled = true
+      ..available = true
+      ..onUnlock = () async =>
+          throw const BiometricException(BiometricFailure.canceled);
+    await pumpScreen(tester, textScale: 2);
+    await drain(tester);
+    await tester.ensureVisible(find.byKey(biometricKey));
+    await tester.pump();
+
+    expect(find.text('USAR HUELLA'), findsOneWidget);
+    expect(tester.getSize(find.byKey(biometricKey)), const Size(64, 64));
+    expect(tester.takeException(), isNull);
   });
 
   testWidgets('con la casilla de huella a 200 % no hay desbordes', (

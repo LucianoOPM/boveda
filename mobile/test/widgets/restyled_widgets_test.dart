@@ -101,6 +101,64 @@ void main() {
       handle.dispose();
     });
 
+    testWidgets('tocar la etiqueta enfoca el campo', (tester) async {
+      await pump(
+        tester,
+        PasswordField(controller: controller, label: 'Contraseña maestra'),
+      );
+      final editable = find.byType(EditableText);
+      expect(tester.widget<EditableText>(editable).focusNode.hasFocus, false);
+
+      await tester.tap(find.text('CONTRASEÑA MAESTRA'));
+      await tester.pump();
+
+      expect(tester.widget<EditableText>(editable).focusNode.hasFocus, true);
+    });
+
+    testWidgets('tocar la etiqueta enfoca el focusNode que se le pasa', (
+      tester,
+    ) async {
+      final focus = FocusNode();
+      addTearDown(focus.dispose);
+      await pump(
+        tester,
+        PasswordField(
+          controller: controller,
+          label: 'Contraseña maestra',
+          focusNode: focus,
+        ),
+      );
+
+      await tester.tap(find.text('CONTRASEÑA MAESTRA'));
+      await tester.pump();
+
+      expect(focus.hasFocus, isTrue);
+    });
+
+    testWidgets('con el campo deshabilitado la etiqueta se atenúa y no '
+        'enfoca', (tester) async {
+      await pump(
+        tester,
+        PasswordField(
+          controller: controller,
+          label: 'Contraseña maestra',
+          enabled: false,
+        ),
+      );
+
+      final label = tester.widget<Text>(find.text('CONTRASEÑA MAESTRA'));
+      expect(label.style!.color, BovedaColors.textDisabled);
+      await tester.tap(find.text('CONTRASEÑA MAESTRA'));
+      await tester.pump();
+      expect(
+        tester
+            .widget<EditableText>(find.byType(EditableText))
+            .focusNode
+            .hasFocus,
+        false,
+      );
+    });
+
     testWidgets('sigue mostrando errorText', (tester) async {
       await pump(
         tester,
