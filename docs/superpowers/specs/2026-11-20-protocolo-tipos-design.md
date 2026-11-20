@@ -92,9 +92,9 @@ Tipos: `1` = `PairingOffer`, `2` = `SendMessage`, `3` = `Ack`.
 **Decodificar**, en este orden (cada paso con su error):
 
 1. Más de `MAX_MESSAGE_LEN` bytes: `TooLarge`. Se mira antes de tocar nada.
-2. Menos de 2 bytes: `Truncated`.
-3. Versión distinta de 1: `UnsupportedVersion(v)`, sin intentar leer el cuerpo.
-4. Tipo distinto del esperado: `UnexpectedKind(k)`.
+2. Vacío: `Truncated`.
+3. Versión distinta de 1: `UnsupportedVersion(v)`, sin intentar leer el cuerpo. (Se mira antes que la longitud mínima: un mensaje de 1 byte con versión desconocida es `UnsupportedVersion`, no `Truncated`; ajuste hecho al implementar.)
+4. Menos de 2 bytes: `Truncated`. Tipo distinto del esperado: `UnexpectedKind(k)`.
 5. `postcard::take_from_bytes` del cuerpo: `DeserializeUnexpectedEnd` es `Truncated`; cualquier otro error de postcard (booleano, enum, UTF-8, varint) es `Malformed`.
 6. Quedan bytes después del cuerpo: `TrailingBytes`.
 7. Reglas de los campos: `InvalidField(campo)`.
