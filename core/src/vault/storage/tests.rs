@@ -1094,6 +1094,112 @@ fn get_identity_with_version_out_of_u16_is_corrupt_identity() {
     }
 }
 
+// --- PCs emparejadas (#93) -------------------------------------------------
+
+fn pc_id(byte: u8) -> PairedPcId {
+    PairedPcId::from_bytes([byte; 16])
+}
+
+#[test]
+fn paired_pc_crud_round_trip() {
+    let (_dir, _path, mut storage) = new_vault();
+    assert!(storage.list_paired_pcs().unwrap().rows.is_empty());
+
+    storage
+        .insert_paired_pc(pc_id(1), 1, &sealed_blob(60))
+        .unwrap();
+    storage
+        .insert_paired_pc(pc_id(2), 1, &sealed_blob(70))
+        .unwrap();
+    let listing = storage.list_paired_pcs().unwrap();
+    assert_eq!(listing.rows.len(), 2);
+    assert!(listing.corrupt.is_empty());
+    assert_eq!(listing.unidentified_corrupt, 0);
+
+    storage
+        .update_paired_pc(pc_id(1), 1, &sealed_blob(90))
+        .unwrap();
+    let stored = storage.get_paired_pc(pc_id(1)).unwrap().unwrap();
+    assert!(stored.sealed == sealed_blob(90));
+    assert!(storage.get_paired_pc(pc_id(9)).unwrap().is_none());
+
+    storage.delete_paired_pc(pc_id(1)).unwrap();
+    assert_eq!(storage.list_paired_pcs().unwrap().rows.len(), 1);
+}
+
+#[test]
+fn update_and_delete_of_an_unknown_pc_are_not_found() {
+    let (_dir, _path, mut storage) = new_vault();
+    assert_eq!(
+        storage
+            .update_paired_pc(pc_id(5), 1, &sealed_blob(60))
+            .err(),
+        Some(Error::PairedPcNotFound)
+    );
+    assert_eq!(
+        storage.delete_paired_pc(pc_id(5)).err(),
+        Some(Error::PairedPcNotFound)
+    );
+}
+
+#[test]
+fn insert_paired_pc_with_a_taken_id_is_an_error_and_writes_nothing() {
+    let (_dir, path, mut storage) = new_vault();
+    storage
+        .insert_paired_pc(pc_id(1), 1, &sealed_blob(60))
+        .unwrap();
+    let before = fs::read(&path).unwrap();
+    assert!(
+        storage
+            .insert_paired_pc(pc_id(1), 1, &sealed_blob(61))
+            .is_err()
+    );
+    drop(storage);
+    assert_eq!(fs::read(&path).unwrap(), before);
+}
+
+#[test]
+fn listing_separates_damaged_rows_from_valid_ones() {
+    let (_dir, path, mut storage) = new_vault();
+    storage
+        .insert_paired_pc(pc_id(1), 1, &sealed_blob(60))
+        .unwrap();
+    storage
+        .insert_paired_pc(pc_id(2), 1, &sealed_blob(60))
+        .unwrap();
+    storage
+        .insert_paired_pc(pc_id(3), 1, &sealed_blob(60))
+        .unwrap();
+    let conn = raw(&path);
+    // Versión fuera de u16 (se lista como dañada con su id).
+    conn.execute(
+        "UPDATE paired_pcs SET pc_schema_version = 70000 WHERE id = ?1",
+        [pc_id(2).as_bytes().as_slice()],
+    )
+    .unwrap();
+    // Un id que no mide 16 bytes: el `CHECK` solo se aplica al escribir.
+    conn.execute_batch("PRAGMA ignore_check_constraints = ON")
+        .unwrap();
+    conn.execute(
+        "INSERT INTO paired_pcs (id, pc_schema_version, data) VALUES (zeroblob(15), 1, zeroblob(60))",
+        [],
+    )
+    .unwrap();
+
+    let listing = storage.list_paired_pcs().unwrap();
+    assert_eq!(listing.rows.len(), 2);
+    assert_eq!(listing.corrupt, vec![pc_id(2)]);
+    assert_eq!(listing.unidentified_corrupt, 1);
+    // Una fila dañada leída por id es `CorruptPairedPc`, no ausente.
+    assert_eq!(
+        storage.get_paired_pc(pc_id(2)).err(),
+        Some(Error::CorruptPairedPc)
+    );
+    // Y se puede quitar.
+    storage.delete_paired_pc(pc_id(2)).unwrap();
+    assert!(storage.list_paired_pcs().unwrap().corrupt.is_empty());
+}
+
 // --- Preparar la copia temporal de una importación (#93) -----------------
 
 /// Rellena `identity` y `paired_pcs` con blobs de longitud válida.

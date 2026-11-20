@@ -19,6 +19,7 @@ mod backup;
 pub(crate) mod entry;
 pub(crate) mod header;
 mod identity;
+mod paired_pc;
 mod password;
 pub(crate) mod storage;
 #[cfg(test)]
@@ -29,6 +30,11 @@ use entry::sealed::SealedEntry;
 pub use entry::{EntryId, SearchData, Secret};
 use header::{FORMAT_VERSION, FORMAT_VERSION_V2, VaultHeader};
 pub use identity::{IDENTITY_KEY_LEN, Identity};
+use paired_pc::PC_SCHEMA_VERSION;
+pub use paired_pc::{
+    NewPairedPc, PAIRED_PC_ID_LEN, PAIRED_PC_NAME_MAX_BYTES, PUBLIC_KEY_LEN, PairedPc, PairedPcId,
+    PairedPcUpdate, PairedPcs,
+};
 use password::require_master_password;
 pub use password::{
     MIN_MASTER_PASSWORD_CHARS, PasswordStrength, STRONG_MASTER_PASSWORD_CHARS, password_strength,
@@ -668,6 +674,96 @@ impl Vault {
         // Ya existía una fila: se lee en vez de sobrescribirla.
         self.identity()?
             .ok_or(Error::Storage(StorageErrorKind::Corrupt))
+    }
+
+    /// Las PCs emparejadas, con las filas dañadas aparte: una PC dañada no
+    /// impide leer las demás ni abrir la bóveda. Exige la bóveda desbloqueada.
+    /// No se guardan en la caché de `Unlocked`: se leen del disco cada vez.
+    pub fn paired_pcs(&self) -> Result<PairedPcs> {
+        let key = &self.unlocked()?.key;
+        let listing = self.storage.list_paired_pcs()?;
+        let mut valid = Vec::with_capacity(listing.rows.len());
+        let mut corrupt = listing.corrupt;
+        for stored in listing.rows {
+            match paired_pc::open(key, stored.id, stored.version, &stored.sealed) {
+                Ok(pc) => valid.push(pc),
+                Err(_) => corrupt.push(stored.id),
+            }
+        }
+        Ok(PairedPcs {
+            valid,
+            corrupt,
+            unidentified_corrupt: listing.unidentified_corrupt,
+        })
+    }
+
+    /// Empareja una PC nueva y devuelve su identificador.
+    ///
+    /// El nombre se recorta y debe tener de 1 a 128 bytes
+    /// ([`Error::InvalidPairedPc`]). Una llave pública que ya está en la
+    /// lista da [`Error::PairedPcExists`] (las filas dañadas no cuentan: no
+    /// se pueden leer). `paired_at` sale del reloj ([`Error::Clock`] si no
+    /// es válido). Exige la bóveda desbloqueada.
+    pub fn add_paired_pc(&mut self, new: NewPairedPc) -> Result<PairedPcId> {
+        self.unlocked()?;
+        let name = paired_pc::validate_name(&new.name)?;
+        let now = now_millis()?;
+        if self
+            .paired_pcs()?
+            .valid
+            .iter()
+            .any(|pc| pc.public_key() == &new.public_key)
+        {
+            return Err(Error::PairedPcExists);
+        }
+        let pc = paired_pc::PairedPc::new(
+            PairedPcId::generate()?,
+            new.public_key,
+            name,
+            new.last_ip,
+            now,
+            None,
+        );
+        let sealed = paired_pc::seal(&self.unlocked()?.key, &pc)?;
+        self.storage
+            .insert_paired_pc(pc.id(), PC_SCHEMA_VERSION, &sealed)?;
+        Ok(pc.id())
+    }
+
+    /// Cambia el nombre y o la última IP de una PC. Una IP nueva también fija
+    /// `last_seen_at` con la hora actual. Un nombre no válido da
+    /// [`Error::InvalidPairedPc`] sin escribir; un id inexistente,
+    /// [`Error::PairedPcNotFound`]; una fila dañada, [`Error::CorruptPairedPc`]
+    /// sin escribir. Exige la bóveda desbloqueada.
+    pub fn update_paired_pc(&mut self, id: PairedPcId, update: PairedPcUpdate) -> Result<()> {
+        self.unlocked()?;
+        let name = update
+            .name
+            .as_deref()
+            .map(paired_pc::validate_name)
+            .transpose()?;
+        let now = match update.last_ip {
+            Some(_) => Some(now_millis()?),
+            None => None,
+        };
+        let stored = self
+            .storage
+            .get_paired_pc(id)?
+            .ok_or(Error::PairedPcNotFound)?;
+        let key = &self.unlocked()?.key;
+        let mut pc = paired_pc::open(key, id, stored.version, &stored.sealed)?;
+        pc.apply(name, update.last_ip, now);
+        let sealed = paired_pc::seal(key, &pc)?;
+        self.storage
+            .update_paired_pc(id, PC_SCHEMA_VERSION, &sealed)
+    }
+
+    /// Quita una PC emparejada, también una fila dañada. Un `DELETE` real,
+    /// sin lápida. Un id inexistente da [`Error::PairedPcNotFound`]. Exige la
+    /// bóveda desbloqueada.
+    pub fn remove_paired_pc(&mut self, id: PairedPcId) -> Result<()> {
+        self.unlocked()?;
+        self.storage.delete_paired_pc(id)
     }
 
     /// Fija una identidad conocida. Solo para pruebas y para generar la

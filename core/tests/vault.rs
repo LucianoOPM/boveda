@@ -8,7 +8,9 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use secrecy::{ExposeSecret, SecretBox, SecretString};
-use vault_core::vault::{EntryId, Error, SearchData, Secret, SecretChange, UnlockReport, Vault};
+use vault_core::vault::{
+    EntryId, Error, NewPairedPc, SearchData, Secret, SecretChange, UnlockReport, Vault,
+};
 
 fn password(text: &str) -> SecretString {
     SecretString::from(text)
@@ -712,4 +714,50 @@ fn entry_by_id_on_fixture() {
     assert!(vault.entry(mail).unwrap().last_used_at().is_some());
     vault.delete(mail).unwrap();
     assert_eq!(vault.entry(mail).err(), Some(Error::EntryNotFound));
+}
+
+// --- Identidad y PCs emparejadas por la API pública (#93) ------------------
+
+#[test]
+fn identity_and_paired_pcs_through_the_public_api() {
+    // Una v2 desbloqueada se migra a v3 y ya puede guardar la identidad y PCs.
+    let (_dir, path) = fixture_copy_of("vault-v2.db");
+    let mut vault = Vault::open(&path).unwrap();
+    vault.unlock(&password(FIXTURE_V2_PASSWORD)).unwrap();
+    assert!(vault.identity().unwrap().is_none());
+    assert!(vault.paired_pcs().unwrap().valid.is_empty());
+
+    let identity = vault.ensure_identity().unwrap();
+    let private = *identity.private_key().expose_secret();
+    let id = vault
+        .add_paired_pc(NewPairedPc {
+            public_key: [5; 32],
+            name: "Escritorio".to_owned(),
+            last_ip: Some("192.168.1.50".parse().unwrap()),
+        })
+        .unwrap();
+    vault.lock();
+    drop(vault);
+
+    let mut reopened = Vault::open(&path).unwrap();
+    assert_eq!(
+        reopened.unlock(&password(FIXTURE_V2_PASSWORD)).unwrap(),
+        clean_report()
+    );
+    assert_eq!(
+        *reopened
+            .identity()
+            .unwrap()
+            .unwrap()
+            .private_key()
+            .expose_secret(),
+        private
+    );
+    let listed = reopened.paired_pcs().unwrap();
+    assert!(listed.corrupt.is_empty());
+    assert_eq!(listed.valid.len(), 1);
+    assert_eq!(listed.valid[0].id(), id);
+    assert_eq!(listed.valid[0].name(), "Escritorio");
+    reopened.remove_paired_pc(id).unwrap();
+    assert!(reopened.paired_pcs().unwrap().valid.is_empty());
 }

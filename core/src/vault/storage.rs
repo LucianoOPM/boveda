@@ -24,6 +24,7 @@ use rusqlite::{Connection, ErrorCode, OpenFlags, TransactionBehavior, params};
 use super::entry::sealed::SealedEntry;
 use super::entry::{ENTRY_ID_LEN, EntryId};
 use super::header::{FORMAT_VERSION, FORMAT_VERSION_V1, FORMAT_VERSION_V2, VaultHeader};
+use super::paired_pc::{PAIRED_PC_ID_LEN, PairedPcId};
 use crate::crypto::aead::EncryptedPart;
 use crate::crypto::kdf::{KdfParams, SALT_LEN};
 use crate::crypto::keys::{ENCRYPTED_KEY_LEN, EncryptedKey, KEY_CHECK_LEN, NONCE_LEN};
@@ -544,6 +545,93 @@ impl Storage {
         Ok(changed == 1)
     }
 
+    /// Todas las filas de `paired_pcs`: las legibles (todavía cifradas) y las
+    /// dañadas, por separado. Una fila con un id que no mide 16 bytes o con
+    /// columnas de otro tipo no impide leer las demás.
+    pub(crate) fn list_paired_pcs(&self) -> Result<PcListing> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT id, pc_schema_version, data FROM paired_pcs ORDER BY id")
+            .map_err(map_sqlite_error)?;
+        let rows = stmt.query_map([], read_pc_row).map_err(map_sqlite_error)?;
+
+        let mut listing = PcListing {
+            rows: Vec::new(),
+            corrupt: Vec::new(),
+            unidentified_corrupt: 0,
+        };
+        for outcome in rows {
+            match outcome.map_err(map_sqlite_error)? {
+                PcRowOutcome::Valid(pc) => listing.rows.push(pc),
+                PcRowOutcome::Corrupt(id) => listing.corrupt.push(id),
+                PcRowOutcome::Unidentified => listing.unidentified_corrupt += 1,
+            }
+        }
+        Ok(listing)
+    }
+
+    /// La PC `id`, o `None` si no hay fila. Una fila que existe pero tiene
+    /// columnas ilegibles da [`Error::CorruptPairedPc`], no `None`.
+    pub(crate) fn get_paired_pc(&self, id: PairedPcId) -> Result<Option<StoredPc>> {
+        let row = self.conn.query_row(
+            "SELECT id, pc_schema_version, data FROM paired_pcs WHERE id = ?1",
+            [id.as_bytes().as_slice()],
+            read_pc_row,
+        );
+        match row {
+            Ok(PcRowOutcome::Valid(pc)) => Ok(Some(pc)),
+            Ok(PcRowOutcome::Corrupt(_) | PcRowOutcome::Unidentified) => {
+                Err(Error::CorruptPairedPc)
+            }
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(map_sqlite_error(e)),
+        }
+    }
+
+    /// Agrega una PC. Un id ya usado es un error de almacenamiento y no
+    /// escribe nada.
+    pub(crate) fn insert_paired_pc(
+        &mut self,
+        id: PairedPcId,
+        version: u16,
+        data: &EncryptedPart,
+    ) -> Result<()> {
+        self.write(
+            "INSERT INTO paired_pcs (id, pc_schema_version, data) VALUES (?1, ?2, ?3)",
+            params![id.as_bytes().as_slice(), version, data.as_bytes()],
+        )
+        .map(|_| ())
+    }
+
+    /// Reemplaza los datos de una PC. Sin fila con ese id, da
+    /// [`Error::PairedPcNotFound`].
+    pub(crate) fn update_paired_pc(
+        &mut self,
+        id: PairedPcId,
+        version: u16,
+        data: &EncryptedPart,
+    ) -> Result<()> {
+        match self.write(
+            "UPDATE paired_pcs SET pc_schema_version = ?1, data = ?2 WHERE id = ?3",
+            params![version, data.as_bytes(), id.as_bytes().as_slice()],
+        )? {
+            0 => Err(Error::PairedPcNotFound),
+            _ => Ok(()),
+        }
+    }
+
+    /// Quita una PC (también una fila dañada). Un `DELETE` real: sin lápida.
+    /// Sin fila con ese id, da [`Error::PairedPcNotFound`].
+    pub(crate) fn delete_paired_pc(&mut self, id: PairedPcId) -> Result<()> {
+        match self.write(
+            "DELETE FROM paired_pcs WHERE id = ?1",
+            params![id.as_bytes().as_slice()],
+        )? {
+            0 => Err(Error::PairedPcNotFound),
+            _ => Ok(()),
+        }
+    }
+
     /// Copia consistente y compacta de la bóveda en `dest` con `VACUUM INTO`.
     /// `dest` debe no existir o estar vacío. La ruta va como parámetro,
     /// nunca dentro del SQL; una que no es UTF-8 o relativa da
@@ -718,6 +806,54 @@ impl Storage {
 pub(crate) struct StoredIdentity {
     pub(crate) version: u16,
     pub(crate) sealed: EncryptedPart,
+}
+
+/// PC emparejada leída del archivo, todavía cifrada.
+pub(crate) struct StoredPc {
+    pub(crate) id: PairedPcId,
+    pub(crate) version: u16,
+    pub(crate) sealed: EncryptedPart,
+}
+
+/// Resultado de listar las PCs: las filas legibles y las dañadas.
+pub(crate) struct PcListing {
+    pub(crate) rows: Vec<StoredPc>,
+    /// Filas dañadas con un id válido de 16 bytes.
+    pub(crate) corrupt: Vec<PairedPcId>,
+    /// Filas dañadas sin un id válido.
+    pub(crate) unidentified_corrupt: usize,
+}
+
+/// Lo que se obtuvo de una fila de `paired_pcs`.
+enum PcRowOutcome {
+    Valid(StoredPc),
+    Corrupt(PairedPcId),
+    Unidentified,
+}
+
+/// Lee una fila de `paired_pcs` (`id`, versión, `data`). Los errores de
+/// conversión son daños de la fila, no del archivo: se convierten en
+/// `Corrupt` o `Unidentified` y su valor se descarta. Los demás errores se
+/// propagan.
+fn read_pc_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<PcRowOutcome> {
+    let id = match row.get::<_, Vec<u8>>(0) {
+        Ok(bytes) => match <[u8; PAIRED_PC_ID_LEN]>::try_from(bytes) {
+            Ok(bytes) => PairedPcId::from_bytes(bytes),
+            Err(_) => return Ok(PcRowOutcome::Unidentified),
+        },
+        Err(e) if is_conversion_error(&e) => return Ok(PcRowOutcome::Unidentified),
+        Err(e) => return Err(e),
+    };
+    let fields = (|| Ok((row.get::<_, u16>(1)?, row.get::<_, Vec<u8>>(2)?)))();
+    match fields {
+        Ok((version, data)) => Ok(PcRowOutcome::Valid(StoredPc {
+            id,
+            version,
+            sealed: EncryptedPart::from_bytes(data),
+        })),
+        Err(e) if is_conversion_error(&e) => Ok(PcRowOutcome::Corrupt(id)),
+        Err(e) => Err(e),
+    }
 }
 
 /// Entrada viva leída del archivo.

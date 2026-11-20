@@ -1,6 +1,7 @@
 //! Pruebas unitarias de la API `Vault` (`vault/mod.rs`).
 
 use std::fs;
+use std::net::IpAddr;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, UNIX_EPOCH};
 
@@ -2290,4 +2291,418 @@ fn set_identity_for_test_stores_the_given_key() {
     vault.set_identity_for_test([7u8; 32]).unwrap();
     assert_eq!(key_bytes(&vault.identity().unwrap().unwrap()), [7u8; 32]);
     assert_eq!(pairing_row_counts(&path), (1, 0));
+}
+
+// --- PCs emparejadas (#93) ------------------------------------------------
+
+fn new_pc(byte: u8, name: &str) -> NewPairedPc {
+    NewPairedPc {
+        public_key: [byte; 32],
+        name: name.to_owned(),
+        last_ip: None,
+    }
+}
+
+fn find_pc(vault: &Vault, id: PairedPcId) -> PairedPc {
+    vault
+        .paired_pcs()
+        .unwrap()
+        .valid
+        .into_iter()
+        .find(|pc| pc.id() == id)
+        .unwrap()
+}
+
+fn ip(text: &str) -> IpAddr {
+    text.parse().unwrap()
+}
+
+/// `data` de la PC `id`, tal como está en el archivo.
+fn pc_data(path: &Path, id: PairedPcId) -> Vec<u8> {
+    raw(path)
+        .query_row(
+            "SELECT data FROM paired_pcs WHERE id = ?1",
+            [id.as_bytes().as_slice()],
+            |row| row.get(0),
+        )
+        .unwrap()
+}
+
+fn flip_pc_byte(path: &Path, id: PairedPcId, index: usize) {
+    let mut data = pc_data(path, id);
+    data[index] ^= 0x01;
+    raw(path)
+        .execute(
+            "UPDATE paired_pcs SET data = ?1 WHERE id = ?2",
+            rusqlite::params![data, id.as_bytes().as_slice()],
+        )
+        .unwrap();
+}
+
+#[test]
+fn add_list_update_remove_round_trip() {
+    let (_dir, path, mut vault) = new_vault();
+    assert!(vault.paired_pcs().unwrap().valid.is_empty());
+
+    let casa = vault.add_paired_pc(new_pc(1, "Casa")).unwrap();
+    let mut trabajo = new_pc(2, "Trabajo");
+    trabajo.last_ip = Some(ip("192.168.1.20"));
+    let trabajo = vault.add_paired_pc(trabajo).unwrap();
+
+    let listed = vault.paired_pcs().unwrap();
+    assert_eq!(listed.valid.len(), 2);
+    assert!(listed.corrupt.is_empty());
+    assert_eq!(listed.unidentified_corrupt, 0);
+    let casa_pc = find_pc(&vault, casa);
+    assert_eq!(casa_pc.public_key(), &[1; 32]);
+    assert_eq!(casa_pc.name(), "Casa");
+    assert_eq!(casa_pc.last_ip(), None);
+    assert!(casa_pc.paired_at() > 1_767_225_600_000);
+    assert_eq!(casa_pc.last_seen_at(), None);
+    assert_eq!(find_pc(&vault, trabajo).last_ip(), Some(ip("192.168.1.20")));
+
+    vault
+        .update_paired_pc(
+            casa,
+            PairedPcUpdate {
+                name: Some("Casa nueva".to_owned()),
+                last_ip: None,
+            },
+        )
+        .unwrap();
+    assert_eq!(find_pc(&vault, casa).name(), "Casa nueva");
+
+    vault.remove_paired_pc(casa).unwrap();
+    let left = vault.paired_pcs().unwrap().valid;
+    assert_eq!(left.len(), 1);
+    assert_eq!(left[0].id(), trabajo);
+    assert_eq!(pairing_row_counts(&path), (0, 1));
+}
+
+#[test]
+fn public_key_already_paired_is_rejected() {
+    let (_dir, path, mut vault) = new_vault();
+    vault.add_paired_pc(new_pc(1, "Casa")).unwrap();
+    let before = pc_row_snapshot(&path);
+    assert_eq!(
+        vault.add_paired_pc(new_pc(1, "Otro nombre")).err(),
+        Some(Error::PairedPcExists)
+    );
+    assert_eq!(pc_row_snapshot(&path), before);
+    assert_eq!(pairing_row_counts(&path), (0, 1));
+}
+
+/// Ids y datos de todas las filas de `paired_pcs`, ordenados.
+fn pc_row_snapshot(path: &Path) -> Vec<(Vec<u8>, Vec<u8>)> {
+    let conn = raw(path);
+    let mut stmt = conn
+        .prepare("SELECT id, data FROM paired_pcs ORDER BY id")
+        .unwrap();
+    stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+        .unwrap()
+        .collect::<rusqlite::Result<_>>()
+        .unwrap()
+}
+
+#[test]
+fn empty_blank_or_long_names_are_invalid() {
+    let (_dir, path, mut vault) = new_vault();
+    for name in ["", "   "] {
+        assert_eq!(
+            vault.add_paired_pc(new_pc(1, name)).err(),
+            Some(Error::InvalidPairedPc(InvalidPairedPcField::NameEmpty))
+        );
+    }
+    assert_eq!(
+        vault.add_paired_pc(new_pc(1, &"a".repeat(129))).err(),
+        Some(Error::InvalidPairedPc(InvalidPairedPcField::NameTooLong))
+    );
+    assert_eq!(pairing_row_counts(&path), (0, 0));
+    // 128 bytes se aceptan, y el nombre se recorta.
+    let id = vault.add_paired_pc(new_pc(1, &"a".repeat(128))).unwrap();
+    assert_eq!(find_pc(&vault, id).name().len(), 128);
+    let id = vault.add_paired_pc(new_pc(2, "  Casa  ")).unwrap();
+    assert_eq!(find_pc(&vault, id).name(), "Casa");
+}
+
+#[test]
+fn update_ip_sets_last_seen_at_and_keeps_the_rest() {
+    let (_dir, _path, mut vault) = new_vault();
+    let id = vault.add_paired_pc(new_pc(4, "Casa")).unwrap();
+    let before = find_pc(&vault, id);
+    assert_eq!(before.last_seen_at(), None);
+
+    vault
+        .update_paired_pc(
+            id,
+            PairedPcUpdate {
+                name: None,
+                last_ip: Some(ip("192.168.1.77")),
+            },
+        )
+        .unwrap();
+    let after = find_pc(&vault, id);
+    assert_eq!(after.last_ip(), Some(ip("192.168.1.77")));
+    assert!(after.last_seen_at().unwrap() >= before.paired_at());
+    assert_eq!(after.name(), "Casa");
+    assert_eq!(after.public_key(), before.public_key());
+    assert_eq!(after.paired_at(), before.paired_at());
+}
+
+#[test]
+fn update_without_ip_keeps_last_ip_and_last_seen_at() {
+    let (_dir, _path, mut vault) = new_vault();
+    let id = vault.add_paired_pc(new_pc(4, "Casa")).unwrap();
+    vault
+        .update_paired_pc(
+            id,
+            PairedPcUpdate {
+                name: None,
+                last_ip: Some(ip("10.0.0.5")),
+            },
+        )
+        .unwrap();
+    let seen = find_pc(&vault, id).last_seen_at();
+    vault
+        .update_paired_pc(
+            id,
+            PairedPcUpdate {
+                name: Some("Otro".to_owned()),
+                last_ip: None,
+            },
+        )
+        .unwrap();
+    let after = find_pc(&vault, id);
+    assert_eq!(after.last_ip(), Some(ip("10.0.0.5")));
+    assert_eq!(after.last_seen_at(), seen);
+    assert_eq!(after.name(), "Otro");
+}
+
+#[test]
+fn update_with_an_invalid_name_writes_nothing() {
+    let (_dir, path, mut vault) = new_vault();
+    let id = vault.add_paired_pc(new_pc(4, "Casa")).unwrap();
+    let before = pc_row_snapshot(&path);
+    assert_eq!(
+        vault
+            .update_paired_pc(
+                id,
+                PairedPcUpdate {
+                    name: Some("  ".to_owned()),
+                    last_ip: Some(ip("10.0.0.5")),
+                },
+            )
+            .err(),
+        Some(Error::InvalidPairedPc(InvalidPairedPcField::NameEmpty))
+    );
+    assert_eq!(pc_row_snapshot(&path), before);
+}
+
+#[test]
+fn update_and_remove_of_an_unknown_id_are_not_found() {
+    let (_dir, _path, mut vault) = new_vault();
+    let unknown = PairedPcId::from_bytes([9; 16]);
+    let update = PairedPcUpdate {
+        name: Some("x".to_owned()),
+        last_ip: None,
+    };
+    assert_eq!(
+        vault.update_paired_pc(unknown, update).err(),
+        Some(Error::PairedPcNotFound)
+    );
+    assert_eq!(
+        vault.remove_paired_pc(unknown).err(),
+        Some(Error::PairedPcNotFound)
+    );
+}
+
+#[test]
+fn paired_pcs_require_the_vault_unlocked() {
+    let (_dir, _path, mut vault) = new_vault();
+    let id = vault.add_paired_pc(new_pc(1, "Casa")).unwrap();
+    vault.lock();
+    assert_eq!(vault.paired_pcs().err(), Some(Error::Locked));
+    assert_eq!(
+        vault.add_paired_pc(new_pc(2, "x")).err(),
+        Some(Error::Locked)
+    );
+    assert_eq!(
+        vault
+            .update_paired_pc(
+                id,
+                PairedPcUpdate {
+                    name: None,
+                    last_ip: None
+                }
+            )
+            .err(),
+        Some(Error::Locked)
+    );
+    assert_eq!(vault.remove_paired_pc(id).err(), Some(Error::Locked));
+}
+
+#[test]
+fn paired_pcs_survive_lock_and_reopen() {
+    let (_dir, path, mut vault) = new_vault();
+    let id = vault.add_paired_pc(new_pc(1, "Casa")).unwrap();
+    vault.lock();
+    drop(vault);
+
+    let mut reopened = Vault::open(&path).unwrap();
+    reopened.unlock(&password("correcta-larga")).unwrap();
+    assert_eq!(find_pc(&reopened, id).name(), "Casa");
+}
+
+#[test]
+fn name_and_ip_are_not_plaintext_in_the_file() {
+    let (_dir, path, mut vault) = new_vault();
+    let mut pc = new_pc(1, "equipo-canario-xyz");
+    pc.last_ip = Some(ip("203.0.113.77"));
+    vault.add_paired_pc(pc).unwrap();
+    vault.lock();
+    drop(vault);
+    let bytes = fs::read(&path).unwrap();
+    assert!(!contains(&bytes, b"equipo-canario-xyz"));
+    assert!(!contains(&bytes, b"203.0.113.77"));
+    assert!(!contains(&bytes, &[203, 0, 113, 77]));
+}
+
+/// Cada daño deja la PC como dañada y no impide listar las demás, ni
+/// agregar, ni desbloquear.
+#[test]
+fn damaged_pc_rows_are_reported_and_do_not_hide_the_valid_ones() {
+    /// Cómo dañar la fila de la PC `bad` (la segunda es la buena).
+    type Damage = fn(&Path, PairedPcId, PairedPcId);
+    let damages: [(&str, Damage); 4] = [
+        ("un byte alterado", |path, bad, _| {
+            flip_pc_byte(path, bad, 30)
+        }),
+        ("versión fuera de u16", |path, bad, _| {
+            raw(path)
+                .execute(
+                    "UPDATE paired_pcs SET pc_schema_version = 70000 WHERE id = ?1",
+                    [bad.as_bytes().as_slice()],
+                )
+                .unwrap();
+        }),
+        ("movida a otro id", |path, bad, _| {
+            raw(path)
+                .execute(
+                    "UPDATE paired_pcs SET id = ?1 WHERE id = ?2",
+                    rusqlite::params![[0xEE_u8; 16].as_slice(), bad.as_bytes().as_slice()],
+                )
+                .unwrap();
+        }),
+        ("datos de la identidad", |path, bad, _| {
+            // Intercambiada con la de la identidad: otro dato autenticado.
+            let conn = raw(path);
+            let identity: Vec<u8> = conn
+                .query_row("SELECT data FROM identity", [], |row| row.get(0))
+                .unwrap();
+            conn.execute(
+                "UPDATE paired_pcs SET data = ?1 WHERE id = ?2",
+                rusqlite::params![identity, bad.as_bytes().as_slice()],
+            )
+            .unwrap();
+        }),
+    ];
+
+    for (label, damage) in damages {
+        let (_dir, path, mut vault) = new_vault();
+        vault.ensure_identity().unwrap();
+        let good = vault.add_paired_pc(new_pc(1, "Buena")).unwrap();
+        let bad = vault.add_paired_pc(new_pc(2, "Mala")).unwrap();
+        damage(&path, bad, good);
+
+        let listed = vault.paired_pcs().unwrap();
+        let ids: Vec<_> = listed.valid.iter().map(PairedPc::id).collect();
+        assert_eq!(ids, vec![good], "{label}");
+        assert_eq!(
+            listed.corrupt.len() + listed.unidentified_corrupt,
+            1,
+            "{label}"
+        );
+        // Se puede seguir usando la lista y la bóveda.
+        vault.add_paired_pc(new_pc(3, "Nueva")).unwrap();
+        assert_eq!(vault.paired_pcs().unwrap().valid.len(), 2, "{label}");
+        vault.lock();
+        assert!(vault.unlock(&password("correcta-larga")).is_ok(), "{label}");
+    }
+}
+
+#[test]
+fn pc_with_an_id_of_15_bytes_is_unidentified_corrupt() {
+    let (_dir, path, mut vault) = new_vault();
+    vault.add_paired_pc(new_pc(1, "Buena")).unwrap();
+    let conn = raw(&path);
+    conn.execute_batch("PRAGMA ignore_check_constraints = ON")
+        .unwrap();
+    conn.execute(
+        "INSERT INTO paired_pcs (id, pc_schema_version, data) VALUES (zeroblob(15), 1, zeroblob(60))",
+        [],
+    )
+    .unwrap();
+    let listed = vault.paired_pcs().unwrap();
+    assert_eq!(listed.valid.len(), 1);
+    assert!(listed.corrupt.is_empty());
+    assert_eq!(listed.unidentified_corrupt, 1);
+}
+
+#[test]
+fn remove_paired_pc_deletes_a_corrupt_row() {
+    let (_dir, path, mut vault) = new_vault();
+    let bad = vault.add_paired_pc(new_pc(2, "Mala")).unwrap();
+    flip_pc_byte(&path, bad, 30);
+    assert_eq!(vault.paired_pcs().unwrap().corrupt, vec![bad]);
+    vault.remove_paired_pc(bad).unwrap();
+    assert_eq!(pairing_row_counts(&path), (0, 0));
+    assert!(vault.paired_pcs().unwrap().corrupt.is_empty());
+}
+
+#[test]
+fn update_of_a_corrupt_pc_is_corrupt_and_writes_nothing() {
+    let (_dir, path, mut vault) = new_vault();
+    let bad = vault.add_paired_pc(new_pc(2, "Mala")).unwrap();
+    flip_pc_byte(&path, bad, 30);
+    let before = pc_row_snapshot(&path);
+    let update = PairedPcUpdate {
+        name: Some("Nueva".to_owned()),
+        last_ip: None,
+    };
+    assert_eq!(
+        vault.update_paired_pc(bad, update).err(),
+        Some(Error::CorruptPairedPc)
+    );
+    assert_eq!(pc_row_snapshot(&path), before);
+}
+
+#[test]
+fn corrupt_pc_does_not_block_unlock_or_entries() {
+    let (_dir, path, mut vault) = new_vault();
+    let entry = add_sample(&mut vault, "banco");
+    let bad = vault.add_paired_pc(new_pc(2, "Mala")).unwrap();
+    flip_pc_byte(&path, bad, 30);
+    vault.lock();
+    drop(vault);
+
+    let mut reopened = Vault::open(&path).unwrap();
+    let report = reopened.unlock(&password("correcta-larga")).unwrap();
+    assert!(report.corrupt.is_empty());
+    assert_eq!(revealed_password(&mut reopened, entry), "clave-banco");
+}
+
+#[test]
+fn identity_swapped_with_a_pc_row_is_corrupt() {
+    let (_dir, path, mut vault) = new_vault();
+    vault.ensure_identity().unwrap();
+    let pc = vault.add_paired_pc(new_pc(1, "Casa")).unwrap();
+    let pc_blob = pc_data(&path, pc);
+    let conn = raw(&path);
+    // El `CHECK` de longitud de `identity` no deja guardar un blob de otra
+    // longitud: se desactiva en la conexión de la prueba.
+    conn.execute_batch("PRAGMA ignore_check_constraints = ON")
+        .unwrap();
+    conn.execute("UPDATE identity SET data = ?1", [pc_blob])
+        .unwrap();
+    assert_eq!(vault.identity().err(), Some(Error::CorruptIdentity));
 }
