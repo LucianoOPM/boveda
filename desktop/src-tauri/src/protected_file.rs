@@ -4,7 +4,11 @@
 //! DPAPI autentica el contenido: un archivo alterado, truncado, vacío o copiado
 //! a otra cuenta no descifra y se rechaza. Leer **nunca modifica** el archivo.
 
-use std::{fmt, fs, io, path::Path};
+use std::{
+    fmt, fs,
+    io::{self, Read},
+    path::Path,
+};
 
 use zeroize::Zeroizing;
 
@@ -66,12 +70,23 @@ pub fn read_protected(
     magic: &[u8],
     version: u16,
     entropy: &[u8],
+    max_len: usize,
 ) -> Result<Option<Zeroizing<Vec<u8>>>, ProtectedFileError> {
-    let blob = match fs::read(path) {
-        Ok(blob) => blob,
+    let file = match fs::File::open(path) {
+        Ok(file) => file,
         Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(None),
         Err(_) => return Err(ProtectedFileError::Io),
     };
+    // Se lee como máximo un byte más que el tope: un archivo más grande no es
+    // nuestro y no se carga entero a memoria (ni DPAPI lo copia otra vez).
+    let mut blob = Vec::new();
+    let limit = u64::try_from(max_len).map_or(u64::MAX, |n| n.saturating_add(1));
+    if file.take(limit).read_to_end(&mut blob).is_err() {
+        return Err(ProtectedFileError::Io);
+    }
+    if blob.len() > max_len {
+        return Err(ProtectedFileError::Corrupt);
+    }
     let plain = unprotect(&blob, entropy).map_err(|_| ProtectedFileError::Protection)?;
     let header = magic.len() + 2;
     if plain.len() < header || &plain[..magic.len()] != magic {
@@ -92,6 +107,22 @@ mod tests {
     const MAGIC: &[u8] = b"boveda-prueba";
     const ENTROPY: &[u8] = b"entropia de prueba";
     const BODY: &[u8] = b"cuerpo-reconocible-0123456789";
+    const MAX: usize = 4096;
+
+    #[test]
+    fn file_over_max_len_is_corrupt_without_decrypting() {
+        let (_d, path) = setup();
+        // Basura que, sin tope, daría `Protection` al intentar descifrarla.
+        fs::write(&path, vec![0xAB; MAX + 1]).unwrap();
+        assert_err_and_untouched(&path, ProtectedFileError::Corrupt, MAGIC, 1, ENTROPY);
+    }
+
+    #[test]
+    fn file_exactly_max_len_is_still_decrypted() {
+        let (_d, path) = setup();
+        fs::write(&path, vec![0xAB; MAX]).unwrap();
+        assert_err_and_untouched(&path, ProtectedFileError::Protection, MAGIC, 1, ENTROPY);
+    }
 
     fn setup() -> (tempfile::TempDir, std::path::PathBuf) {
         let dir = tempfile::tempdir().unwrap();
@@ -111,7 +142,7 @@ mod tests {
         entropy: &[u8],
     ) {
         let before = fs::read(path).unwrap();
-        let err = read_protected(path, magic, version, entropy).unwrap_err();
+        let err = read_protected(path, magic, version, entropy, MAX).unwrap_err();
         assert_eq!(err, expected);
         assert_eq!(fs::read(path).unwrap(), before, "el archivo no se toca");
     }
@@ -120,14 +151,20 @@ mod tests {
     fn roundtrip_returns_body() {
         let (_d, path) = setup();
         write_ok(&path);
-        let body = read_protected(&path, MAGIC, 1, ENTROPY).unwrap().unwrap();
+        let body = read_protected(&path, MAGIC, 1, ENTROPY, MAX)
+            .unwrap()
+            .unwrap();
         assert_eq!(body.as_slice(), BODY);
     }
 
     #[test]
     fn missing_file_is_none() {
         let (_d, path) = setup();
-        assert!(read_protected(&path, MAGIC, 1, ENTROPY).unwrap().is_none());
+        assert!(
+            read_protected(&path, MAGIC, 1, ENTROPY, MAX)
+                .unwrap()
+                .is_none()
+        );
     }
 
     #[test]
@@ -192,7 +229,7 @@ mod tests {
     #[test]
     fn directory_path_is_io_error() {
         let dir = tempfile::tempdir().unwrap();
-        let err = read_protected(dir.path(), MAGIC, 1, ENTROPY).unwrap_err();
+        let err = read_protected(dir.path(), MAGIC, 1, ENTROPY, MAX).unwrap_err();
         assert_eq!(err, ProtectedFileError::Io);
     }
 

@@ -19,6 +19,9 @@ const VERSION: u16 = 1;
 /// No es un secreto: solo separa este uso de los demás de DPAPI.
 const ENTROPY: &[u8] = b"boveda-desktop identity v1";
 const KEY_LEN: usize = 32;
+/// Tope del archivo antes de leerlo: el sobre de DPAPI de 53 bytes ocupa unos
+/// cientos; más que esto no es nuestro archivo y no se lee entero a memoria.
+const MAX_FILE_BYTES: usize = 1024;
 
 /// Por qué no se pudo cargar o crear la identidad. Sin datos de la llave.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -76,7 +79,7 @@ impl IdentityStore {
     /// Carga la identidad; si el archivo **no existe**, genera una, la guarda y
     /// la devuelve. Cualquier otro problema es un error y no se modifica nada.
     pub fn load_or_create(&self) -> Result<KeyPair, IdentityError> {
-        if let Some(body) = read_protected(&self.path, MAGIC, VERSION, ENTROPY)? {
+        if let Some(body) = read_protected(&self.path, MAGIC, VERSION, ENTROPY, MAX_FILE_BYTES)? {
             if body.len() != KEY_LEN {
                 return Err(IdentityError::Corrupt);
             }

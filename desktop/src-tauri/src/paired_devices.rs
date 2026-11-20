@@ -30,6 +30,11 @@ pub const MAX_NAME_BYTES: usize = 128;
 /// nombre más su longitud (2), la llave (32) y la fecha (10), más la cuenta.
 const MAX_BODY_BYTES: usize = MAX_DEVICES * (MAX_NAME_BYTES + 2 + 32 + 10) + 8;
 
+/// Tope del archivo antes de leerlo: el cuerpo máximo más el margen del sobre de
+/// DPAPI (cientos de bytes). Más que esto no es nuestro archivo y no se lee
+/// entero a memoria.
+const MAX_FILE_BYTES: usize = MAX_BODY_BYTES + 1024;
+
 /// Un celular emparejado. Se identifica por su llave pública, que es única.
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PairedDevice {
@@ -120,7 +125,7 @@ impl PairedDeviceStore {
     /// existe, debe descifrarse y validarse **por completo** o se devuelve el
     /// error; nunca se reemplaza por una lista vacía.
     pub fn open(path: PathBuf) -> Result<Self, PairedDevicesError> {
-        let devices = match read_protected(&path, MAGIC, VERSION, ENTROPY)? {
+        let devices = match read_protected(&path, MAGIC, VERSION, ENTROPY, MAX_FILE_BYTES)? {
             None => Vec::new(),
             Some(body) => decode(&body)?,
         };
