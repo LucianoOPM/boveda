@@ -7,6 +7,8 @@ use tauri::{
 };
 use tauri_plugin_autostart::ManagerExt;
 
+use crate::autostart::toggle_autostart;
+
 pub(crate) const ID_PAIR: &str = "pair";
 pub(crate) const ID_DEVICES: &str = "devices";
 pub(crate) const ID_AUTOSTART: &str = "autostart";
@@ -53,7 +55,6 @@ pub(crate) fn menu_spec(autostart_enabled: bool) -> Vec<MenuEntry> {
 
 /// La casilla de «Iniciar con Windows», guardada como estado de la app para
 /// poder fijar su marca tras cada cambio.
-#[expect(dead_code, reason = "lo lee la lógica de la casilla (siguiente tarea)")]
 pub(crate) struct AutostartItem(pub CheckMenuItem<Wry>);
 
 pub fn setup(app: &App) -> tauri::Result<()> {
@@ -98,8 +99,19 @@ pub fn setup(app: &App) -> tauri::Result<()> {
         // emparejados»; ese comportamiento lo implementa #107.
         .show_menu_on_left_click(true)
         .on_menu_event(|app, event| {
-            if event.id().as_ref() == ID_QUIT {
-                app.exit(0);
+            match event.id().as_ref() {
+                ID_QUIT => app.exit(0),
+                ID_AUTOSTART => {
+                    // Windows ya cambió la marca al hacer clic; se reconcilia
+                    // siempre con el estado real del sistema.
+                    let item = app.state::<AutostartItem>();
+                    let shown = item.0.is_checked().unwrap_or(false);
+                    let real = toggle_autostart(&*app.autolaunch(), shown);
+                    if let Err(error) = item.0.set_checked(real) {
+                        eprintln!("No se pudo actualizar la casilla: {error}");
+                    }
+                }
+                _ => {}
             }
         });
     if let Some(icon) = app.default_window_icon() {
