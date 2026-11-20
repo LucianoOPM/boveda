@@ -89,7 +89,9 @@ boveda/
             ├── tray.rs       # ícono y menú de la bandeja (menu_spec)
             ├── autostart.rs  # lógica de la casilla Iniciar con Windows
             ├── server.rs     # escucha, mDNS, acepta solo emparejados
-            ├── clipboard.rs  # escritura excluida del historial y borrado a 30 s
+            ├── clipboard.rs  # API del portapapeles (#98): ClipboardManager con un hilo trabajador, Config, ClipboardError y el aviso «Contraseña lista para pegar»
+            ├── clipboard/    # backend.rs (trait), fingerprint.rs (huella), worker.rs (vencimientos y reintentos), windows.rs (arboard y clipboard-win); fake.rs y tests.rs solo en pruebas
+            │                 # (pruebas con el portapapeles real, #[ignore], en src-tauri/tests/clipboard_windows.rs)
             └── identity.rs   # llave privada protegida con DPAPI
 ```
 
@@ -125,7 +127,8 @@ Sin dependencias de interfaz ni de plataforma.
 
 ### desktop/ (Windows, Tauri 2)
 
-- `src-tauri/src/`: bandeja con su menú de cuatro opciones (`tray.rs`; «Emparejar celular» y «Dispositivos emparejados» siguen deshabilitadas hasta #101 y #107) y la casilla «Iniciar con Windows» (`autostart.rs`). Faltan el servidor de red local, el portapapeles y la identidad protegida con DPAPI. Sin ventana al arrancar; instancia única con `tauri-plugin-single-instance` 2.5.5. «Iniciar con Windows» usa `tauri-plugin-autostart` 2.7.0 y no tiene archivo de ajustes: la casilla lee y reconcilia `is_enabled()`, que consulta la clave `Run` del usuario en el registro. Ambos plugins piden `tauri` 2.12 o posterior.
+- `src-tauri/src/`: bandeja con su menú de cuatro opciones (`tray.rs`; «Emparejar celular» y «Dispositivos emparejados» siguen deshabilitadas hasta #101 y #107) y la casilla «Iniciar con Windows» (`autostart.rs`). Faltan el servidor de red local y la identidad protegida con DPAPI. Sin ventana al arrancar; instancia única con `tauri-plugin-single-instance` 2.5.5. «Iniciar con Windows» usa `tauri-plugin-autostart` 2.7.0 y no tiene archivo de ajustes: la casilla lee y reconcilia `is_enabled()`, que consulta la clave `Run` del usuario en el registro. Ambos plugins piden `tauri` 2.12 o posterior.
+- `src-tauri/src/clipboard/` (#98): `ClipboardManager` (estado de la app, arrancado con `start()`) recibe una contraseña (`&SecretString`) por `deliver`, la escribe con `arboard` excluida del historial de Win+V y de la nube, y a los 30 s la borra solo si el portapapeles todavía la contiene. Un único hilo trabajador, con un canal, `recv_timeout` e `Instant`, es el único que toca el portapapeles. Solo guarda una huella de 64 bits (`RandomState` creada con el gestor), nunca la contraseña. Rechaza contraseñas vacías o con `\0` (`InvalidPassword`) antes de tocar nada, porque Windows las pegaría truncadas. Un envío nuevo reemplaza el temporizador solo si su escritura salió bien; una escritura de resultado dudoso intenta limpiarse al instante y, si no puede comprobarlo, deja una entrada de limpieza con reintentos acotados (como máximo dos entradas, tres reintentos cada una). «Salir» pide un último intento de limpieza (`RunEvent::Exit`, espera máxima de 2 s). El aviso lo muestra `tauri-plugin-notification` desde Rust (sin permisos de capability). Nadie lo llama todavía: lo usarán el servidor de red (#100) y el flujo de punta a punta (#104).
 - `src/`: interfaz mínima (esqueleto de React y `styles/tokens.css`); la ventana del QR y la lista de dispositivos llegan con #101 y #107.
 
 ## Flujos principales
@@ -156,6 +159,8 @@ Sin dependencias de interfaz ni de plataforma.
 | Un apretón de manos terminado no autoriza | La confirmación del usuario en la PC es obligatoria y está impuesta por tipos: solo `accept` produce el dispositivo de la PC y solo una aceptación autenticada produce la PC del celular; el núcleo nunca persiste la confianza |
 | Envío: Noise IK, un solo envío por conexión y plazo de 30 s sin marcas de hora | IK rechaza a un celular no emparejado en la primera trama, sin contestarle; la llave efímera de la PC en cada conexión impide reproducir capturas, así que no hacen falta identificadores ni cachés; los 30 s los cuenta la PC con reloj monótono y solo limitan la recepción completa y autenticada (los relojes de los dos equipos no coinciden); la espera del `Ack` es aparte |
 | Tauri 2 | Bandeja del sistema integrada y espacio para una interfaz futura |
+| Portapapeles: el borrado condicional lee, compara y vacía bajo una sola apertura | `arboard` abre y cierra el portapapeles de Windows en cada operación y no deja mantenerlo abierto (verificado en `arboard` 3.7.0): «leer y luego vaciar» serían dos aperturas y otra aplicación podría copiar entre las dos, perdiendo su contenido. `clipboard-win` (la dependencia de `arboard` en Windows, declarada también como directa) da una guarda cuyo `Drop` cierra el portapapeles; mientras vive, ninguna otra aplicación puede abrirlo ni cambiarlo. `arboard` sigue escribiendo con las exclusiones. Si no se puede abrir o leer, no se borra nada |
+| Portapapeles: la copia en la memoria de Windows no se borra | Verificado en `arboard` 3.7.0 y `clipboard-win` 5.4.3: al escribir, el UTF-8 se convierte a UTF-16 directamente dentro del bloque de memoria global que se entrega a Windows (sin búfer intermedio nuestro); esa memoria pasa a ser del sistema y **no se puede borrar**, solo vaciar el portapapeles. Si `SetClipboardData` falla, el bloque se libera con `GlobalFree` sin sobrescribirse. Lo que sí controlamos: el texto leído para comparar va en un `Zeroizing<Vec<u8>>` con una sola reserva (sin reasignaciones), y `deliver` copia la contraseña una vez a un `SecretString` de vida corta para cruzar al hilo trabajador. No hay primitivas propias; la memoria del secreto **no** se borra por completo: es defensa en profundidad |
 
 ## Fuera de alcance del MVP
 

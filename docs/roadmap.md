@@ -1,6 +1,6 @@
 # Roadmap al MVP: gestor de contraseñas
 
-Actualizado: 2026-11-10
+Actualizado: 2026-11-20
 
 Cuatro etapas llevan del repositorio vacío al MVP; cada una termina en algo que ya funciona y tiene un criterio claro para darla por cerrada.
 
@@ -75,6 +75,7 @@ Resultado: tocas "Enviar a PC" en el celular, pones la huella y pegas la contras
 - [ ] Llave privada de la PC protegida con DPAPI.
 - [ ] Servidor en la PC: escucha solo en redes privadas, anuncio por mDNS, confirmación al emparejar y rechazo de dispositivos no emparejados.
 - [ ] Portapapeles: escribir con `arboard` excluido del historial y la nube, notificación, y borrado a los 30 s solo si sigue la misma contraseña.
+  - [x] Módulo del portapapeles de la PC (#98): `ClipboardManager` con escritura excluida (`arboard`), aviso «Contraseña lista para pegar», borrado a los 30 s por huella y bajo una sola apertura de `clipboard-win`, reintentos y cierre acotados. Probado con un portapapeles simulado; **nadie lo llama todavía** (lo conectan #100 y #104) y las pruebas manuales de Win+V, la nube y los 30 s siguen pendientes.
 - [ ] Android: escanear el QR y guardar la llave privada del celular dentro de la bóveda.
 - [ ] Al restaurar un respaldo, descartar la identidad del celular y la lista de PCs, y pedir emparejar de nuevo (ver "Formato de la bóveda" en la especificación). La limpieza ya la hace `Vault::import` (#93); falta el aviso al usuario y sus pruebas de interfaz (#106).
 - [ ] Android: enviar con huella obligatoria, buscando la PC por última IP, luego mDNS y luego IP manual.
