@@ -130,6 +130,11 @@ Para que Clippy no marque código muerto sin silenciarlo, el módulo y su API so
 - `deny.toml`: `BSL-1.0` en `allow`, con comentario.
 - La PR lista los crates nuevos de `Cargo.lock` (comparando antes y después) y el resultado de `cargo deny` y `cargo audit`.
 
+## Limitaciones conocidas
+
+- **Escritura dudosa y el historial de Win+V** (hallazgo de la revisión final). `arboard` pone el texto y después agrega los formatos de exclusión; si agregarlos falla (o si Windows no registra un formato y `arboard` omite la exclusión sin avisar), la contraseña pudo quedar un instante sin excluir y llegar al historial de Win+V o a la nube antes de la limpieza inmediata, y vaciar el portapapeles no borra entradas del historial. Es muy poco probable y no se puede detectar desde fuera; cerrarlo del todo exigiría escribir también con `clipboard-win` bajo una sola guarda, lo que choca con «escribe con `arboard`» y queda como decisión pendiente.
+- **`deliver` espera sin plazo** la respuesta del trabajador: si un intento de borrado anterior quedó dentro de la lectura esperando a una aplicación con renderizado diferido que no responde, `deliver` tarda lo que tarde Windows. #100 debe tenerlo en cuenta al fijar el plazo con el que contesta al celular.
+
 ## Qué queda al constructor
 
 - Forma exacta de `ClipboardError` y `WriteError` (sin datos sensibles) y cómo se inyecta el reloj.
