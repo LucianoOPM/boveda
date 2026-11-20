@@ -215,3 +215,9 @@
 - [ ] **Step 5: Verificación final**, cada una por separado: `cargo fmt --all`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace`, `cargo audit`, `cargo deny check`. Listar los crates nuevos de `Cargo.lock` (Task 1) para la PR.
 - [ ] **Step 6: Commit.** `docs: portapapeles de Windows en la arquitectura, la especificación y el roadmap (#98)`.
 - [ ] **Step 7: Pruebas manuales (las corre el usuario con el compilado de `bun run tauri build --no-bundle`, preguntar antes de compilar, o con `manual_demo_writes_waits_and_clears`):** (1) Win+V no muestra la contraseña; (2) con la sincronización del portapapeles activa, no aparece en otro equipo; (3) a los 30 s el portapapeles queda vacío; (4) si antes se copia otra cosa, no se toca; (5) el toast «Contraseña lista para pegar» se ve. Documentar en la PR cuáles se corrieron y cuáles no.
+
+## Addenda (2026-11-20, tras la sonda entre procesos)
+
+- **Cambio:** el borrado condicional abre con una ventana propietaria (`clipboard/message_window.rs`, `windows-sys`) en vez de `NULL`; ver «Hallazgo» en el diseño. La Task 7 del plan describía `new_attempts(5)`: queda sustituido por `new_attempts_for(hwnd, 5)`.
+- **Pruebas reales:** el usuario cambió la validación a manual; las `#[ignore]` no se ejecutan más (Task 7, paso 4, y la mutación, quedan sin hacer).
+- **Disparador de depuración** `dev_demo.rs`: añadido para el recorrido manual; temporal.

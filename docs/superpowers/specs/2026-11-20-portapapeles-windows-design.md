@@ -33,12 +33,12 @@ Cuando la PC reciba una contraseña del celular (#100, #104), `desktop/` debe de
 **Verificado en el código** (`arboard` 3.7.0, `src/platform/windows.rs`; `clipboard-win` 5.4.3):
 
 - `arboard` en Windows **abre y cierra el portapapeles en cada operación** (`Clipboard::open` dentro de cada `Get`, `Set` y `Clear`; el comentario del código lo dice: «opened for every operation and then closed afterwards»). Su API pública no permite mantenerlo abierto entre una lectura y un borrado. Con `arboard` solo, `get_text()` y `clear()` son dos aperturas distintas y entre ellas queda una ventana, corta pero real.
-- `arboard` es una envoltura de `clipboard-win`, que sí expone una guarda: `clipboard_win::Clipboard::new_attempts(n)` abre (`OpenClipboard`) y su `Drop` cierra (`CloseClipboard`); con la guarda viva se pueden llamar `raw::is_format_avail`, `raw::get_string` y `raw::empty`. Según la documentación de Win32, mientras un proceso tiene el portapapeles abierto ningún otro puede abrirlo ni modificarlo, así que leer, comparar y vaciar dentro de **una sola apertura** es atómico frente a otras aplicaciones.
+- `arboard` es una envoltura de `clipboard-win`, que sí expone una guarda: `clipboard_win::Clipboard::new_attempts(n)` abre (`OpenClipboard`) y su `Drop` cierra (`CloseClipboard`); con la guarda viva se pueden llamar `raw::is_format_avail`, `raw::get_string` y `raw::empty`. Se supuso que, mientras un proceso tiene el portapapeles abierto, ningún otro puede abrirlo ni modificarlo, de modo que leer, comparar y vaciar dentro de **una sola apertura** sería atómico frente a otras aplicaciones. **Esa suposición solo es cierta con un propietario real (una ventana), no con `NULL`**: ver «Hallazgo» más abajo.
 - `clipboard-win` es la dependencia de Windows de `arboard`, así que `arboard` ya la trae. **Corrección:** ni `arboard` ni `clipboard-win` están hoy en `Cargo.lock` (comprobado el 2026-11-20); entran las dos con esta issue. Declarar `clipboard-win` directamente **no suma crates a los que ya trae `arboard`**, porque la misma versión (5.4.x) cubre a ambos; la lista exacta de crates nuevos (`arboard`, `clipboard-win`, `error-code` y lo que traiga el plugin de notificaciones) se calcula comparando `Cargo.lock` antes y después, y va en la PR.
 
 **Solución mínima (decisión).** `arboard` escribe (lo que piden la especificación y `desktop/CLAUDE.md`). El borrado condicional usa `clipboard-win` directamente, dentro de una función única `clear_if_matches` con **una sola guarda abierta** durante toda la operación:
 
-1. Abrir con reintentos acotados (`new_attempts`; 5 reintentos de 5 ms). La guarda (`clipboard_win::Clipboard`) cierra el portapapeles en su `Drop`, así que se libera en todos los caminos, incluidos los errores y los `return` anticipados.
+1. Crear la ventana propietaria (ver «Hallazgo») y abrir con ella y reintentos acotados (`new_attempts_for(hwnd, 5)`; 5 reintentos de 5 ms). Si no hay ventana, `Unavailable`. La guarda (`clipboard_win::Clipboard`) cierra el portapapeles en su `Drop`, así que se libera en todos los caminos, incluidos los errores y los `return` anticipados.
 2. Si `CF_UNICODETEXT` no está disponible (vacío, imagen, otro formato): salir sin tocar nada → `NotOurs`.
 3. Leer el texto a un `Zeroizing<Vec<u8>>`, calcular la huella y compararla con la guardada.
 4. Si coincide, `raw::empty()` y soltar la guarda → `Cleared`. Si no, soltar la guarda sin vaciar → `NotOurs`.
@@ -58,6 +58,7 @@ La lectura, la comparación y el vaciado ocurren con la misma guarda; no se vuel
 | `clipboard-win` | 5.4.x (la misma que resuelve `arboard`), solo `cfg(windows)` | Borrado condicional bajo una sola apertura | BSL-1.0. No estaba en el lock; entra con `arboard` y declararla directo no agrega otra versión |
 | `tauri-plugin-notification` | 2.8.1 (estable más reciente; la 3.0 es alpha) | Notificación | Pide Rust 1.90 (el repo usa 1.100) y `tauri` 2.12 (el lock tiene 2.12.7). Trae `notify-rust` 4.19. Solo API de Rust: sin permisos de capability. Licencias y avisos por confirmar con `cargo deny` y `cargo audit` |
 | `secrecy`, `zeroize` | las del lock | `SecretString` y `Zeroizing` | Misma versión que el núcleo; sin crates nuevos |
+| `windows-sys` | 0.61 (ya en el lock), solo `cfg(windows)`, features `Win32_Foundation` y `Win32_UI_WindowsAndMessaging` | Ventana de solo mensajes propietaria del portapapeles | Aprobada el 2026-11-20 tras el hallazgo; no agrega crates al lock |
 
 No se agrega ninguna otra. En desarrollo el toast de Windows puede mostrarse con el nombre de PowerShell; con la app instalada usa el `identifier`. Se anota en `docs/diferencias-diseno.md`.
 
@@ -130,7 +131,7 @@ Para que Clippy no marque código muerto sin silenciarlo, el módulo y su API so
 - `deny.toml`: `BSL-1.0` en `allow`, con comentario.
 - La PR lista los crates nuevos de `Cargo.lock` (comparando antes y después) y el resultado de `cargo deny` y `cargo audit`.
 
-## Hallazgo: `OpenClipboard(NULL)` no excluye (sonda entre procesos, 2026-11-20)
+## Hallazgo: `OpenClipboard(NULL)` no excluye (sonda entre procesos, 2026-11-20) y su corrección
 
 La sección «La carrera entre comprobar y borrar» supone que, con la guarda de `clipboard-win` abierta, ninguna otra aplicación puede abrir ni cambiar el portapapeles. **Medido en Windows 11 (build 26300) con dos procesos independientes, es falso cuando el propietario es `NULL`**, que es como abre `clipboard-win` (`Clipboard::new_attempts`). El propietario que cuenta es la ventana (`hwnd`); con `NULL` no hay bloqueo.
 
@@ -142,9 +143,13 @@ La sección «La carrera entre comprobar y borrar» supone que, con la guarda de
 
 Con `NULL`, además, otro proceso pudo **escribir** (`WRITE=ok`) y **ejecutar el mismo borrado condicional** (`CLEAR=Cleared`) mientras el primero «retenía» la apertura; con una ventana propietaria, otro hilo del mismo proceso también queda excluido. Evidencia: `examples/clipboard_probe.rs` y las pruebas `#[ignore]` de `tests/clipboard_windows.rs` (cuatro fallan hoy, por esa razón), y el experimento de la tabla (guardado fuera del repo).
 
-**Consecuencia:** hoy el borrado condicional **no** es atómico frente a otras aplicaciones; queda la ventana, corta, entre comprobar y vaciar. La #98 no debe cerrarse con esa afirmación.
+**Consecuencia:** con `NULL` el borrado condicional **no** era atómico frente a otras aplicaciones; quedaba la ventana, corta, entre comprobar y vaciar.
 
-**Propuesta (pendiente de aprobación; no implementada):** abrir con una ventana propietaria propia y de vida corta, creada en cada `clear_if_matches` en el hilo trabajador: crear la ventana de solo mensajes, `Clipboard::new_attempts_for(hwnd, 5)`, leer, comparar y vaciar, soltar la guarda y destruir la ventana. Destruirla al final evita dejar a la ventana como propietaria del portapapeles (si no, cada copia de otra aplicación le enviaría `WM_DESTROYCLIPBOARD` a un hilo que no procesa mensajes). Cuesta dos llamadas de `user32` (`CreateWindowExW`, `DestroyWindow`) con `unsafe`: o la crate `windows-sys` (ya está en el lock; habría que declararla y activar las funciones de `Win32_UI_WindowsAndMessaging`) o declaraciones `extern` a mano (sin dependencias). Se validaría con las pruebas ya escritas (deben pasar) y con la mutación de «dos aperturas» (debe hacer fallar `clipboard_stays_open_while_matching`).
+**Decisión (aprobada por el usuario el 2026-11-20 e implementada):** abrir con una ventana propietaria propia y de vida corta, creada **en cada** `clear_if_matches` en el hilo trabajador: `MessageWindow::new()` (ventana de solo mensajes de clase `STATIC`), `Clipboard::new_attempts_for(hwnd, 5)`, leer, comparar y vaciar bajo esa guarda, y **soltar primero la guarda y después destruir la ventana** (la ventana se declara antes que la guarda, así que Rust las suelta en orden inverso, también en errores y salidas anticipadas). Destruirla al final evita dejar a la ventana como propietaria del portapapeles; si no, cada copia de otra aplicación le enviaría `WM_DESTROYCLIPBOARD` a un hilo que no procesa mensajes. Si no se puede crear la ventana, no se bloquea y por tanto no se borra (`Unavailable`). El `unsafe` (`CreateWindowExW`, `DestroyWindow`) está encapsulado en `clipboard/message_window.rs`, con comentarios `SAFETY`, el resultado de cada llamada comprobado y un `Drop` que destruye la ventana. Se usa `windows-sys` 0.61 (la versión que ya está en el lock; solo `Win32_Foundation` y `Win32_UI_WindowsAndMessaging`) y no declaraciones `extern` a mano. La escritura sigue siendo con `arboard`.
+
+**Validación.** El usuario prefirió validar el comportamiento funcional **a mano** en su Windows; no se ejecutan más pruebas `#[ignore]`, sondas ni mutaciones sobre su portapapeles. Las pruebas `#[ignore]` (`tests/clipboard_windows.rs`, con `examples/clipboard_probe.rs` como segundo proceso) quedan adaptadas a este comportamiento (retienen el portapapeles con una ventana propietaria) y disponibles para verificaciones futuras, pero no se han ejecutado contra el código corregido. La mutación de «dos aperturas» tampoco se ha hecho.
+
+**Disparador temporal para las pruebas manuales** (`src/dev_demo.rs`, solo `debug_assertions`): como #100 todavía no llama al gestor, con `BOVEDA_DEMO_PASSWORDS` (contraseñas ficticias separadas por comas) la app de depuración entrega la primera a los 10 s y cada siguiente 5 s después, con el mismo `deliver_and_notify`. No existe en `tauri build`; se quita con #100 y #104.
 
 ## Limitaciones conocidas
 
