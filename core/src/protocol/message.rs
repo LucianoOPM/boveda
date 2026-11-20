@@ -8,8 +8,11 @@
 // Hasta que los mensajes (oferta, envío y confirmación) usen estas piezas.
 #![allow(dead_code)]
 
-use serde::{Deserialize, Serialize};
-use zeroize::Zeroizing;
+use std::fmt;
+
+use secrecy::{ExposeSecret, ExposeSecretMut, SecretBox};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use zeroize::{ZeroizeOnDrop, Zeroizing};
 
 use super::error::{ProtocolError, Result};
 use crate::vault::entry::flavor::ZeroizingVec;
@@ -98,6 +101,94 @@ fn decode_body<'a, T: Deserialize<'a>>(kind: Kind, bytes: &'a [u8]) -> Result<T>
         return Err(ProtocolError::TrailingBytes);
     }
     Ok(body)
+}
+
+/// Código de un solo uso del emparejamiento: 32 bytes aleatorios que viajan
+/// en el QR y que la #95 usa como secreto previamente compartido (PSK) de
+/// Noise. Vive 2 minutos y se usa una vez.
+///
+/// No se puede clonar, su `Debug` no muestra el valor y se borra al soltarse.
+/// Al decodificarlo, los 32 bytes pasan por un arreglo en la pila antes de
+/// llegar al `SecretBox`: excepción aceptada (ver "Borrado de memoria" en
+/// `ARCHITECTURE.md`), por ser un secreto de vida corta que además se
+/// muestra en el QR.
+pub struct PairingCode(SecretBox<[u8; PAIRING_CODE_LEN]>);
+
+// La garantía la da `SecretBox`, que se borra al soltarse. Este marcador solo
+// la hace visible en el tipo.
+impl ZeroizeOnDrop for PairingCode {}
+
+impl PairingCode {
+    /// Genera un código nuevo con el generador del sistema, escrito
+    /// directamente en el `SecretBox`.
+    pub fn generate() -> Result<Self> {
+        let mut secret = SecretBox::<[u8; PAIRING_CODE_LEN]>::default();
+        getrandom::fill(secret.expose_secret_mut()).map_err(|_| ProtocolError::Random)?;
+        Ok(Self(secret))
+    }
+
+    /// Construye el código con esos 32 bytes.
+    pub fn from_bytes(bytes: SecretBox<[u8; PAIRING_CODE_LEN]>) -> Self {
+        Self(bytes)
+    }
+
+    /// Los 32 bytes del código.
+    pub fn expose_bytes(&self) -> &[u8; PAIRING_CODE_LEN] {
+        self.0.expose_secret()
+    }
+}
+
+impl fmt::Debug for PairingCode {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("PairingCode(..)")
+    }
+}
+
+impl Serialize for PairingCode {
+    fn serialize<S: Serializer>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error> {
+        self.0.expose_secret().serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for PairingCode {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> std::result::Result<Self, D::Error> {
+        let bytes = Zeroizing::new(<[u8; PAIRING_CODE_LEN]>::deserialize(deserializer)?);
+        let mut secret = SecretBox::<[u8; PAIRING_CODE_LEN]>::default();
+        secret.expose_secret_mut().copy_from_slice(&*bytes);
+        Ok(Self(secret))
+    }
+}
+
+/// Serialización de un `SecretString` para `#[serde(with = "secret_str")]`.
+///
+/// Es la **única** ruta por la que un secreto se serializa en este módulo, y
+/// solo se usa en el campo de la contraseña: `secrecy` no implementa
+/// `Serialize` para `SecretString` a propósito.
+///
+/// - Al serializar, `serialize_str` escribe la longitud y los bytes
+///   directamente en el búfer de `encode_body`, que tiene la capacidad exacta
+///   (sin reubicaciones ni copias intermedias).
+/// - Al deserializar, `postcard` (1.1.3) pide una `String` con `visit_str`,
+///   que hace una sola asignación de capacidad exacta (`to_owned`);
+///   `From<String>` de `SecretString` usa `into_boxed_str`, que no copia si
+///   `len == capacity`. Verificado en el código de `postcard` 1.1.3, `serde` y
+///   `secrecy` 0.10.3.
+mod secret_str {
+    use secrecy::{ExposeSecret, SecretString};
+    use serde::{Deserialize, Deserializer, Serializer};
+
+    pub(super) fn serialize<S: Serializer>(
+        value: &SecretString,
+        serializer: S,
+    ) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(value.expose_secret())
+    }
+
+    pub(super) fn deserialize<'de, D: Deserializer<'de>>(
+        deserializer: D,
+    ) -> Result<SecretString, D::Error> {
+        String::deserialize(deserializer).map(SecretString::from)
+    }
 }
 
 #[cfg(test)]

@@ -150,3 +150,103 @@ fn bad_utf8_is_malformed() {
         ProtocolError::Malformed
     );
 }
+
+// --- Código de emparejamiento y contraseña ---
+
+use secrecy::{ExposeSecret, ExposeSecretMut, SecretBox, SecretString};
+use zeroize::ZeroizeOnDrop;
+
+fn assert_zeroize_on_drop<T: ZeroizeOnDrop>() {}
+
+fn code_from(bytes: [u8; PAIRING_CODE_LEN]) -> PairingCode {
+    let mut secret = SecretBox::<[u8; PAIRING_CODE_LEN]>::default();
+    secret.expose_secret_mut().copy_from_slice(&bytes);
+    PairingCode::from_bytes(secret)
+}
+
+#[derive(Serialize, Deserialize)]
+struct WithSecret {
+    ttl: u8,
+    #[serde(with = "secret_str")]
+    password: SecretString,
+}
+
+fn with_secret(text: &str) -> WithSecret {
+    WithSecret {
+        ttl: 30,
+        password: SecretString::from(text),
+    }
+}
+
+#[test]
+fn pairing_code_generate_is_random_and_32_bytes() {
+    let a = PairingCode::generate().unwrap();
+    let b = PairingCode::generate().unwrap();
+    assert_eq!(a.expose_bytes().len(), 32);
+    assert_ne!(a.expose_bytes(), b.expose_bytes());
+    assert_ne!(a.expose_bytes(), &[0u8; 32]);
+}
+
+#[test]
+fn pairing_code_debug_hides_the_value() {
+    let debug = format!("{:?}", code_from([0xAB; 32]));
+    assert!(!debug.to_lowercase().contains("ab"), "{debug}");
+    assert!(!debug.contains("171"), "{debug}");
+    assert!(!debug.contains('['), "{debug}");
+}
+
+#[test]
+fn pairing_code_is_zeroize_on_drop() {
+    assert_zeroize_on_drop::<PairingCode>();
+}
+
+#[test]
+fn pairing_code_serializes_as_its_32_bytes() {
+    let bytes: [u8; 32] = core::array::from_fn(|i| i as u8 + 1);
+    let encoded = encode_body(Kind::PairingOffer, &code_from(bytes)).unwrap();
+    assert_eq!(&encoded[..2], &[PROTOCOL_VERSION, 1]);
+    assert_eq!(&encoded[2..], &bytes);
+    let decoded: PairingCode = decode_body(Kind::PairingOffer, &encoded).unwrap();
+    assert_eq!(decoded.expose_bytes(), &bytes);
+}
+
+#[test]
+fn secret_str_roundtrip_keeps_bytes() {
+    let long = "a".repeat(1024);
+    let texts = [
+        "",
+        "a",
+        "  x  ",
+        "\u{e9}",
+        "e\u{301}",
+        "🔐",
+        "a\0b",
+        long.as_str(),
+    ];
+    for text in texts {
+        let bytes = encode_body(Kind::Send, &with_secret(text)).unwrap();
+        let decoded: WithSecret = decode_body(Kind::Send, &bytes).unwrap();
+        assert_eq!(decoded.password.expose_secret().as_bytes(), text.as_bytes());
+        assert_eq!(decoded.ttl, 30);
+    }
+    // NFC y NFD son distintas: no se normaliza.
+    assert_ne!("\u{e9}".as_bytes(), "e\u{301}".as_bytes());
+}
+
+#[test]
+fn secret_str_serialization_does_not_reallocate() {
+    let bytes = encode_body(Kind::Send, &with_secret(&"z".repeat(1000))).unwrap();
+    assert_eq!(bytes.capacity(), bytes.len());
+}
+
+#[test]
+fn secret_str_with_trailing_bytes_still_errors() {
+    let mut bytes = encode_body(Kind::Send, &with_secret("clave"))
+        .unwrap()
+        .to_vec();
+    bytes.push(0);
+    assert_eq!(
+        decode_body::<WithSecret>(Kind::Send, &bytes).err(),
+        Some(ProtocolError::TrailingBytes)
+    );
+}
