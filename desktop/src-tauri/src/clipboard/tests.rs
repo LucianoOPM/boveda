@@ -649,3 +649,34 @@ fn failed_notification_keeps_the_timer_and_the_clear() {
     assert_eq!(fake.content(), text("prueba-no-real-1"));
     assert!(wait_until(|| fake.content() == FakeContent::Empty));
 }
+
+#[test]
+fn delivery_while_the_current_entry_is_retrying_is_served_and_replaces_it() {
+    let fake = FakeBackend::default();
+    fake.set_unavailable_for(usize::MAX);
+    // Primer intento a los 150 ms; si falla, el siguiente a los 450 ms.
+    let manager = manager_with(&fake, 150, 300);
+    assert_eq!(manager.deliver(&secret("prueba-no-real-1")), Ok(()));
+    assert!(wait_until(|| clear_calls(&fake) == 1));
+    fake.set_unavailable_for(0);
+
+    // La entrega nueva se atiende en cuanto llega, sin esperar al reintento.
+    let start = Instant::now();
+    assert_eq!(manager.deliver(&secret("prueba-no-real-2")), Ok(()));
+    assert!(start.elapsed() < Duration::from_millis(100));
+    assert_eq!(fake.content(), text("prueba-no-real-2"));
+
+    // La contraseña nueva se borra a su propio plazo (150 ms) y el reintento
+    // viejo (a los 450 ms) ya no existe: ninguna llamada de más.
+    assert!(wait_until(|| fake.content() == FakeContent::Empty));
+    std::thread::sleep(Duration::from_millis(400));
+    assert_eq!(
+        fake.calls(),
+        vec![
+            FakeCall::Write,
+            FakeCall::Clear(ClearOutcome::Unavailable),
+            FakeCall::Write,
+            FakeCall::Clear(ClearOutcome::Cleared),
+        ]
+    );
+}
