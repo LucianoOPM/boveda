@@ -24,7 +24,8 @@ pub use pairing::{
     PendingPairing, Refusal, pair_with_pc, serve_pairing,
 };
 pub use send::{
-    AwaitingAck, AwaitingResponse, AwaitingSend, ReceivedSend, Responder, SEND_FIRST_FRAME_LEN,
-    SEND_PATTERN, SEND_PROLOGUE, SEND_SECOND_FRAME_LEN, SEND_TTL, SendError, SendTimeouts, Sender,
+    AwaitingAck, AwaitingResponse, AwaitingSend, IncomingSend, ReceivedSend, Responder,
+    SEND_FIRST_FRAME_LEN, SEND_PATTERN, SEND_PROLOGUE, SEND_SECOND_FRAME_LEN, SEND_TTL, SendError,
+    SendTimeouts, Sender, receive_send, send_to_pc,
 };
 pub use transport::{CANCEL_POLL, CancelToken, MAX_SEND_FRAME_LEN, PairingTimeouts, TimedStream};

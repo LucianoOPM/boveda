@@ -497,3 +497,291 @@ fn password_never_shows_in_debug_or_errors() {
     let error = pc.read_send(now, &third).err().unwrap();
     assert!(!format!("{error} {error:?}").contains(secret));
 }
+
+// --- Conductores síncronos (Task 5), por TcpStream en 127.0.0.1 ---
+
+use std::io::{Read, Write};
+use std::net::{TcpListener, TcpStream};
+use std::thread;
+
+use crate::protocol::{CancelToken, ProtocolError};
+
+fn connected() -> (TcpStream, TcpStream) {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let client = TcpStream::connect(listener.local_addr().unwrap()).unwrap();
+    let (server, _) = listener.accept().unwrap();
+    (client, server)
+}
+
+fn quick() -> SendTimeouts {
+    SendTimeouts {
+        step: Duration::from_millis(500),
+        total: Duration::from_secs(4),
+        ack_wait: Duration::from_secs(2),
+    }
+}
+
+fn framed(bytes: &[u8]) -> Vec<u8> {
+    let mut out = (bytes.len() as u16).to_be_bytes().to_vec();
+    out.extend_from_slice(bytes);
+    out
+}
+
+/// Lee hasta que el otro extremo cierre (un reinicio también cuenta como
+/// cierre). Si no cierra a tiempo, la prueba falla.
+fn read_until_close(mut stream: TcpStream) -> Vec<u8> {
+    stream
+        .set_read_timeout(Some(Duration::from_secs(3)))
+        .unwrap();
+    let mut out = Vec::new();
+    let mut buffer = [0u8; 256];
+    loop {
+        match stream.read(&mut buffer) {
+            Ok(0) => return out,
+            Ok(n) => out.extend_from_slice(&buffer[..n]),
+            Err(e)
+                if matches!(
+                    e.kind(),
+                    ErrorKind::ConnectionReset | ErrorKind::ConnectionAborted
+                ) =>
+            {
+                return out;
+            }
+            Err(e) => panic!("el otro extremo no cerró la conexión: {e}"),
+        }
+    }
+}
+
+fn read_frame(stream: &mut TcpStream) -> Vec<u8> {
+    stream
+        .set_read_timeout(Some(Duration::from_secs(3)))
+        .unwrap();
+    let mut header = [0u8; 2];
+    stream.read_exact(&mut header).unwrap();
+    let mut body = vec![0u8; usize::from(u16::from_be_bytes(header))];
+    stream.read_exact(&mut body).unwrap();
+    body
+}
+
+fn phone_thread(
+    client: TcpStream,
+    text: &'static str,
+    cancel: CancelToken,
+    timeouts: SendTimeouts,
+) -> thread::JoinHandle<Result<AckOutcome, SendError>> {
+    thread::spawn(move || {
+        send_to_pc(
+            client,
+            &keys(2),
+            &pc_key(),
+            &message(text),
+            &cancel,
+            &timeouts,
+        )
+    })
+}
+
+fn paired(key: &PublicKey) -> bool {
+    *key == keys(2).public()
+}
+
+#[test]
+fn receive_send_and_send_to_pc_complete() {
+    let (client, server) = connected();
+    let phone = phone_thread(client, "hunter2", CancelToken::new(), quick());
+    let incoming = receive_send(server, &keys(1), paired, &CancelToken::new(), &quick()).unwrap();
+    assert_eq!(incoming.message().password().expose_secret(), "hunter2");
+    assert_eq!(incoming.peer(), keys(2).public());
+    incoming.copied().unwrap();
+    assert_eq!(phone.join().unwrap().unwrap(), AckOutcome::Copied);
+}
+
+#[test]
+fn failed_writes_the_ack_and_the_phone_sees_failed() {
+    let (client, server) = connected();
+    let phone = phone_thread(client, "x", CancelToken::new(), quick());
+    let incoming = receive_send(server, &keys(1), paired, &CancelToken::new(), &quick()).unwrap();
+    incoming.failed().unwrap();
+    assert_eq!(phone.join().unwrap().unwrap(), AckOutcome::Failed);
+}
+
+#[test]
+fn unpaired_phone_gets_zero_bytes_from_the_pc() {
+    let (mut client, server) = connected();
+    let pc = thread::spawn(move || {
+        receive_send(server, &keys(1), |_| false, &CancelToken::new(), &quick()).err()
+    });
+    client
+        .write_all(&framed(&first_frame(&keys(2), &pc_key())))
+        .unwrap();
+    assert!(read_until_close(client).is_empty());
+    assert_eq!(pc.join().unwrap(), Some(SendError::NotPaired));
+}
+
+#[test]
+fn unpaired_phone_sees_closed_through_send_to_pc() {
+    let (client, server) = connected();
+    let phone = phone_thread(client, "x", CancelToken::new(), quick());
+    let result = receive_send(server, &keys(1), |_| false, &CancelToken::new(), &quick());
+    assert_eq!(result.err(), Some(SendError::NotPaired));
+    assert_eq!(phone.join().unwrap().err(), Some(SendError::Closed));
+}
+
+#[test]
+fn first_frame_of_wrong_length_is_rejected_without_reading_the_body() {
+    for header in [[0u8, 0], [0, 95], [0, 97], [0xFF, 0xFF]] {
+        let (mut client, server) = connected();
+        client.write_all(&header).unwrap();
+        // Ningún cuerpo: si la PC intentara leerlo, vencería por el paso.
+        let started = Instant::now();
+        let result = receive_send(server, &keys(1), paired, &CancelToken::new(), &quick());
+        assert_eq!(result.err(), Some(SendError::Handshake));
+        assert!(started.elapsed() < Duration::from_millis(400));
+    }
+}
+
+#[test]
+fn oversized_or_empty_send_frame_is_rejected_before_reading_the_body() {
+    for (header, expected) in [
+        ([0u8, 0], SendError::Protocol(ProtocolError::Malformed)),
+        ([0x08, 0x01], SendError::FrameTooLarge), // 2049
+        ([0xFF, 0xFF], SendError::FrameTooLarge),
+    ] {
+        let (mut client, server) = connected();
+        let pc = thread::spawn(move || {
+            receive_send(server, &keys(1), paired, &CancelToken::new(), &quick()).err()
+        });
+        let (waiting, first) = Sender::new(&keys(2), &pc_key())
+            .unwrap()
+            .first_message()
+            .unwrap();
+        client.write_all(&framed(&first)).unwrap();
+        drop(waiting);
+        let _second = read_frame(&mut client);
+        client.write_all(&header).unwrap();
+        assert_eq!(pc.join().unwrap(), Some(expected));
+    }
+}
+
+#[test]
+fn silent_client_hits_the_step_timeout_before_the_total() {
+    let (_client, server) = connected();
+    let timeouts = SendTimeouts {
+        step: Duration::from_millis(200),
+        total: Duration::from_secs(4),
+        ack_wait: Duration::from_secs(1),
+    };
+    let result = receive_send(server, &keys(1), paired, &CancelToken::new(), &timeouts);
+    assert_eq!(result.err(), Some(SendError::Timeout));
+}
+
+#[test]
+fn silent_client_after_the_total_deadline_is_expired() {
+    let (_client, server) = connected();
+    let timeouts = SendTimeouts {
+        step: Duration::from_secs(2),
+        total: Duration::from_millis(300),
+        ack_wait: Duration::from_secs(1),
+    };
+    let started = Instant::now();
+    let result = receive_send(server, &keys(1), paired, &CancelToken::new(), &timeouts);
+    assert_eq!(result.err(), Some(SendError::Expired));
+    assert!(started.elapsed() < Duration::from_secs(1));
+}
+
+#[test]
+fn message_that_arrives_after_the_total_deadline_is_expired_and_not_delivered() {
+    let (mut client, server) = connected();
+    let timeouts = SendTimeouts {
+        step: Duration::from_secs(2),
+        total: Duration::from_millis(600),
+        ack_wait: Duration::from_secs(1),
+    };
+    let pc = thread::spawn(move || {
+        receive_send(server, &keys(1), paired, &CancelToken::new(), &timeouts).err()
+    });
+    let (waiting, first) = Sender::new(&keys(2), &pc_key())
+        .unwrap()
+        .first_message()
+        .unwrap();
+    client.write_all(&framed(&first)).unwrap();
+    let second = read_frame(&mut client);
+    let (_, third) = waiting.read_second(&second, &message("tarde")).unwrap();
+    thread::sleep(Duration::from_millis(900));
+    let _ = client.write_all(&framed(&third));
+    assert_eq!(pc.join().unwrap(), Some(SendError::Expired));
+}
+
+#[test]
+fn cancel_returns_cancelled_quickly_on_both_sides() {
+    // PC: un cliente que conecta y no manda nada.
+    let (_client, server) = connected();
+    let cancel = CancelToken::new();
+    let token = cancel.clone();
+    let pc = thread::spawn(move || {
+        let started = Instant::now();
+        let result = receive_send(server, &keys(1), paired, &cancel, &SendTimeouts::default());
+        (result.err(), started.elapsed())
+    });
+    thread::sleep(Duration::from_millis(100));
+    token.cancel();
+    let (error, elapsed) = pc.join().unwrap();
+    assert_eq!(error, Some(SendError::Cancelled));
+    assert!(elapsed < Duration::from_secs(1));
+
+    // Celular: una PC que acepta y no contesta.
+    let (client, _server) = connected();
+    let cancel = CancelToken::new();
+    let token = cancel.clone();
+    let phone = phone_thread(client, "x", cancel, SendTimeouts::default());
+    thread::sleep(Duration::from_millis(100));
+    let started = Instant::now();
+    token.cancel();
+    assert_eq!(phone.join().unwrap().err(), Some(SendError::Cancelled));
+    assert!(started.elapsed() < Duration::from_secs(1));
+}
+
+#[test]
+fn dropping_incoming_send_closes_without_ack() {
+    let (client, server) = connected();
+    let phone = phone_thread(client, "x", CancelToken::new(), quick());
+    let incoming = receive_send(server, &keys(1), paired, &CancelToken::new(), &quick()).unwrap();
+    drop(incoming);
+    assert_eq!(phone.join().unwrap().err(), Some(SendError::Closed));
+}
+
+#[test]
+fn a_second_frame_after_the_first_message_is_never_read() {
+    let (mut client, server) = connected();
+    let pc = thread::spawn(move || {
+        let incoming =
+            receive_send(server, &keys(1), paired, &CancelToken::new(), &quick()).unwrap();
+        let text = incoming.message().password().expose_secret().to_string();
+        incoming.copied().unwrap();
+        text
+    });
+    let (waiting, first) = Sender::new(&keys(2), &pc_key())
+        .unwrap()
+        .first_message()
+        .unwrap();
+    client.write_all(&framed(&first)).unwrap();
+    let second = read_frame(&mut client);
+    let (mut awaiting_ack, third) = waiting.read_second(&second, &message("uno")).unwrap();
+    // Un segundo mensaje cifrado válido (contador 1), pegado al primero.
+    let mut buffer = [0u8; 256];
+    let plain = message("dos").encode().unwrap();
+    let len = awaiting_ack
+        .transport
+        .write_message(&plain, &mut buffer)
+        .unwrap();
+    let mut both = framed(&third);
+    both.extend_from_slice(&framed(&buffer[..len]));
+    client.write_all(&both).unwrap();
+    // La PC entrega solo el primero.
+    assert_eq!(pc.join().unwrap(), "uno");
+    // Lo que el celular recibe es, como mucho, la confirmación del primero: la
+    // PC cierra sin leer el segundo (un cierre con datos sin leer puede llegar
+    // como reinicio y perder la confirmación; las dos cosas son válidas).
+    let received = read_until_close(client);
+    assert!(received.is_empty() || received.len() == 2 + 19);
+}

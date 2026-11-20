@@ -27,7 +27,9 @@ use super::error::ProtocolError;
 use super::identity::{KeyPair, PublicKey};
 use super::message::{Ack, AckOutcome, SendMessage};
 use super::pairing::{Frame, PairingError};
-use super::transport::MAX_SEND_FRAME_LEN;
+use super::transport::{
+    CancelToken, MAX_SEND_FRAME_LEN, TimedStream, read_frame_body, read_frame_header, write_frame,
+};
 
 /// Patrón Noise del envío: el celular conoce la llave de la PC y la PC aprende
 /// la del celular en la primera trama.
@@ -228,6 +230,12 @@ impl AwaitingSend {
         self.peer
     }
 
+    /// Cambia el plazo (lo usa el conductor con `SendTimeouts::total`).
+    pub(crate) fn with_deadline(mut self, deadline: Instant) -> Self {
+        self.deadline = deadline;
+        self
+    }
+
     /// Lee la trama 3: el `SendMessage` cifrado por el canal Noise.
     ///
     /// `now` es el instante en que la trama llegó completa. Desde `deadline`
@@ -403,6 +411,176 @@ impl AwaitingAck {
 
 /// Etiqueta de autenticación de ChaCha20-Poly1305.
 const TAG_LEN: usize = 16;
+
+/// Un timeout que ocurre con el plazo total vencido es una caducidad; si no,
+/// es solo un paso lento. El resto de los errores pasa igual.
+fn classify(error: PairingError, deadline: Instant) -> SendError {
+    match SendError::from(error) {
+        SendError::Timeout if Instant::now() >= deadline => SendError::Expired,
+        other => other,
+    }
+}
+
+/// Conductor de la PC: atiende **una** conexión entrante hasta tener un
+/// [`SendMessage`] autenticado, autorizado y dentro de plazo, y lo devuelve
+/// como [`IncomingSend`] a la espera de que la app lo escriba en el
+/// portapapeles.
+///
+/// Los [`SendTimeouts::total`] (30 s por defecto) se cuentan desde que se
+/// entra: la app la llama justo al aceptar la conexión. Si un paso agota su
+/// plazo con el total ya vencido, el error es [`SendError::Expired`]; si no,
+/// [`SendError::Timeout`]. Una llave no emparejada se cierra **sin escribir
+/// nada**. La conexión se recibe por valor y se cierra al soltarse, en
+/// cualquier camino de salida con error.
+pub fn receive_send<S: TimedStream>(
+    mut stream: S,
+    identity: &KeyPair,
+    is_paired: impl Fn(&PublicKey) -> bool,
+    cancel: &CancelToken,
+    timeouts: &SendTimeouts,
+) -> Result<IncomingSend<S>, SendError> {
+    let deadline = Instant::now() + timeouts.total;
+    let step = timeouts.step;
+    let late = |error| classify(error, deadline);
+
+    let len = read_frame_header(&mut stream, deadline, step, cancel).map_err(late)?;
+    if len != SEND_FIRST_FRAME_LEN {
+        // Se rechaza sin leer el cuerpo ni contestar.
+        return Err(SendError::Handshake);
+    }
+    let first = read_frame_body(&mut stream, len, MAX_SEND_FRAME_LEN, deadline, step, cancel)
+        .map_err(late)?;
+    let (awaiting, second) =
+        Responder::new(identity).read_first(Instant::now(), &first, is_paired)?;
+    let awaiting = awaiting.with_deadline(deadline);
+    write_frame(
+        &mut stream,
+        &second,
+        MAX_SEND_FRAME_LEN,
+        deadline,
+        step,
+        cancel,
+    )
+    .map_err(late)?;
+
+    let len = read_frame_header(&mut stream, deadline, step, cancel).map_err(late)?;
+    let frame = read_frame_body(&mut stream, len, MAX_SEND_FRAME_LEN, deadline, step, cancel)
+        .map_err(late)?;
+    let received = awaiting.read_send(Instant::now(), &frame)?;
+    Ok(IncomingSend {
+        stream,
+        received,
+        step,
+        cancel: cancel.clone(),
+    })
+}
+
+/// Envío recibido, a la espera de que la app escriba la contraseña en el
+/// portapapeles y conteste con [`copied`](Self::copied) o
+/// [`failed`](Self::failed).
+///
+/// El núcleo no lanza hilos ni temporizadores. Soltarlo sin contestar cierra la
+/// conexión sin `Ack`, y el celular lo ve como `Closed`. La contraseña se borra
+/// al soltarse.
+pub struct IncomingSend<S> {
+    stream: S,
+    received: ReceivedSend,
+    step: Duration,
+    cancel: CancelToken,
+}
+
+impl<S: TimedStream> IncomingSend<S> {
+    /// Llave pública del celular.
+    pub fn peer(&self) -> PublicKey {
+        self.received.peer()
+    }
+
+    /// El mensaje recibido.
+    pub fn message(&self) -> &SendMessage {
+        self.received.message()
+    }
+
+    /// La contraseña quedó en el portapapeles: escribe `Copied` y cierra.
+    pub fn copied(self) -> Result<(), SendError> {
+        self.answer(AckOutcome::Copied)
+    }
+
+    /// No se pudo escribir en el portapapeles: escribe `Failed` y cierra.
+    pub fn failed(self) -> Result<(), SendError> {
+        self.answer(AckOutcome::Failed)
+    }
+
+    fn answer(self, outcome: AckOutcome) -> Result<(), SendError> {
+        let Self {
+            mut stream,
+            received,
+            step,
+            cancel,
+        } = self;
+        // `ack` consume el envío: la contraseña se borra antes de escribir.
+        let frame = received.ack(outcome)?;
+        write_frame(
+            &mut stream,
+            &frame,
+            ACK_BUFFER,
+            Instant::now() + step,
+            step,
+            &cancel,
+        )?;
+        Ok(())
+    }
+}
+
+/// Conductor del celular: envía `message` a la PC por `stream` (ya conectado)
+/// y devuelve la confirmación. La conexión se cierra al terminar, con o sin
+/// error.
+///
+/// Si la segunda trama no se autentica (`PeerNotAuthentic`), la contraseña no
+/// sale. Una PC que no tiene emparejado a este celular cierra sin contestar: el
+/// celular ve `Closed`, igual que ante un corte de red. Que la PC conteste
+/// `Failed` es `Ok(AckOutcome::Failed)`. La espera del `Ack` dura como máximo
+/// [`SendTimeouts::ack_wait`], aparte del resto.
+pub fn send_to_pc<S: TimedStream>(
+    mut stream: S,
+    identity: &KeyPair,
+    pc_key: &PublicKey,
+    message: &SendMessage,
+    cancel: &CancelToken,
+    timeouts: &SendTimeouts,
+) -> Result<AckOutcome, SendError> {
+    let deadline = Instant::now() + timeouts.total;
+    let step = timeouts.step;
+
+    let (awaiting, first) = Sender::new(identity, pc_key)?.first_message()?;
+    write_frame(
+        &mut stream,
+        &first,
+        MAX_SEND_FRAME_LEN,
+        deadline,
+        step,
+        cancel,
+    )?;
+    let len = read_frame_header(&mut stream, deadline, step, cancel)?;
+    if len != SEND_SECOND_FRAME_LEN {
+        return Err(SendError::PeerNotAuthentic);
+    }
+    let second = read_frame_body(&mut stream, len, MAX_SEND_FRAME_LEN, deadline, step, cancel)?;
+    let (awaiting_ack, third) = awaiting.read_second(&second, message)?;
+    write_frame(
+        &mut stream,
+        &third,
+        MAX_SEND_FRAME_LEN,
+        deadline,
+        step,
+        cancel,
+    )?;
+
+    let wait = timeouts.ack_wait;
+    let ack_deadline = Instant::now() + wait;
+    let len = read_frame_header(&mut stream, ack_deadline, wait, cancel)?;
+    let frame = read_frame_body(&mut stream, len, ACK_BUFFER, ack_deadline, wait, cancel)?;
+    awaiting_ack.read_ack(&frame)
+}
 
 #[cfg(test)]
 mod tests;
