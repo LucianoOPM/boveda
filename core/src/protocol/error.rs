@@ -61,6 +61,8 @@ pub enum InvalidField {
     Port,
     #[error("la dirección no es válida")]
     Address,
+    #[error("el nombre del dispositivo no es válido")]
+    DeviceName,
 }
 
 /// Resultado con el [`ProtocolError`].

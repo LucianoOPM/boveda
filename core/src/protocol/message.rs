@@ -42,6 +42,8 @@ enum Kind {
     PairingOffer = 1,
     Send = 2,
     Ack = 3,
+    PairingRequest = 4,
+    PairingReply = 5,
 }
 
 /// Codifica `body` como `versión | tipo | cuerpo`.
@@ -251,6 +253,54 @@ fn validate_address(address: &SocketAddr) -> Result<()> {
     Ok(())
 }
 
+/// Longitud máxima del nombre de un dispositivo, en bytes UTF-8 (la misma que
+/// el nombre de una PC emparejada en la bóveda).
+pub const MAX_DEVICE_NAME_BYTES: usize = 128;
+
+/// Nombre que un dispositivo se da a sí mismo en el emparejamiento (#95).
+///
+/// Es solo informativo: la identidad de un dispositivo es su llave pública.
+/// Se recorta y mide de 1 a 128 bytes UTF-8; no puede traer caracteres de
+/// control ni de dirección o separación de texto, que servirían para
+/// suplantar lo que muestra el diálogo de confirmación. No se normaliza a
+/// NFC. Su `Debug` no muestra el texto.
+#[derive(Clone, PartialEq, Eq)]
+pub struct DeviceName(String);
+
+impl DeviceName {
+    /// Recorta y valida el nombre; si no cumple, `InvalidField::DeviceName`.
+    pub fn new(name: &str) -> Result<Self> {
+        let trimmed = name.trim();
+        if trimmed.is_empty()
+            || trimmed.len() > MAX_DEVICE_NAME_BYTES
+            || trimmed.chars().any(is_forbidden)
+        {
+            return Err(ProtocolError::InvalidField(InvalidField::DeviceName));
+        }
+        Ok(Self(trimmed.to_owned()))
+    }
+
+    /// El nombre, ya recortado.
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl fmt::Debug for DeviceName {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "DeviceName({} bytes)", self.0.len())
+    }
+}
+
+/// Caracteres de control y de dirección o separación de texto.
+fn is_forbidden(c: char) -> bool {
+    c.is_control()
+        || matches!(
+            u32::from(c),
+            0x061C | 0x200E | 0x200F | 0x2028 | 0x2029 | 0x202A..=0x202E | 0x2066..=0x2069
+        )
+}
+
 /// Envío de una contraseña a la PC.
 ///
 /// El tiempo de vida es **relativo**: 30 s desde que la PC recibe el mensaje,
@@ -366,6 +416,88 @@ impl Ack {
     /// Decodifica una confirmación.
     pub fn decode(bytes: &[u8]) -> Result<Self> {
         decode_body(Kind::Ack, bytes)
+    }
+}
+
+/// Cuerpo de [`PairingRequest`] en el cable: el nombre como cadena.
+#[derive(Serialize, Deserialize)]
+struct RequestBody {
+    name: String,
+}
+
+/// Petición de emparejamiento que el celular manda en el tercer mensaje
+/// Noise (#95): su nombre, solo informativo.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PairingRequest {
+    name: DeviceName,
+}
+
+impl PairingRequest {
+    /// Arma la petición con ese nombre.
+    pub fn new(name: DeviceName) -> Self {
+        Self { name }
+    }
+
+    /// Nombre del celular.
+    pub fn name(&self) -> &DeviceName {
+        &self.name
+    }
+
+    /// Codifica la petición (`versión | tipo | nombre`).
+    pub fn encode(&self) -> Result<Zeroizing<Vec<u8>>> {
+        let body = RequestBody {
+            name: self.name.as_str().to_owned(),
+        };
+        encode_body(Kind::PairingRequest, &body)
+    }
+
+    /// Decodifica y valida la petición. El nombre debe llegar ya recortado:
+    /// cada mensaje tiene una sola codificación.
+    pub fn decode(bytes: &[u8]) -> Result<Self> {
+        let body: RequestBody = decode_body(Kind::PairingRequest, bytes)?;
+        let name = DeviceName::new(&body.name)?;
+        if name.as_str() != body.name {
+            return Err(ProtocolError::InvalidField(InvalidField::DeviceName));
+        }
+        Ok(Self { name })
+    }
+}
+
+/// Decisión de la PC sobre un emparejamiento.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum AckDecision {
+    /// El usuario aceptó el emparejamiento.
+    Accepted,
+    /// El usuario lo rechazó, o no decidió a tiempo.
+    Rejected,
+}
+
+/// Respuesta de la PC al celular tras la confirmación, ya cifrada por el
+/// canal Noise (#95).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PairingReply {
+    decision: AckDecision,
+}
+
+impl PairingReply {
+    /// Arma la respuesta.
+    pub fn new(decision: AckDecision) -> Self {
+        Self { decision }
+    }
+
+    /// La decisión de la PC.
+    pub fn decision(&self) -> AckDecision {
+        self.decision
+    }
+
+    /// Codifica la respuesta (`versión | tipo | decisión`).
+    pub fn encode(&self) -> Result<Zeroizing<Vec<u8>>> {
+        encode_body(Kind::PairingReply, self)
+    }
+
+    /// Decodifica la respuesta.
+    pub fn decode(bytes: &[u8]) -> Result<Self> {
+        decode_body(Kind::PairingReply, bytes)
     }
 }
 

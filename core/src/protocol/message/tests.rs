@@ -731,3 +731,154 @@ fn send_message_buffer_is_exact_for_short_passwords_too() {
         assert_eq!(bytes.capacity(), bytes.len(), "texto de {len} bytes");
     }
 }
+
+const DEVICE_NAME_ERR: ProtocolError = ProtocolError::InvalidField(InvalidField::DeviceName);
+
+#[test]
+fn device_name_trims() {
+    assert_eq!(
+        DeviceName::new("  Pixel de Ana \n").unwrap().as_str(),
+        "Pixel de Ana"
+    );
+}
+
+#[test]
+fn device_name_accepts_1_and_128_bytes() {
+    assert!(DeviceName::new("a").is_ok());
+    assert_eq!(
+        DeviceName::new(&"a".repeat(128)).unwrap().as_str().len(),
+        128
+    );
+}
+
+#[test]
+fn device_name_rejects_empty_and_129_bytes() {
+    assert_eq!(DeviceName::new("").err(), Some(DEVICE_NAME_ERR));
+    assert_eq!(DeviceName::new("  \t ").err(), Some(DEVICE_NAME_ERR));
+    assert_eq!(
+        DeviceName::new(&"a".repeat(129)).err(),
+        Some(DEVICE_NAME_ERR)
+    );
+}
+
+#[test]
+fn device_name_rejects_control_chars() {
+    for c in ['\u{0}', '\u{7}', '\u{7f}'] {
+        assert_eq!(
+            DeviceName::new(&format!("a{c}b")).err(),
+            Some(DEVICE_NAME_ERR),
+            "{c:?}"
+        );
+    }
+}
+
+#[test]
+fn device_name_rejects_direction_chars() {
+    let mut forbidden = vec!['\u{061C}', '\u{200E}', '\u{200F}', '\u{2028}', '\u{2029}'];
+    forbidden.extend('\u{202A}'..='\u{202E}');
+    forbidden.extend('\u{2066}'..='\u{2069}');
+    for c in forbidden {
+        assert_eq!(
+            DeviceName::new(&format!("a{c}b")).err(),
+            Some(DEVICE_NAME_ERR),
+            "{c:?}"
+        );
+    }
+}
+
+#[test]
+fn device_name_128_bytes_multibyte_ok() {
+    assert_eq!(
+        DeviceName::new(&"é".repeat(64)).unwrap().as_str().len(),
+        128
+    );
+}
+
+#[test]
+fn device_name_127_plus_2_bytes_rejected() {
+    let name = format!("{}é", "a".repeat(127));
+    assert_eq!(name.len(), 129);
+    assert_eq!(DeviceName::new(&name).err(), Some(DEVICE_NAME_ERR));
+}
+
+fn request(name: &str) -> PairingRequest {
+    PairingRequest::new(DeviceName::new(name).unwrap())
+}
+
+#[test]
+fn pairing_reply_exact_bytes() {
+    let accepted = PairingReply::new(AckDecision::Accepted).encode().unwrap();
+    assert_eq!(&accepted[..], &[1, 5, 0]);
+    let rejected = PairingReply::new(AckDecision::Rejected).encode().unwrap();
+    assert_eq!(&rejected[..], &[1, 5, 1]);
+    assert_eq!(
+        PairingReply::decode(&[1, 5, 1]).unwrap().decision(),
+        AckDecision::Rejected
+    );
+}
+
+#[test]
+fn pairing_reply_rejects_third_value() {
+    assert_eq!(
+        PairingReply::decode(&[1, 5, 2]).err(),
+        Some(ProtocolError::Malformed)
+    );
+}
+
+#[test]
+fn pairing_reply_rejects_trailing_bytes() {
+    assert_eq!(
+        PairingReply::decode(&[1, 5, 0, 0]).err(),
+        Some(ProtocolError::TrailingBytes)
+    );
+}
+
+#[test]
+fn pairing_request_roundtrip() {
+    let bytes = request("Pixel de Ana").encode().unwrap();
+    assert_eq!(&bytes[..2], &[1, 4]);
+    let back = PairingRequest::decode(&bytes).unwrap();
+    assert_eq!(back.name().as_str(), "Pixel de Ana");
+}
+
+#[test]
+fn pairing_request_max_len_is_132() {
+    let bytes = request(&"a".repeat(128)).encode().unwrap();
+    assert_eq!(bytes.len(), 132);
+    assert_eq!(bytes.capacity(), bytes.len());
+}
+
+#[test]
+fn pairing_request_rejects_untrimmed_name() {
+    assert_eq!(
+        PairingRequest::decode(&[1, 4, 3, b' ', b'a', b'b']).err(),
+        Some(DEVICE_NAME_ERR)
+    );
+}
+
+#[test]
+fn pairing_request_rejects_invalid_name() {
+    // U+202E (3 bytes: E2 80 AE) dentro de un mensaje bien formado.
+    assert_eq!(
+        PairingRequest::decode(&[1, 4, 5, b'a', 0xE2, 0x80, 0xAE, b'b']).err(),
+        Some(DEVICE_NAME_ERR)
+    );
+}
+
+#[test]
+fn pairing_request_rejects_wrong_kind() {
+    let ack = Ack::new(AckOutcome::Copied).encode().unwrap();
+    assert_eq!(
+        PairingRequest::decode(&ack).err(),
+        Some(ProtocolError::UnexpectedKind(3))
+    );
+}
+
+#[test]
+fn pairing_request_rejects_noncanonical_varint() {
+    // Largo 2 escrito como `0x82 0x00` en vez de `0x02`.
+    assert_eq!(
+        PairingRequest::decode(&[1, 4, 0x82, 0x00, b'a', b'b']).err(),
+        Some(ProtocolError::Malformed)
+    );
+}

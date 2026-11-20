@@ -25,6 +25,12 @@ postcard = { version = "1", default-features = false, features = ["alloc"] }
 rusqlite = { version = "0.41", features = ["bundled"] }
 secrecy = "0.10"
 serde = { version = "1", default-features = false, features = ["derive"] }
+# Emparejamiento y canal Noise (#95). Sin `std`: en 0.10.0 esa feature activa
+# también `ring`, `sha2` y `blake2/std`. Solo entran curve25519-dalek 4,
+# chacha20poly1305 0.10, blake2 0.10 y getrandom 0.3 (versiones duplicadas con
+# las del núcleo: `deny.toml` solo avisa). `snow` no depende de `zeroize` y no
+# borra sus secretos (excepción documentada en ARCHITECTURE.md). (Apache-2.0 OR MIT)
+snow = { version = "0.10", default-features = false, features = ["use-curve25519", "use-chacha20poly1305", "use-blake2", "use-getrandom"] }
 # Respaldo de la búsqueda: distancia OSA para errores de escritura.
 strsim = "0.11.1"
 thiserror = "2"
