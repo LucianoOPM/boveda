@@ -357,6 +357,7 @@ Tarjeta `errorContainer`, borde `error` al 38 %, radio 16, ícono de advertencia
 - Secciones con encabezado en `meta` y `accent`: **Seguridad** (bloqueo automático, huella, cambiar contraseña maestra), **Respaldos** (exportar, importar), **Apariencia** (acento) y, desde la etapa 3, **Dispositivos**.
 - Acento: cuatro muestras circulares de 40 con el nombre del tema; la elegida lleva anillo de 2 px en `textPrimary`. Se guarda fuera de la bóveda (no es secreto) y se aplica antes del desbloqueo.
 - Importar avisa antes: "Esto reemplazará tu bóveda actual por la del respaldo.".
+- La app hoy solo tiene exportar e importar respaldo; el resto de esta sección está en [`docs/diferencias-diseno.md`](diferencias-diseno.md).
 
 ---
 
