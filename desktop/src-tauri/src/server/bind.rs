@@ -37,10 +37,13 @@ pub(crate) fn bind_all(
     attempts: u32,
 ) -> Result<Bound, BindError> {
     let first = *ips.iter().next().ok_or(BindError::NoAddresses)?;
-    match bind_on_port(ips, preferred) {
-        Ok(bound) => return Ok(bound),
-        Err(error) if !port_unavailable(&error) => return Err(BindError::Io(error.kind())),
-        Err(_) => {}
+    // El puerto 0 no es un puerto: enlazaría cada IP a uno distinto.
+    if preferred != 0 {
+        match bind_on_port(ips, preferred) {
+            Ok(bound) => return Ok(bound),
+            Err(error) if !port_unavailable(&error) => return Err(BindError::Io(error.kind())),
+            Err(_) => {}
+        }
     }
     for _ in 0..attempts {
         let candidate = TcpListener::bind((first, 0))
@@ -158,5 +161,14 @@ mod tests {
         let bound = bind_all(&ips(&[LOCAL_1]), free_port(), 5).expect("bind_all");
         let error = bound.listeners[0].accept().expect_err("sin clientes");
         assert_eq!(error.kind(), std::io::ErrorKind::WouldBlock);
+    }
+
+    #[test]
+    fn zero_preferred_still_shares_one_port() {
+        let bound = bind_all(&ips(&[LOCAL_1, LOCAL_2]), 0, 5).expect("bind_all");
+        assert_ne!(bound.port, 0);
+        for listener in &bound.listeners {
+            assert_eq!(listener.local_addr().expect("addr").port(), bound.port);
+        }
     }
 }
