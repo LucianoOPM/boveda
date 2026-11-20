@@ -121,7 +121,10 @@ pub fn send_to_pc<S: TimedStream>(
 | Trama 1 reenviada de una captura | PC | contesta la trama 2; sin la llave privada nadie manda una trama 3 válida: `Handshake`, `Timeout` o `Expired`; no hay mensaje |
 | Trama 3 de otra sesión o alterada | PC | `Handshake`; no hay mensaje |
 | Trama 3 que llega después de los 30 s | PC | `Expired`; no hay mensaje |
-| Trama más grande que 2048 o de largo 0 | PC y celular | `FrameTooLarge` / `Protocol(Malformed)` antes de reservar |
+| Trama 1 de largo distinto de 96 (incluye 0 y 2049) | PC | `Handshake`; se rechaza leyendo solo el encabezado, sin leer el cuerpo ni contestar |
+| Trama 3 de largo 0 o mayor que 2048 | PC | `Protocol(Malformed)` / `FrameTooLarge`, antes de reservar memoria |
+| Trama 2 de largo distinto de 48 | Celular | `PeerNotAuthentic`, leyendo solo el encabezado; la contraseña no sale |
+| `Ack` declarado de más de 64 bytes (el real mide 19) | Celular | `FrameTooLarge`, antes de reservar memoria |
 | Conexión que se corta a medias | Ambos | `Closed` |
 | Un segundo envío en la misma conexión | PC | no se lee; tras el `Ack` se cierra. El celular ve `Closed` si lo intenta |
 | La PC no tiene la llave del QR (otra llave privada) o la trama 2 es falsa | Celular | `Closed` / `PeerNotAuthentic`; **no manda la contraseña** |

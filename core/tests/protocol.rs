@@ -1085,12 +1085,33 @@ fn a_phone_unknown_to_the_pc_is_asked_with_its_authenticated_key() {
 
 #[test]
 fn replayed_first_frame_gets_a_reply_but_never_a_message() {
-    // Se captura la trama 1 de un celular legítimo.
-    let (_waiting, first) = Sender::new(&secret_keys(2), &pc_key())
+    // Sesión real: el celular legítimo envía y la PC entrega el mensaje. Un
+    // atacante en la red captura sus bytes: la trama 1 y la trama 3.
+    let (waiting, first) = Sender::new(&secret_keys(2), &pc_key())
         .unwrap()
         .first_message()
         .unwrap();
-    // Un atacante la reenvía a la PC: contesta (con una efímera nueva)...
+    let (mut client, server) = connected();
+    let real_pc = thread::spawn(move || {
+        let incoming = receive_send(
+            server,
+            &secret_keys(1),
+            paired_phone,
+            &CancelToken::new(),
+            &send_quick(),
+        )
+        .unwrap();
+        let text = incoming.message().password().expose_secret().to_string();
+        incoming.copied().unwrap();
+        text
+    });
+    client.write_all(&framed(&first)).unwrap();
+    let second = read_exact_frame(&mut client);
+    let (_, captured_third) = waiting.read_second(&second, &send("real")).unwrap();
+    client.write_all(&framed(&captured_third)).unwrap();
+    assert_eq!(real_pc.join().unwrap(), "real");
+
+    // El atacante reenvía la trama 1 a la PC: contesta (con una efímera nueva)...
     let (mut attacker, server) = connected();
     let pc = thread::spawn(move || {
         receive_send(
@@ -1105,12 +1126,11 @@ fn replayed_first_frame_gets_a_reply_but_never_a_message() {
     attacker.write_all(&framed(&first)).unwrap();
     let replayed_second = read_exact_frame(&mut attacker);
     assert_eq!(replayed_second.len(), 48);
-    // ...pero sin la llave privada del celular no puede armar la trama 3, y una
-    // trama basura no entrega nada.
-    attacker.write_all(&framed(&[0x5A; 64])).unwrap();
+    assert_ne!(replayed_second, second);
+    // ...pero la trama 3 capturada no descifra con las llaves de esta sesión,
+    // y sin las llaves privadas del celular no puede armar otra.
+    attacker.write_all(&framed(&captured_third)).unwrap();
     assert_eq!(pc.join().unwrap(), Some(SendError::Handshake));
-    // Esa respuesta solo la puede usar quien tiene la llave efímera y la
-    // privada del celular; el atacante no deriva las llaves de transporte.
 }
 
 #[test]
@@ -1396,6 +1416,4 @@ fn password_never_appears_in_debug_or_errors() {
     ] {
         assert!(!format!("{error} {error:?}").contains(secret));
     }
-    // El estado de la PC tampoco la muestra.
-    let _ = Responder::new(&secret_keys(1));
 }

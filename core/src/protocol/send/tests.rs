@@ -800,3 +800,72 @@ fn total_is_capped_at_the_send_ttl() {
     assert_eq!(short.capped_total(), Duration::from_millis(600));
     assert_eq!(SendTimeouts::default().capped_total(), SEND_TTL);
 }
+
+// --- Menores de la revisión: casos del conductor del celular y de la PC ---
+
+#[test]
+fn phone_second_frame_header_other_than_48_is_peer_not_authentic_without_reading_the_body() {
+    for header in [[0u8, 0], [0, 47], [0, 49], [0xFF, 0xFF]] {
+        let (client, mut server) = connected();
+        let phone = phone_thread(client, "no debe salir", CancelToken::new(), quick());
+        let _first = read_frame(&mut server);
+        // Solo el encabezado y silencio: leer el cuerpo vencería por el paso.
+        let started = Instant::now();
+        server.write_all(&header).unwrap();
+        assert_eq!(
+            phone.join().unwrap().err(),
+            Some(SendError::PeerNotAuthentic)
+        );
+        assert!(started.elapsed() < Duration::from_millis(400));
+    }
+}
+
+#[test]
+fn phone_ack_declared_over_64_bytes_is_frame_too_large() {
+    for header in [[0u8, 65], [0x08, 0x00], [0xFF, 0xFF]] {
+        let (client, mut server) = connected();
+        let phone = phone_thread(client, "x", CancelToken::new(), quick());
+        // Una PC legítima hace su apretón de manos y lee el mensaje...
+        let first = read_frame(&mut server);
+        let (_awaiting, second) = Responder::new(&keys(1))
+            .read_first(Instant::now(), &first, paired_key)
+            .unwrap();
+        server.write_all(&framed(&second)).unwrap();
+        let _third = read_frame(&mut server);
+        // ...y contesta con un `Ack` que declara más de 64 bytes.
+        let started = Instant::now();
+        server.write_all(&header).unwrap();
+        assert_eq!(phone.join().unwrap().err(), Some(SendError::FrameTooLarge));
+        assert!(started.elapsed() < Duration::from_millis(400));
+    }
+}
+
+fn paired_key(key: &PublicKey) -> bool {
+    *key == keys(2).public()
+}
+
+#[test]
+fn message_whose_header_is_on_time_but_body_is_late_is_expired_and_not_delivered() {
+    let (mut client, server) = connected();
+    let timeouts = SendTimeouts {
+        step: Duration::from_secs(2),
+        total: Duration::from_millis(600),
+        ack_wait: Duration::from_secs(1),
+    };
+    let pc = thread::spawn(move || {
+        receive_send(server, &keys(1), paired_key, &CancelToken::new(), &timeouts).err()
+    });
+    let (waiting, first) = Sender::new(&keys(2), &pc_key())
+        .unwrap()
+        .first_message()
+        .unwrap();
+    client.write_all(&framed(&first)).unwrap();
+    let second = read_frame(&mut client);
+    let (_, third) = waiting.read_second(&second, &message("tarde")).unwrap();
+    let all = framed(&third);
+    // El encabezado llega a tiempo; el cuerpo, después del plazo.
+    client.write_all(&all[..2]).unwrap();
+    thread::sleep(Duration::from_millis(900));
+    let _ = client.write_all(&all[2..]);
+    assert_eq!(pc.join().unwrap(), Some(SendError::Expired));
+}
