@@ -785,3 +785,18 @@ fn a_second_frame_after_the_first_message_is_never_read() {
     let received = read_until_close(client);
     assert!(received.is_empty() || received.len() == 2 + 19);
 }
+
+#[test]
+fn total_is_capped_at_the_send_ttl() {
+    let long = SendTimeouts {
+        total: Duration::from_secs(300),
+        ..SendTimeouts::default()
+    };
+    assert_eq!(long.capped_total(), SEND_TTL);
+    let short = SendTimeouts {
+        total: Duration::from_millis(600),
+        ..SendTimeouts::default()
+    };
+    assert_eq!(short.capped_total(), Duration::from_millis(600));
+    assert_eq!(SendTimeouts::default().capped_total(), SEND_TTL);
+}

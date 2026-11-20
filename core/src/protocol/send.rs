@@ -116,12 +116,21 @@ impl From<PairingError> for SendError {
 pub struct SendTimeouts {
     /// Máximo por trama leída o escrita.
     pub step: Duration,
-    /// Máximo, contado por la PC desde que acepta la conexión, hasta tener el
-    /// mensaje completo y autenticado.
+    /// Máximo, contado desde que la PC acepta la conexión (y, en el celular,
+    /// desde que empieza a enviar), hasta tener el mensaje completo y
+    /// autenticado. Nunca pasa de [`SEND_TTL`]: un valor mayor se recorta a
+    /// 30 s ([`capped_total`](Self::capped_total)); uno menor sirve para pruebas.
     pub total: Duration,
     /// Tiempo que espera el celular el `Ack`. Es independiente de `total` y no
     /// lo amplía.
     pub ack_wait: Duration,
+}
+
+impl SendTimeouts {
+    /// El plazo total que se aplica: `total`, sin pasar nunca de [`SEND_TTL`].
+    pub fn capped_total(&self) -> Duration {
+        self.total.min(SEND_TTL)
+    }
 }
 
 impl Default for SendTimeouts {
@@ -439,7 +448,7 @@ pub fn receive_send<S: TimedStream>(
     cancel: &CancelToken,
     timeouts: &SendTimeouts,
 ) -> Result<IncomingSend<S>, SendError> {
-    let deadline = Instant::now() + timeouts.total;
+    let deadline = Instant::now() + timeouts.capped_total();
     let step = timeouts.step;
     let late = |error| classify(error, deadline);
 
@@ -548,7 +557,7 @@ pub fn send_to_pc<S: TimedStream>(
     cancel: &CancelToken,
     timeouts: &SendTimeouts,
 ) -> Result<AckOutcome, SendError> {
-    let deadline = Instant::now() + timeouts.total;
+    let deadline = Instant::now() + timeouts.capped_total();
     let step = timeouts.step;
 
     let (awaiting, first) = Sender::new(identity, pc_key)?.first_message()?;
