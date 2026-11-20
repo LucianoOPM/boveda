@@ -20,6 +20,8 @@ pub mod network;
 pub mod paired_devices;
 #[cfg(windows)]
 pub mod protected_file;
+#[cfg(windows)]
+pub mod server;
 mod tray;
 
 /// Garantiza que la identidad de la PC exista tras el primer arranque (#99).
