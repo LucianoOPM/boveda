@@ -5,6 +5,7 @@
 
 mod error;
 mod identity;
+mod message;
 
 pub use error::{InvalidField, ProtocolError, Result};
 pub use identity::{Fingerprint, KeyPair, PublicKey};
