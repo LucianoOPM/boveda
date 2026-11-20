@@ -249,7 +249,7 @@ CREATE TABLE "header" (
 
 - Exportar es una copia consistente del archivo SQLite con `VACUUM INTO`, con la cabecera incluida: un respaldo es una bóveda que abre con la misma contraseña maestra. La copia de la llave en el Keystore no viaja; al restaurar se vuelve a activar la huella.
 - Importar solo reemplaza la bóveda actual después de abrir la importada con la contraseña y validar su versión de formato. Si algo falla, la bóveda actual queda intacta.
-- Al restaurar un respaldo se regenera la identidad del dispositivo, porque la llave privada del celular viaja dentro de la bóveda. Aplica a partir de la etapa 3.
+- Al restaurar un respaldo se descarta la identidad del dispositivo, porque la llave privada del celular viaja dentro de la bóveda, y se vacía la lista de PCs emparejadas que trae el respaldo: esas PCs conocen la llave anterior, así que conservarlas solo produciría rechazos. Importar no genera una identidad: la nueva se crea al emparejar, como en cualquier bóveda. El borrado se hace en la copia temporal, antes del renombrado y dentro de `Vault::import`, para que la bóveda instalada nunca tenga la identidad del respaldo. Después se avisa que hay que emparejar de nuevo. Mientras no se revoque, la PC sigue confiando en la llave vieja; si el celular anterior aún existe, el aviso sugiere quitarlo desde la PC. Aplica a partir de la etapa 3.
 
 Decisiones tomadas el 2026-11-07 (detalle en `docs/superpowers/specs/2026-11-07-respaldos-design.md`):
 
@@ -286,7 +286,7 @@ Decidido el 2026-11-14 (#44, detalle en `docs/superpowers/specs/2026-11-14-respa
 
 Celular y PC se reconocen por llaves permanentes intercambiadas una sola vez mediante un QR, y cada envío viaja cifrado de extremo a extremo con el protocolo Noise.
 
-**Identidades.** Cada app genera al instalarse un par de llaves X25519. En Android, la llave privada se guarda dentro de la bóveda; en Windows, protegida con DPAPI.
+**Identidades.** Cada app tiene un par de llaves X25519. En Windows se genera al instalarse y la llave privada se guarda protegida con DPAPI. En Android la llave privada se guarda dentro de la bóveda, y como al instalar todavía no hay bóveda, el par se genera de forma perezosa: la primera vez que se necesita, es decir, al emparejar (decidido el 2026-11-19, al planear la etapa 3). Una bóveda sin identidad es válida; la identidad y la lista de PCs emparejadas se agregan en el formato v3 (issue de la etapa 3).
 
 **Emparejamiento:**
 
@@ -309,6 +309,8 @@ Celular y PC se reconocen por llaves permanentes intercambiadas una sola vez med
 **Revocación.** Ambas apps listan los dispositivos emparejados y permiten quitar cualquiera desde cualquier lado.
 
 **Modelo de amenazas.** Alguien en la misma red Wi-Fi no puede leer el contenido ni suplantar a la PC sin su llave privada. La app de escritorio solo escucha en redes marcadas como privadas en el Firewall de Windows.
+
+La llave privada del celular viaja dentro del respaldo exportado, porque el respaldo es la bóveda completa. Es aceptable: el respaldo está cifrado con la contraseña maestra, igual que las contraseñas, y quien lo abra ya tiene todas las contraseñas, una exposición mayor que la llave de emparejamiento. Descartar la identidad al restaurar (ver "Respaldos") protege al celular nuevo, no al viejo: la PC sigue confiando en la llave anterior hasta que se quite ese dispositivo desde la PC, y hasta entonces quien tenga el respaldo y la contraseña maestra podría hacerse pasar por el celular anterior. Por eso el aviso de la restauración sugiere revocarlo.
 
 ## Experiencia de uso
 
