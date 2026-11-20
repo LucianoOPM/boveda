@@ -22,4 +22,4 @@ pub use pairing::{
     PAIRING_PROLOGUE, PairedDevice, PairedPc, PairingError, PairingSession, PendingConnection,
     PendingPairing, Refusal, pair_with_pc, serve_pairing,
 };
-pub use transport::{CANCEL_POLL, CancelToken, PairingTimeouts, TimedStream};
+pub use transport::{CANCEL_POLL, CancelToken, MAX_SEND_FRAME_LEN, PairingTimeouts, TimedStream};

@@ -22,11 +22,15 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use super::error::ProtocolError;
-use super::pairing::{CONFIRMATION_TIMEOUT, Frame, MAX_FRAME_LEN, PairingError};
+use super::pairing::{CONFIRMATION_TIMEOUT, Frame, PairingError};
 
 /// Cada cuánto como máximo se revisan la cancelación y los plazos durante una
 /// lectura o una escritura bloqueadas.
 pub const CANCEL_POLL: Duration = Duration::from_millis(250);
+
+/// Longitud máxima de una trama del envío, sin su prefijo de largo (#96). El
+/// peor caso es una contraseña de 1024 bytes: 1045 bytes con su etiqueta.
+pub const MAX_SEND_FRAME_LEN: usize = 2048;
 
 /// Un `Read + Write` con plazos de entrada y salida.
 ///
@@ -167,29 +171,32 @@ pub(crate) fn read_frame_header<S: TimedStream>(
 }
 
 /// Lee el cuerpo de una trama de `len` bytes. `len` debe estar entre 1 y
-/// `MAX_FRAME_LEN`: se comprueba **antes** de reservar y de leer nada.
+/// `max` (`MAX_FRAME_LEN` en el emparejamiento, `MAX_SEND_FRAME_LEN` en el
+/// envío): se comprueba **antes** de reservar y de leer nada.
 pub(crate) fn read_frame_body<S: TimedStream>(
     stream: &mut S,
     len: usize,
+    max: usize,
     deadline: Instant,
     step: Duration,
     cancel: &CancelToken,
 ) -> Result<Frame, PairingError> {
-    check_len(len)?;
+    check_len(len, max)?;
     let mut body = vec![0u8; len];
     read_full(stream, &mut body, step_limit(deadline, step), cancel)?;
     Ok(body)
 }
 
-/// Escribe una trama con su prefijo de largo.
+/// Escribe una trama con su prefijo de largo; mide de 1 a `max` bytes.
 pub(crate) fn write_frame<S: TimedStream>(
     stream: &mut S,
     frame: &[u8],
+    max: usize,
     deadline: Instant,
     step: Duration,
     cancel: &CancelToken,
 ) -> Result<(), PairingError> {
-    check_len(frame.len())?;
+    check_len(frame.len(), max)?;
     let mut bytes = Vec::with_capacity(frame.len() + 2);
     bytes.extend_from_slice(&(frame.len() as u16).to_be_bytes());
     bytes.extend_from_slice(frame);
@@ -236,11 +243,11 @@ pub(crate) fn ensure_peer_open<S: TimedStream>(stream: &mut S) -> Result<(), Pai
     }
 }
 
-/// Una trama mide de 1 a `MAX_FRAME_LEN` bytes.
-fn check_len(len: usize) -> Result<(), PairingError> {
+/// Una trama mide de 1 a `max` bytes.
+fn check_len(len: usize, max: usize) -> Result<(), PairingError> {
     match len {
         0 => Err(PairingError::Protocol(ProtocolError::Malformed)),
-        n if n > MAX_FRAME_LEN => Err(PairingError::FrameTooLarge),
+        n if n > max => Err(PairingError::FrameTooLarge),
         _ => Ok(()),
     }
 }

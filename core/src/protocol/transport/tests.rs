@@ -5,6 +5,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use super::*;
+use crate::protocol::MAX_FRAME_LEN;
 
 /// Qué entrega el siguiente `read` del flujo guionizado.
 enum Step {
@@ -114,7 +115,7 @@ fn far() -> Instant {
 fn read_all(stream: &mut Script) -> Result<Frame, PairingError> {
     let cancel = CancelToken::new();
     let len = read_frame_header(stream, far(), STEP, &cancel)?;
-    read_frame_body(stream, len, far(), STEP, &cancel)
+    read_frame_body(stream, len, MAX_FRAME_LEN, far(), STEP, &cancel)
 }
 
 #[test]
@@ -162,14 +163,14 @@ fn rejects_over_512_without_reading_the_body() {
     let cancel = CancelToken::new();
     let mut ok = Script::new(vec![Step::Data(vec![0; 512])]);
     assert_eq!(
-        read_frame_body(&mut ok, 512, far(), STEP, &cancel)
+        read_frame_body(&mut ok, 512, MAX_FRAME_LEN, far(), STEP, &cancel)
             .unwrap()
             .len(),
         512
     );
     let mut over = Script::new(vec![Step::Data(vec![0; 513])]);
     assert_eq!(
-        read_frame_body(&mut over, 513, far(), STEP, &cancel).err(),
+        read_frame_body(&mut over, 513, MAX_FRAME_LEN, far(), STEP, &cancel).err(),
         Some(PairingError::FrameTooLarge)
     );
     assert_eq!(over.consumed, 0);
@@ -256,7 +257,7 @@ fn slow_drip_hits_total_deadline() {
     let len = read_frame_header(&mut stream, deadline, STEP, &cancel);
     // El encabezado `01 01` da 257 bytes; el cuerpo no llega a completarse.
     assert_eq!(len.unwrap(), 0x0101);
-    let body = read_frame_body(&mut stream, 0x0101, deadline, STEP, &cancel);
+    let body = read_frame_body(&mut stream, 0x0101, MAX_FRAME_LEN, deadline, STEP, &cancel);
     assert_eq!(body.err(), Some(PairingError::Timeout));
     assert!(started.elapsed() < Duration::from_secs(2));
 }
@@ -297,7 +298,15 @@ fn already_cancelled_token_does_not_read() {
 #[test]
 fn write_frame_prefixes_the_length() {
     let mut stream = Script::silent();
-    write_frame(&mut stream, &[1, 2, 3], far(), STEP, &CancelToken::new()).unwrap();
+    write_frame(
+        &mut stream,
+        &[1, 2, 3],
+        MAX_FRAME_LEN,
+        far(),
+        STEP,
+        &CancelToken::new(),
+    )
+    .unwrap();
     assert_eq!(stream.written, vec![0, 3, 1, 2, 3]);
 }
 
@@ -306,11 +315,11 @@ fn write_frame_rejects_empty_and_oversized() {
     let mut stream = Script::silent();
     let cancel = CancelToken::new();
     assert_eq!(
-        write_frame(&mut stream, &[], far(), STEP, &cancel).err(),
+        write_frame(&mut stream, &[], MAX_FRAME_LEN, far(), STEP, &cancel).err(),
         Some(PairingError::Protocol(ProtocolError::Malformed))
     );
     assert_eq!(
-        write_frame(&mut stream, &[0; 513], far(), STEP, &cancel).err(),
+        write_frame(&mut stream, &[0; 513], MAX_FRAME_LEN, far(), STEP, &cancel).err(),
         Some(PairingError::FrameTooLarge)
     );
     assert!(stream.written.is_empty());
@@ -324,6 +333,7 @@ fn write_times_out() {
     let result = write_frame(
         &mut stream,
         &[1],
+        MAX_FRAME_LEN,
         far(),
         Duration::from_millis(300),
         &CancelToken::new(),
@@ -378,4 +388,66 @@ fn tcp_stream_cancel_interrupts_a_blocked_read() {
         "{:?}",
         started.elapsed()
     );
+}
+
+#[test]
+fn accepts_a_2048_frame_with_the_send_limit() {
+    let cancel = CancelToken::new();
+    let mut stream = Script::new(vec![Step::Data(vec![7; 2048])]);
+    let body = read_frame_body(&mut stream, 2048, MAX_SEND_FRAME_LEN, far(), STEP, &cancel);
+    assert_eq!(body.unwrap().len(), 2048);
+}
+
+#[test]
+fn rejects_2049_without_reading_the_body_with_the_send_limit() {
+    let cancel = CancelToken::new();
+    let mut stream = Script::new(vec![Step::Data(vec![7; 2049])]);
+    assert_eq!(
+        read_frame_body(&mut stream, 2049, MAX_SEND_FRAME_LEN, far(), STEP, &cancel).err(),
+        Some(PairingError::FrameTooLarge)
+    );
+    assert_eq!(stream.consumed, 0, "no se leyó el cuerpo");
+}
+
+#[test]
+fn pairing_limit_stays_at_512() {
+    let cancel = CancelToken::new();
+    let mut stream = Script::new(vec![Step::Data(vec![0; 513])]);
+    assert_eq!(
+        read_frame_body(&mut stream, 513, MAX_FRAME_LEN, far(), STEP, &cancel).err(),
+        Some(PairingError::FrameTooLarge)
+    );
+    assert_eq!(MAX_FRAME_LEN, 512);
+    assert_eq!(MAX_SEND_FRAME_LEN, 2048);
+}
+
+#[test]
+fn write_frame_honors_the_given_max() {
+    let cancel = CancelToken::new();
+    let mut stream = Script::silent();
+    write_frame(
+        &mut stream,
+        &[9; 1045],
+        MAX_SEND_FRAME_LEN,
+        far(),
+        STEP,
+        &cancel,
+    )
+    .unwrap();
+    assert_eq!(&stream.written[..2], &[0x04, 0x15]);
+    assert_eq!(stream.written.len(), 1047);
+    let mut other = Script::silent();
+    assert_eq!(
+        write_frame(
+            &mut other,
+            &[9; 2049],
+            MAX_SEND_FRAME_LEN,
+            far(),
+            STEP,
+            &cancel
+        )
+        .err(),
+        Some(PairingError::FrameTooLarge)
+    );
+    assert!(other.written.is_empty());
 }
