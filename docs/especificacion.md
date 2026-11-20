@@ -1,6 +1,6 @@
 # Especificación: gestor de contraseñas móvil con envío a PC
 
-Actualizado: 2026-11-10
+Actualizado: 2026-11-20
 
 ## Resumen y alcance
 
@@ -50,6 +50,7 @@ Flutter llega al núcleo por flutter_rust_bridge; la app de Tauri lo usa directa
 | Borrar secretos de memoria | `zeroize` |
 | Base de datos local | `rusqlite` |
 | Canal cifrado entre dispositivos | `snow` (protocolo Noise) |
+| Derivar la llave pública X25519 desde la privada | `x25519-dalek` (`static_secrets` y `zeroize`) |
 | Descubrir la PC en la red | `mdns-sd` |
 | Portapapeles de Windows | `arboard` |
 | Puente Flutter ↔ Rust | `flutter_rust_bridge` |
@@ -317,6 +318,17 @@ Decidido el 2026-11-14 (#44, detalle en `docs/superpowers/specs/2026-11-14-respa
 Celular y PC se reconocen por llaves permanentes intercambiadas una sola vez mediante un QR, y cada envío viaja cifrado de extremo a extremo con el protocolo Noise.
 
 **Identidades.** Cada app tiene un par de llaves X25519. En Windows se genera al instalarse y la llave privada se guarda protegida con DPAPI. En Android la llave privada se guarda dentro de la bóveda, y como al instalar todavía no hay bóveda, el par se genera de forma perezosa: la primera vez que se necesita, es decir, al emparejar (decidido el 2026-11-19, al planear la etapa 3). Una bóveda sin identidad es válida; la identidad y la lista de PCs emparejadas viven en el formato v3 (ver "Formato v3", #93).
+
+**Tipos del protocolo.** Decidido el 2026-11-20 (#94, detalle en `docs/superpowers/specs/2026-11-20-protocolo-tipos-design.md`). `vault_core::protocol` tiene los tipos y la codificación, sin red; el emparejamiento (#95) y el transporte (#96) se construyen encima.
+
+- **Llaves.** `PublicKey::from_private` deriva la llave pública X25519 con `x25519-dalek` (features `static_secrets` y `zeroize`) desde los 32 bytes de la llave privada **sin recortarlos ni transformarlos**: el recorte lo hace la multiplicación. Son los mismos bytes que guarda la bóveda (`vault::Identity`, #93). `KeyPair::generate` los toma de `getrandom` y escribe directo en un `SecretBox`.
+- **Huella.** `Fingerprint`: los primeros 8 bytes de la llave pública en hexadecimal con mayúsculas, agrupados de a dos bytes (`A1B2-C3D4-E5F6-0718`). Es un identificador visual corto para que una persona compare dos pantallas: **no autentica nada y no sustituye a Noise**; con 64 bits se podría fabricar una llave con la misma huella, así que nunca decide en qué confiar. Sin hash ni dependencias.
+- **Formato en el cable.** `versión (u8) | tipo (u8) | cuerpo (postcard)`. Versión `1`; tipos `1` = oferta del QR, `2` = envío, `3` = confirmación. Un mensaje mide como máximo 4096 bytes (`MAX_MESSAGE_LEN`, con la cabecera). Decodificar es estricto y en este orden: tamaño (`TooLarge`), versión (`UnsupportedVersion`, sin leer el cuerpo), tipo (`UnexpectedKind`), cuerpo con `postcard::take_from_bytes` (`Truncated` si termina antes, `Malformed` en cualquier otro fallo) bytes sobrantes (`TrailingBytes`: `postcard::from_bytes` los ignoraría), forma canónica (`postcard` acepta varints con ceros de relleno, así que el cuerpo se vuelve a medir y, si no coincide, es `Malformed`: cada mensaje tiene una sola codificación) y, al final, las reglas de los campos (`InvalidField`). Un mensaje vacío es `Truncated`; con un solo byte, la versión se mira antes que la longitud mínima. Los errores (`ProtocolError`) no llevan datos ni reenvían el error de `postcard`, y no son los de `vault::Error`.
+- **Oferta del QR** (`PairingOffer`): llave pública de la PC, dirección (`SocketAddr`, IPv4 o IPv6) y código de un solo uso de 32 bytes (`PairingCode`, el PSK de Noise de la #95). Sin fecha de caducidad dentro del QR: los relojes no coinciden y los 2 minutos los cuenta la PC. Puerto distinto de 0 y dirección que no sea no especificada ni multicast, también cuando una IPv6 envuelve una IPv4 (`::ffff:a.b.c.d`); loopback y privadas sí. Una IPv6 va sin zona (`scope id`). El contenido mide como máximo **86 bytes** (`MAX_PAIRING_OFFER_LEN`: IPv6 con un puerto de 3 bytes; con IPv4, 74).
+- **Tamaño del QR.** Cuentas con la tabla de la norma ISO 18004, corrección M, sin medir con una biblioteca: en base64url sin relleno, 99 caracteres con IPv4 (versión 6) y 115 con IPv6 (versión 7); en base32 con mayúsculas (modo alfanumérico), versión 5 con IPv4 y versión 6 con IPv6. Una estimación anterior de la versión 5 para base64 era errónea. **La #94 no fija una versión de QR ni la conversión a texto**: la #101 mide el tamaño real con su biblioteca, con IPv4 e IPv6, antes de elegir codificación y nivel de corrección.
+- **Envío** (`SendMessage`): `ttl_secs` (exactamente 30 en la versión 1, que se comprueba al construir y al decodificar; relativo, sin hora) y la contraseña, de 1 a 1024 bytes UTF-8 (el mismo límite que una entrada). Los bytes de la contraseña no se modifican nunca: sin recortar ni normalizar a NFC. **Confirmación** (`Ack`): `Copied` o `Failed`. Un dispositivo no emparejado se rechaza en el apretón de manos (#96), no con un mensaje.
+- **Borrado de memoria.** La contraseña se serializa con `serialize_str` directamente en un búfer `Zeroizing` de capacidad exacta (el tamaño se calcula antes con `serialized_size`, sin reubicaciones) y se deserializa a una sola `String` de capacidad exacta que pasa a `SecretString` sin copiarse; `secrecy` no activa su feature `serde`, y la serialización de un secreto es solo la del campo de la contraseña. `KeyPair`, `PairingCode` y `SendMessage` se borran al soltarse y su `Debug` no muestra el valor (el de `PairingOffer` tampoco muestra la dirección).
+- **Excepción de borrado aceptada** (#94, junto a las de `nucleo-matcher`, `nfc()`, `argon2` y `chacha20poly1305` de "Formato de la bóveda"): `StaticSecret::from([u8; 32])` recibe la llave privada por valor, y un arreglo de 32 bytes es `Copy`, así que queda una copia en la pila de quien llama que `x25519-dalek` no borra; `curve25519-dalek` deja además el escalar recortado en registros y pila durante la multiplicación. Solo se cierra con una primitiva propia, que `core/CLAUDE.md` prohíbe; se mitiga derivando justo después de leer la llave del `SecretBox`, sin retenerla. Lo mismo ocurre al decodificar un `PairingCode` (un `[u8; 32]` en la pila antes del `SecretBox`): es un secreto de 2 minutos y un uso que además se muestra en el QR. Las copias que haga `snow` de la llave privada las revisa la #95.
 
 **Emparejamiento:**
 

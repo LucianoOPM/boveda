@@ -65,6 +65,7 @@ Resultado: un gestor de contraseñas usable en tu celular, con búsqueda y respa
 Resultado: tocas "Enviar a PC" en el celular, pones la huella y pegas la contraseña en Windows.
 
 - [ ] Protocolo en `vault-core`: identidades X25519, emparejamiento con Noise y código de un solo uso, mensaje de envío con tiempo de vida de 30 s, y pruebas con ambos extremos por localhost.
+  - [x] Identidades X25519 y mensajes del protocolo (#94): par de llaves, llave pública con huella, oferta del QR, envío de 30 s y confirmación, con codificación binaria estricta y sin red.
   - [x] Formato v3 de la bóveda (#93): la llave privada X25519 del celular y la lista de PCs emparejadas viven cifradas en la bóveda, con migración v1→v2→v3 al desbloquear (con contraseña, y la v2 también con la llave del Keystore) y al importar un respaldo.
 - [ ] App Tauri en la bandeja: menú de cuatro opciones, iniciar con Windows y ventana con el QR.
 - [ ] Llave privada de la PC protegida con DPAPI.

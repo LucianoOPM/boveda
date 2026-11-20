@@ -31,6 +31,11 @@ thiserror = "2"
 # Normaliza a NFC la contraseña maestra antes de derivar la llave (#57).
 # Versión exacta: cambia los bytes que recibe Argon2id. (MIT OR Apache-2.0) AND Unicode-3.0.
 unicode-normalization = "=0.1.26"
+# Deriva la llave pública X25519 desde los 32 bytes de la llave privada (#94).
+# `static_secrets` da `StaticSecret::from([u8; 32])`; `zeroize` la borra al
+# soltarla. Sin `precomputed-tables` (se deriva una vez por emparejamiento).
+# (BSD-3-Clause)
+x25519-dalek = { version = "3", default-features = false, features = ["static_secrets", "zeroize"] }
 zeroize = { version = "1.9", features = ["derive"] }
 
 [dev-dependencies]
