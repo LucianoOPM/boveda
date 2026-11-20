@@ -228,13 +228,13 @@ impl Vault {
         // La llave ya se verificó contra la cabecera actual (segunda
         // derivación): no hace falta repetirla en el paso siguiente.
         let mut rederived = false;
-        if let Some(header) = upgraded {
-            if self.storage.migrate_header(&header)? == Migration::NotNeeded {
-                // La llave derivada de la cabecera vieja se suelta (y se
-                // borra); vale la que abre la cabecera actual.
-                key = self.storage.read_header()?.unlock(password)?;
-                rederived = true;
-            }
+        if let Some(header) = upgraded
+            && self.storage.migrate_header(&header)? == Migration::NotNeeded
+        {
+            // La llave derivada de la cabecera vieja se suelta (y se
+            // borra); vale la que abre la cabecera actual.
+            key = self.storage.read_header()?.unlock(password)?;
+            rederived = true;
         }
         if version < FORMAT_VERSION {
             let key_check = keys::seal_key_check(&key, FORMAT_VERSION)?;
