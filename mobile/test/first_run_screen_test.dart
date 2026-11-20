@@ -37,7 +37,7 @@ Future<void> pumpScreen(
         files: FakeBackupFiles(),
         onCreated: onCreated ?? () {},
         onAlreadyExists: onAlreadyExists ?? () {},
-        onRestored: (_) {},
+        onRestored: (_, {bool reenableBiometric = false}) {},
       ),
     ),
   );
@@ -65,7 +65,7 @@ Future<void> pumpAsSecondRoute(
         files: FakeBackupFiles(),
         onCreated: () {},
         onAlreadyExists: () {},
-        onRestored: (_) {},
+        onRestored: (_, {bool reenableBiometric = false}) {},
       ),
     ),
   );

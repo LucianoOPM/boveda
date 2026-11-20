@@ -30,6 +30,13 @@ class RestoreImported extends RestoreResult {
   final bool reenableBiometric;
 }
 
+/// Lo que hace quien muestra una pantalla de importar cuando termina bien: el
+/// total de dañadas y si hay que reactivar la huella (#86).
+typedef ImportedCallback = void Function(
+  int damagedEntries, {
+  bool reenableBiometric,
+});
+
 /// La importación falló: la fachada dejó la bóveda anterior bloqueada (o la
 /// sesión sin bóveda). [message] es un texto fijo, sin datos del archivo.
 class RestoreImportFailed extends RestoreResult {

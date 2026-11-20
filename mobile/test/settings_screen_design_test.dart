@@ -40,7 +40,7 @@ Future<void> pumpSettings(
         session: session,
         files: files,
         biometric: FakeBiometricService(),
-        onImported: (_) {},
+        onImported: (_, {bool reenableBiometric = false}) {},
         onImportFailed: (_) {},
         onNotice: (text, {bool isError = false}) {},
       ),
