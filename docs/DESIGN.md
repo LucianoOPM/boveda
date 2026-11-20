@@ -37,6 +37,8 @@ Antes de crear o cambiar una pantalla, un widget o un estilo, lee este archivo.
 | `borderInteractive` | `#282836` | Borde de contenedores activos |
 | `outline` | `#71717A` | Borde de campos y controles (necesario para el 3:1, ver 2.5) |
 | `lockScrim` | `#09090C` | Fondo de la pantalla de desbloqueo |
+| `capsuleBg` | `#000000` | Fondo de la cápsula de estado (6.1) |
+| `capsuleBorder` | `#24242F` | Borde de la cápsula de estado; decorativo, como `borderCard` |
 
 ### 2.2 Texto
 
@@ -89,6 +91,8 @@ Cuatro acentos intercambiables en tiempo real. Cada uno define el mismo juego de
 | `onAccent` / `accent` (Lime · Emerald · Amber · Crimson) | 16.46 · 13.85 · 9.75 · 5.64 |
 | `accent` / `surface2` (Lime · Emerald · Amber · Crimson) | 15.07 · 12.69 · 8.93 · 5.17 |
 | `error` / `surfaceElevated` | 6.04 |
+| `accent` / `capsuleBg` (Lime · Emerald · Amber · Crimson) | 17.27 · 14.53 · 10.23 · 5.92 |
+| `error` / `capsuleBg` | 7.59 |
 | `error` / `errorContainer` | 6.57 |
 | `warning` / `surfaceElevated` | 10.01 |
 | `success` / `surfaceElevated` | 9.59 |
@@ -180,7 +184,7 @@ Las maquetas usan un marco de 390 × 820 con esquinas de 54 y pantalla interna d
   - `extensions.dart`: `ThemeExtension<StatusColors>` (`success`, `warning`, `lan`, `errorStrong` y contenedores), `ThemeExtension<SyntaxColors>` y `ThemeExtension<BovedaText>`.
   - `spacing.dart`: la escala (`Space.xs = 4` … `Space.xxl = 48`) y los radios (`Radii.card = 16`…).
 - Los widgets leen todo del tema (`Theme.of(context).colorScheme`, `textTheme`, `extension<…>()`). Nunca un `Color(0x…)` ni un `TextStyle` con tamaño fijo fuera de `lib/theme/`.
-- Íconos: [Lucide](https://lucide.dev) (licencia ISC), trazo de 2 px y esquinas redondeadas, el mismo ícono para la misma acción en toda la app. Se empaquetan con la app, sin descargas en tiempo de ejecución. Si se usa un paquete de Flutter para ellos, es una dependencia nueva: se consulta antes de agregarla (la alternativa son los SVG como assets).
+- Íconos: [Lucide](https://lucide.dev) (licencia ISC), trazo de 2 px y esquinas redondeadas, el mismo ícono para la misma acción en toda la app. Van como fuente empaquetada (`assets/fonts/lucide.ttf`) con una clase de constantes, `BovedaIcons` en `lib/theme/icons.dart`: sin paquete ni descargas en tiempo de ejecución. Un ícono nuevo se agrega ahí con su código del `info.json` de la misma versión de la fuente.
 
 ### 5.2 Windows (Tauri)
 

@@ -43,7 +43,8 @@ void main() {
     expect(field.enableIMEPersonalizedLearning, isFalse);
     expect(field.autofillHints, anyOf(isNull, isEmpty));
     expect(field.keyboardType, TextInputType.visiblePassword);
-    expect(find.text('Contraseña maestra'), findsOneWidget);
+    // La etiqueta va encima del campo, en mayúsculas.
+    expect(find.text('CONTRASEÑA MAESTRA'), findsOneWidget);
   });
 
   testWidgets('el botón de ver alterna obscureText', (tester) async {
@@ -142,7 +143,8 @@ void main() {
     testWidgets('StrengthIndicator muestra "$label"', (tester) async {
       await pumpInScaffold(tester, StrengthIndicator(strength: strength));
       expect(find.text(label), findsOneWidget);
-      expect(find.byType(LinearProgressIndicator), findsOneWidget);
+      // Tres segmentos en lugar de la barra lineal.
+      expect(find.byKey(const Key('strength-segment-2')), findsOneWidget);
     });
   }
 

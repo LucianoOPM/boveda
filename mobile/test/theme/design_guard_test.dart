@@ -34,6 +34,24 @@ void main() {
     expect(offenders, isEmpty);
   });
 
+  test('migrated files use Lucide icons, not Material Icons', () {
+    // Archivos ya restilizados; cada PR de pantalla agrega los suyos.
+    const migrated = [
+      'lib/screens/unlock_screen.dart',
+      'lib/screens/first_run_screen.dart',
+      'lib/screens/biometric_offer_screen.dart',
+      'lib/widgets/password_field.dart',
+      'lib/widgets/strength_indicator.dart',
+      'lib/widgets/status_capsule.dart',
+    ];
+    final offenders = [
+      for (final path in migrated)
+        if (RegExp(r'\bIcons\.').hasMatch(File(path).readAsStringSync())) path,
+    ];
+
+    expect(offenders, isEmpty);
+  });
+
   testWidgets('app uses the dark theme', (tester) async {
     await tester.pumpWidget(
       BovedaApp(

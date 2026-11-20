@@ -37,6 +37,7 @@ class ActivityTextField extends StatelessWidget {
     this.minLines,
     this.maxLines = 1,
     this.decoration = const InputDecoration(),
+    this.style,
     this.copyable = true,
   });
 
@@ -56,6 +57,9 @@ class ActivityTextField extends StatelessWidget {
   final int? minLines;
   final int? maxLines;
   final InputDecoration? decoration;
+
+  /// Estilo del texto escrito; se mezcla con el del tema.
+  final TextStyle? style;
 
   /// Con `false`, lo escrito no se puede copiar ni cortar: ni con el menú
   /// de selección, que solo ofrece pegar y seleccionar todo (tampoco
@@ -108,6 +112,7 @@ class ActivityTextField extends StatelessWidget {
       minLines: minLines,
       maxLines: maxLines,
       decoration: decoration,
+      style: style,
     );
     if (copyable) return field;
     // Copiar y cortar comparten esta intención: sin ella, Ctrl+C y Ctrl+X

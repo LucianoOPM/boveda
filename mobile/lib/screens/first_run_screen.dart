@@ -5,7 +5,13 @@ import '../services/biometric_service.dart';
 import '../src/rust/api/error.dart';
 import '../src/rust/api/password.dart';
 import '../src/rust/api/session.dart';
+import '../theme/colors.dart';
+import '../theme/extensions.dart';
+import '../theme/icons.dart';
+import '../theme/spacing.dart';
 import '../widgets/password_field.dart';
+import '../widgets/primary_glow.dart';
+import '../widgets/status_capsule.dart';
 import '../widgets/strength_indicator.dart';
 import 'restore_dialog.dart';
 
@@ -178,25 +184,37 @@ class _FirstRunScreenState extends State<FirstRunScreen> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final status = theme.extension<StatusColors>() ?? StatusColors.standard;
     final showMismatch = _confirm.text.isNotEmpty && !_matches;
     return PopScope(
       canPop: !_creating,
       child: Scaffold(
         body: SafeArea(
           child: SingleChildScrollView(
-            padding: const EdgeInsets.all(24),
+            padding: const EdgeInsets.all(Space.lg),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
+                const Align(
+                  alignment: Alignment.centerLeft,
+                  child: StatusCapsule(
+                    text: 'CONOCIMIENTO CERO',
+                    semanticsLabel: 'Conocimiento cero',
+                  ),
+                ),
+                const SizedBox(height: Space.lg),
                 Text(
                   'Crea tu contraseña maestra',
                   style: theme.textTheme.headlineSmall,
                 ),
-                const SizedBox(height: 8),
-                const Text(
+                const SizedBox(height: Space.sm),
+                Text(
                   'Usa una frase de varias palabras. Mínimo 12 caracteres.',
+                  style: theme.textTheme.bodyMedium?.copyWith(
+                    color: theme.colorScheme.onSurfaceVariant,
+                  ),
                 ),
-                const SizedBox(height: 24),
+                const SizedBox(height: Space.lg),
                 PasswordField(
                   key: const Key('first-run-password'),
                   controller: _password,
@@ -205,10 +223,10 @@ class _FirstRunScreenState extends State<FirstRunScreen> {
                   onChanged: _onPasswordChanged,
                 ),
                 if (_strength case final strength?) ...[
-                  const SizedBox(height: 8),
+                  const SizedBox(height: Space.sm),
                   StrengthIndicator(strength: strength),
                 ],
-                const SizedBox(height: 16),
+                const SizedBox(height: Space.lg),
                 PasswordField(
                   key: const Key('first-run-confirm'),
                   controller: _confirm,
@@ -219,51 +237,115 @@ class _FirstRunScreenState extends State<FirstRunScreen> {
                       : null,
                   onChanged: _onConfirmChanged,
                 ),
-                const SizedBox(height: 16),
-                // En el grupo del campo: tocarlo no cierra el teclado.
-                TextFieldTapRegion(
-                  child: CheckboxListTile(
-                    key: const Key('first-run-accept'),
-                    value: _accepted,
-                    onChanged: _creating
-                        ? null
-                        : (value) => setState(() => _accepted = value ?? false),
-                    controlAffinity: ListTileControlAffinity.leading,
-                    contentPadding: EdgeInsets.zero,
-                    title: const Text(
-                      'Entiendo que si olvido la contraseña maestra pierdo el '
-                      'acceso a la bóveda. No se puede recuperar.',
+                const SizedBox(height: Space.lg),
+                // La advertencia del diseño, con la casilla que el código
+                // exige dentro.
+                // `Material` y no un `Container` con color: la casilla es un
+                // `ListTile`, que pinta su fondo y su efecto en el `Material`
+                // más cercano y un fondo intermedio los taparía.
+                Material(
+                  key: const Key('first-run-warning'),
+                  color: BovedaColors.warningContainer,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(Radii.card),
+                    side: BorderSide(
+                      color: status.warning.withValues(alpha: 0.38),
+                    ),
+                  ),
+                  child: Padding(
+                    padding: const EdgeInsets.all(Space.md),
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Padding(
+                          padding: const EdgeInsets.only(top: Space.sm),
+                          child: Icon(
+                            BovedaIcons.triangleAlert,
+                            size: 20,
+                            color: status.warning,
+                          ),
+                        ),
+                        const SizedBox(width: Space.sm),
+                        Expanded(
+                          // En el grupo del campo: tocarlo no cierra el teclado.
+                          child: TextFieldTapRegion(
+                            child: CheckboxListTile(
+                              key: const Key('first-run-accept'),
+                              value: _accepted,
+                              onChanged: _creating
+                                  ? null
+                                  : (value) => setState(
+                                      () => _accepted = value ?? false,
+                                    ),
+                              controlAffinity: ListTileControlAffinity.leading,
+                              contentPadding: EdgeInsets.zero,
+                              title: Text(
+                                'Entiendo que si olvido la contraseña maestra '
+                                'pierdo el acceso a la bóveda. No se puede '
+                                'recuperar.',
+                                style: theme.textTheme.bodyMedium?.copyWith(
+                                  color: theme.colorScheme.onSurface,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ],
                     ),
                   ),
                 ),
                 if (_error case final error?) ...[
-                  const SizedBox(height: 8),
-                  Text(error, style: TextStyle(color: theme.colorScheme.error)),
+                  const SizedBox(height: Space.sm),
+                  Row(
+                    key: const Key('first-run-error'),
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Icon(
+                        BovedaIcons.triangleAlert,
+                        size: 16,
+                        color: theme.colorScheme.error,
+                      ),
+                      const SizedBox(width: Space.sm),
+                      Expanded(
+                        child: Text(
+                          error,
+                          style: theme.textTheme.bodyMedium?.copyWith(
+                            color: theme.colorScheme.error,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
                 ],
-                const SizedBox(height: 24),
+                const SizedBox(height: Space.lg),
                 // En el grupo del campo: tocarlo no cierra el teclado.
                 TextFieldTapRegion(
-                  child: FilledButton(
-                    key: const Key('first-run-create'),
-                    onPressed: _canCreate ? _create : null,
-                    child: _creating
-                        ? const Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              SizedBox.square(
-                                dimension: 16,
-                                child: CircularProgressIndicator(
-                                  strokeWidth: 2,
+                  child: PrimaryGlow(
+                    enabled: _canCreate,
+                    child: FilledButton(
+                      key: const Key('first-run-create'),
+                      onPressed: _canCreate ? _create : null,
+                      child: _creating
+                          ? const Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                SizedBox.square(
+                                  dimension: 16,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                  ),
                                 ),
-                              ),
-                              SizedBox(width: 12),
-                              Text('Creando la bóveda…'),
-                            ],
-                          )
-                        : const Text('Crear bóveda'),
+                                SizedBox(width: Space.md),
+                                // `Flexible`: con texto grande se parte en dos
+                                // líneas en vez de desbordar.
+                                Flexible(child: Text('Creando la bóveda…')),
+                              ],
+                            )
+                          : const Text('Crear bóveda'),
+                    ),
                   ),
                 ),
-                const SizedBox(height: 8),
+                const SizedBox(height: Space.sm),
                 TextButton(
                   key: const Key('first-run-restore'),
                   onPressed: _creating || _restoring ? null : _restore,

@@ -18,6 +18,10 @@ abstract final class BovedaColors {
   static const outline = Color(0xFF71717A);
   static const lockScrim = Color(0xFF09090C);
 
+  /// Cápsula de estado (`DESIGN.md` 6.1): fondo y borde.
+  static const capsuleBg = Color(0xFF000000);
+  static const capsuleBorder = Color(0xFF24242F);
+
   // 2.2 Texto.
   static const textPrimary = Color(0xFFF4F4F5);
   static const textBody = Color(0xFFD4D4D8);
