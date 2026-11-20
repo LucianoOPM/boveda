@@ -5,6 +5,6 @@
 
 mod crypto;
 mod error;
-mod search;
 pub mod protocol;
+mod search;
 pub mod vault;

@@ -4,5 +4,7 @@
 //! transporte con Noise llegan en las issues siguientes de la etapa 3.
 
 mod error;
+mod identity;
 
 pub use error::{InvalidField, ProtocolError, Result};
+pub use identity::{Fingerprint, KeyPair, PublicKey};
