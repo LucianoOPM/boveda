@@ -5,6 +5,13 @@ import '../services/local_clipboard.dart';
 import '../src/rust/api/entries.dart';
 import '../src/rust/api/error.dart';
 import '../src/rust/api/session.dart';
+import '../theme/button_styles.dart';
+import '../theme/colors.dart';
+import '../theme/icons.dart';
+import '../theme/spacing.dart';
+import '../theme/text_scale.dart';
+import '../widgets/field_label.dart';
+import '../widgets/tag_badge.dart';
 import 'entry_form_screen.dart';
 
 /// Abre el formulario de edición de [entry] (en modo reparar si [repair]) y
@@ -350,6 +357,10 @@ class _EntryDetailScreenState extends State<EntryDetailScreen> {
             child: const Text('Cancelar'),
           ),
           TextButton(
+            // Acción destructiva: en `error` (`DESIGN.md` 6.8 y 6.11).
+            style: TextButton.styleFrom(
+              foregroundColor: Theme.of(context).colorScheme.error,
+            ),
             onPressed: () => Navigator.of(context).pop(true),
             child: const Text('Eliminar'),
           ),
@@ -391,12 +402,12 @@ class _EntryDetailScreenState extends State<EntryDetailScreen> {
         actions: [
           IconButton(
             tooltip: 'Editar',
-            icon: const Icon(Icons.edit),
+            icon: const Icon(BovedaIcons.pencil),
             onPressed: canEdit ? () => _openForm(repair: false) : null,
           ),
           IconButton(
             tooltip: 'Eliminar',
-            icon: const Icon(Icons.delete),
+            icon: const Icon(BovedaIcons.trash),
             onPressed: canEdit ? _confirmDelete : null,
           ),
         ],
@@ -404,13 +415,14 @@ class _EntryDetailScreenState extends State<EntryDetailScreen> {
       body: SafeArea(
         child: ListView(
           keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
-          padding: const EdgeInsets.all(16),
+          padding: const EdgeInsets.all(Space.lg),
           children: [
             if (_entry.username case final username?)
               _Field(
                 label: 'Usuario',
                 action: TextButton(
                   key: const Key('copy-username'),
+                  style: secondaryActionStyle(),
                   onPressed: canEdit ? () => _copyUsername(username) : null,
                   child: const Text('Copiar'),
                 ),
@@ -422,10 +434,10 @@ class _EntryDetailScreenState extends State<EntryDetailScreen> {
               _Field(
                 label: 'Etiquetas',
                 child: Wrap(
-                  spacing: 8,
+                  spacing: Space.sm,
+                  runSpacing: Space.sm,
                   children: [
-                    for (final tag in _entry.tags)
-                      Chip(label: Text(tag, overflow: TextOverflow.ellipsis)),
+                    for (final tag in _entry.tags) TagBadge(label: tag),
                   ],
                 ),
               ),
@@ -549,23 +561,45 @@ class _Field extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final content = Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        FieldLabel(label),
+        const SizedBox(height: Space.xs),
+        child,
+      ],
+    );
+    final action = this.action;
     return Padding(
-      padding: const EdgeInsets.only(bottom: 16),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(label, style: Theme.of(context).textTheme.labelMedium),
-                const SizedBox(height: 4),
-                child,
-              ],
-            ),
-          ),
-          ?action,
-        ],
+      padding: const EdgeInsets.only(bottom: Space.s10),
+      child: Container(
+        key: Key('detail-field-${label.toLowerCase()}'),
+        padding: const EdgeInsets.all(Space.s14),
+        decoration: BoxDecoration(
+          color: BovedaColors.surface2,
+          borderRadius: BorderRadius.circular(Radii.card),
+          border: Border.all(color: BovedaColors.borderCard),
+        ),
+        child: action == null
+            ? content
+            // Con letra grande la acción pasa debajo del valor: a su lado lo
+            // dejaría una columna muy estrecha.
+            : isLargeText(context)
+            ? Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  content,
+                  const SizedBox(height: Space.sm),
+                  Align(alignment: Alignment.centerRight, child: action),
+                ],
+              )
+            : Row(
+                crossAxisAlignment: CrossAxisAlignment.center,
+                children: [
+                  Expanded(child: content),
+                  action,
+                ],
+              ),
       ),
     );
   }

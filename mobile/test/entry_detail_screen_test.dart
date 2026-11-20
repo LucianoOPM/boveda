@@ -7,6 +7,8 @@ import 'package:boveda/screens/entry_form_screen.dart';
 import 'package:boveda/services/local_clipboard.dart';
 import 'package:boveda/src/rust/api/entries.dart';
 import 'package:boveda/src/rust/api/error.dart';
+import 'package:boveda/theme/icons.dart';
+import 'package:boveda/widgets/tag_badge.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -22,8 +24,8 @@ final showNotes = find.widgetWithText(TextButton, 'Mostrar notas');
 final hideNotes = find.widgetWithText(TextButton, 'Ocultar notas');
 final editAction = find.byTooltip('Editar');
 final deleteAction = find.byTooltip('Eliminar');
-final editButton = find.widgetWithIcon(IconButton, Icons.edit);
-final deleteButton = find.widgetWithIcon(IconButton, Icons.delete);
+final editButton = find.widgetWithIcon(IconButton, BovedaIcons.pencil);
+final deleteButton = find.widgetWithIcon(IconButton, BovedaIcons.trash);
 final copyPassword = find.byKey(const Key('copy-password'));
 final copyUsername = find.byKey(const Key('copy-username'));
 
@@ -126,8 +128,8 @@ void main() {
       expect(find.widgetWithText(AppBar, 'Gmail'), findsOneWidget);
       expect(find.text('ana@example.com'), findsOneWidget);
       expect(find.text('https://mail.example.com'), findsOneWidget);
-      expect(find.widgetWithText(Chip, 'correo'), findsOneWidget);
-      expect(find.widgetWithText(Chip, 'personal'), findsOneWidget);
+      expect(find.widgetWithText(TagBadge, 'CORREO'), findsOneWidget);
+      expect(find.widgetWithText(TagBadge, 'PERSONAL'), findsOneWidget);
       expect(showPassword, findsOneWidget);
       expect(showNotes, findsOneWidget);
     });
@@ -135,11 +137,11 @@ void main() {
     testWidgets('las filas opcionales aparecen solo con dato', (tester) async {
       await pumpDetail(tester, of: entry('Banco'));
 
-      expect(find.text('Usuario'), findsNothing);
+      expect(find.text('USUARIO'), findsNothing);
       expect(find.text('URL'), findsNothing);
-      expect(find.text('Etiquetas'), findsNothing);
-      expect(find.text('Contraseña'), findsOneWidget);
-      expect(find.text('Notas'), findsOneWidget);
+      expect(find.text('ETIQUETAS'), findsNothing);
+      expect(find.text('CONTRASEÑA'), findsOneWidget);
+      expect(find.text('NOTAS'), findsOneWidget);
     });
 
     testWidgets('la lista cierra el teclado al desplazarse', (tester) async {
