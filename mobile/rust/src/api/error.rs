@@ -87,6 +87,14 @@ impl From<Error> for VaultError {
             Error::WrongVaultKey => Self::WrongVaultKey,
             Error::AlreadyExists => Self::AlreadyExists,
             Error::PasswordTooShort => Self::PasswordTooShort,
+            // Mapeo provisional de la #93: la fachada todavía no expone la
+            // identidad ni las PCs emparejadas, así que estas variantes no
+            // llegan a Dart. La #102 define el mapeo definitivo y, si hace
+            // falta, variantes propias en `VaultError`.
+            Error::CorruptIdentity | Error::CorruptPairedPc => Self::StorageCorrupt,
+            Error::PairedPcNotFound => Self::EntryNotFound,
+            Error::PairedPcExists => Self::AlreadyExists,
+            Error::InvalidPairedPc(_) => Self::StorageOther,
         }
     }
 }

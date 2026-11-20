@@ -86,6 +86,30 @@ pub enum Error {
     /// caracteres que el mínimo. Nunca la incluye.
     #[error("la contraseña maestra es demasiado corta")]
     PasswordTooShort,
+
+    /// La identidad del celular existe pero no se pudo leer: no se autentica,
+    /// su versión de estructura es desconocida o su fila no tiene la forma
+    /// esperada. Nunca es lo mismo que una identidad ausente.
+    #[error("identidad dañada")]
+    CorruptIdentity,
+
+    /// Una PC emparejada no se pudo leer (mismas causas que
+    /// [`Error::CorruptIdentity`]).
+    #[error("PC emparejada dañada")]
+    CorruptPairedPc,
+
+    /// No hay una PC emparejada con ese identificador.
+    #[error("PC emparejada no encontrada")]
+    PairedPcNotFound,
+
+    /// Ya hay una PC emparejada con esa llave pública.
+    #[error("la PC ya está emparejada")]
+    PairedPcExists,
+
+    /// Los datos para agregar o actualizar una PC emparejada no cumplen las
+    /// reglas.
+    #[error("PC emparejada no válida: {0}")]
+    InvalidPairedPc(InvalidPairedPcField),
 }
 
 /// Tipo de fallo del almacenamiento, sin datos.
@@ -139,6 +163,18 @@ pub enum InvalidEntryField {
     TooManyTags,
     #[error("una etiqueta es demasiado larga")]
     TagTooLong,
+}
+
+/// Campo de una PC emparejada que no cumple las reglas, y por qué.
+///
+/// Nunca incluye el valor del campo.
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+pub enum InvalidPairedPcField {
+    #[error("el nombre está vacío")]
+    NameEmpty,
+    #[error("el nombre es demasiado largo")]
+    NameTooLong,
 }
 
 /// Resultado con el [`Error`] del núcleo.

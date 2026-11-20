@@ -23,7 +23,7 @@ pub(crate) mod storage;
 #[cfg(test)]
 pub(crate) mod test_support;
 
-pub use crate::error::{Error, InvalidEntryField, Result, StorageErrorKind};
+pub use crate::error::{Error, InvalidEntryField, InvalidPairedPcField, Result, StorageErrorKind};
 use entry::sealed::SealedEntry;
 pub use entry::{EntryId, SearchData, Secret};
 use header::{FORMAT_VERSION, FORMAT_VERSION_V2, VaultHeader};

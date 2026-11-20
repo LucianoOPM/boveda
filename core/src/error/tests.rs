@@ -57,3 +57,25 @@ fn wrong_vault_key_message() {
         "la llave no corresponde a esta bóveda"
     );
 }
+
+#[test]
+fn identity_and_paired_pc_error_messages_are_fixed() {
+    assert_eq!(Error::CorruptIdentity.to_string(), "identidad dañada");
+    assert_eq!(Error::CorruptPairedPc.to_string(), "PC emparejada dañada");
+    assert_eq!(
+        Error::PairedPcNotFound.to_string(),
+        "PC emparejada no encontrada"
+    );
+    assert_eq!(
+        Error::PairedPcExists.to_string(),
+        "la PC ya está emparejada"
+    );
+    assert_eq!(
+        Error::InvalidPairedPc(InvalidPairedPcField::NameEmpty).to_string(),
+        "PC emparejada no válida: el nombre está vacío"
+    );
+    assert_eq!(
+        Error::InvalidPairedPc(InvalidPairedPcField::NameTooLong).to_string(),
+        "PC emparejada no válida: el nombre es demasiado largo"
+    );
+}
