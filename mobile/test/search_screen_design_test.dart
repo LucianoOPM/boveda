@@ -338,6 +338,62 @@ void main() {
     });
   });
 
+  group('cierre del teclado al arrastrar (mobile/CLAUDE.md)', () {
+    const onDrag = ScrollViewKeyboardDismissBehavior.onDrag;
+
+    testWidgets('la lista y la zona de arriba lo cierran', (tester) async {
+      session.onSearch = (_) async => sample();
+      await pumpSearch(tester);
+
+      expect(
+        tester.widget<ListView>(find.byType(ListView)).keyboardDismissBehavior,
+        onDrag,
+      );
+      expect(
+        tester
+            .widget<SingleChildScrollView>(find.byType(SingleChildScrollView))
+            .keyboardDismissBehavior,
+        onDrag,
+      );
+    });
+
+    testWidgets('el estado vacío lo cierra', (tester) async {
+      await pumpSearch(tester);
+
+      expect(
+        tester
+            .widget<CustomScrollView>(find.byType(CustomScrollView))
+            .keyboardDismissBehavior,
+        onDrag,
+      );
+    });
+
+    testWidgets('el estado de error lo cierra', (tester) async {
+      session.onSearch = (_) async => throw Exception('falla');
+      await pumpSearch(tester);
+
+      expect(
+        tester
+            .widget<CustomScrollView>(find.byType(CustomScrollView))
+            .keyboardDismissBehavior,
+        onDrag,
+      );
+    });
+
+    testWidgets('el estado sin resultados lo cierra', (tester) async {
+      await pumpSearch(tester);
+      await tester.enterText(searchField, 'xyz');
+      await tester.pump();
+
+      expect(
+        tester
+            .widget<CustomScrollView>(find.byType(CustomScrollView))
+            .keyboardDismissBehavior,
+        onDrag,
+      );
+    });
+  });
+
   testWidgets('con letra grande y aviso, la lista conserva la mitad de la '
       'altura y la zona de arriba se desplaza', (tester) async {
     session.onSearch = (_) async => sample();

@@ -202,6 +202,8 @@ class _SearchScreenState extends State<SearchScreen> {
                   maxHeight: constraints.maxHeight * 0.5,
                 ),
                 child: SingleChildScrollView(
+                  keyboardDismissBehavior:
+                      ScrollViewKeyboardDismissBehavior.onDrag,
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
                     crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -272,6 +274,7 @@ class _SearchScreenState extends State<SearchScreen> {
   /// desplaza en vez de desbordar.
   Widget _state(Key key, List<Widget> children) {
     return CustomScrollView(
+      keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
       slivers: [
         SliverFillRemaining(
           hasScrollBody: false,
