@@ -31,7 +31,8 @@ use super::message::{
     AckDecision, DeviceName, PairingCode, PairingOffer, PairingReply, PairingRequest,
 };
 use super::transport::{
-    CancelToken, PairingTimeouts, TimedStream, read_frame_body, read_frame_header, write_frame,
+    CancelToken, PairingTimeouts, TimedStream, ensure_peer_open, read_frame_body,
+    read_frame_header, write_frame,
 };
 use crate::vault::NewPairedPc;
 
@@ -696,6 +697,8 @@ impl<S: TimedStream> PendingConnection<S> {
             step,
             cancel,
         } = self;
+        // Con TCP, escribir no basta para saber que el celular sigue ahí.
+        ensure_peer_open(&mut stream)?;
         match pending.accept(Instant::now())? {
             Decision::Accepted { device, frame } => {
                 write_frame(&mut stream, &frame, Instant::now() + step, step, &cancel)?;

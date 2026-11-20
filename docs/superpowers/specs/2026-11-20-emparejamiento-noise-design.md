@@ -178,7 +178,7 @@ PendingPairing::reject(self) -> Result<Frame, PairingError>   // la trama 4 con 
 Son tres cosas distintas, y el núcleo promete solo las dos primeras, y solo en su propio extremo:
 
 1. **Autorización criptográfica.** Terminar el apretón de manos solo prueba que cada extremo tiene la llave privada de la que dice ser y que el celular conocía el código. **No autoriza nada.** La autorización es la decisión del usuario en la PC: `PendingPairing::accept` produce la trama `Accepted`, cifrada y autenticada con el canal Noise.
-2. **Entrega de la respuesta.** `PendingConnection::confirm` escribe la trama 4 completa en su conexión **antes** de devolver `PairedDevice`. Eso garantiza que la PC la cifró y la escribió sin error en su lado; **no** que el celular la haya recibido (la escritura exitosa no es un acuse de TCP ni del celular). Soltar un `PendingConnection` sin decidir cierra la conexión.
+2. **Entrega de la respuesta.** `PendingConnection::confirm` primero sondea la conexión (con TCP, la primera escritura tras el cierre del otro extremo sale bien, así que escribir no basta: fin de conexión es `Closed` y cualquier byte del celular es un error) y después escribe la trama 4 completa en su conexión **antes** de devolver `PairedDevice`. Eso garantiza que la PC la cifró y la escribió sin error en su lado; **no** que el celular la haya recibido (la escritura exitosa no es un acuse de TCP ni del celular). Soltar un `PendingConnection` sin decidir cierra la conexión.
 3. **Persistencia de la confianza.** Es de cada app (#99 en la PC, #93 y #103 en el celular), después de recibir su resultado. El núcleo **no promete persistencia atómica entre dispositivos** ni que cualquiera de las apps consiga guardar la llave (disco lleno, bóveda bloqueada, error de DPAPI).
 
 Casos que pueden quedar desparejados y cómo se resuelven (se documenta en la especificación):
@@ -250,7 +250,7 @@ Toda salida con error **consume** el estado de la máquina (se pasa por valor), 
 | Código caducado, consumido, agotado o cancelado | PC | `Refused(...)`; **lee la trama 1** y cierra sin responder (mismo comportamiento externo) | No | Sin cambios |
 | Falla al escribir la trama 2, o la trama 3 llega incompleta, vence, se cancela o no descifra | PC | `Closed`, `Timeout`, `Cancelled`, `Io` o `Handshake` | No | `Consumed` (ya se gastó) |
 | La app no decide a tiempo | PC | `accept` da `ConfirmationTimeout` y trama `Rejected`; si la app suelta el `PendingConnection`, se cierra | No | `Consumed` |
-| El celular se desconecta durante el diálogo | PC | `confirm` falla al escribir (`Closed` o `Io`); no hay `PairedDevice` | No | `Consumed` |
+| El celular se desconecta durante el diálogo | PC | `confirm` lo detecta con el sondeo previo (`Closed`) o al escribir (`Closed` o `Io`); no hay `PairedDevice` | No | `Consumed` |
 | La trama 2 no se autentica (falsificada o alterada) | Celular | `PeerNotAuthentic`; **no manda la trama 3** | — | — |
 | La PC tiene otra llave privada que la del QR | Ambos | No descifra la trama 1 (el `es` usa la llave del QR): la PC rechaza (`WrongCode`) y cierra sin responder; el celular ve `Closed` y no manda nada más | Sí | `failed + 1` |
 | La PC cierra tras la trama 1 (código rechazado) o hay un corte de red | Celular | `Closed` (**mismo error en ambos casos**) | — | — |

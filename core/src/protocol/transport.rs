@@ -212,6 +212,30 @@ pub(crate) fn write_frame<S: TimedStream>(
     Ok(())
 }
 
+/// Comprueba que el otro extremo sigue ahí antes de escribir la aceptación.
+///
+/// Con TCP, la primera escritura tras el cierre del otro lado sale bien y solo
+/// la siguiente falla, así que escribir no basta para saber que el celular
+/// sigue conectado. Una lectura de sondeo con un plazo mínimo lo detecta: fin
+/// de la conexión es `Closed`, y cualquier byte es un error de protocolo,
+/// porque el celular no debe mandar nada mientras espera la decisión. Queda la
+/// carrera de una desconexión entre el sondeo y la escritura, que es la misma
+/// ya aceptada de "se escribió pero no se recibió".
+pub(crate) fn ensure_peer_open<S: TimedStream>(stream: &mut S) -> Result<(), PairingError> {
+    stream
+        .set_read_timeout(Some(Duration::from_millis(1)))
+        .map_err(|error| io_error(&error))?;
+    let mut byte = [0u8; 1];
+    match stream.read(&mut byte) {
+        Ok(0) => Err(PairingError::Closed),
+        Ok(_) => Err(PairingError::Protocol(ProtocolError::Malformed)),
+        Err(error) => match error.kind() {
+            ErrorKind::WouldBlock | ErrorKind::TimedOut | ErrorKind::Interrupted => Ok(()),
+            _ => Err(io_error(&error)),
+        },
+    }
+}
+
 /// Una trama mide de 1 a `MAX_FRAME_LEN` bytes.
 fn check_len(len: usize) -> Result<(), PairingError> {
     match len {

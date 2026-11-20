@@ -862,3 +862,46 @@ fn provisional_name_builds_a_new_paired_pc() {
     assert_eq!(new.public_key, *pc_key().as_bytes());
     assert_eq!(new.last_ip, Some(pc.addr.ip()));
 }
+
+#[test]
+fn confirm_fails_when_the_phone_already_disconnected_over_tcp() {
+    // Con TCP real, la primera escritura tras el cierre del otro extremo sale
+    // bien: `confirm` debe notar la desconexión antes de escribir.
+    let pc = Pc::new();
+    let server = pc.serve(quick());
+    let (awaiting, frame1) = Initiator::new(&secret_keys(2), &pc.offer(7), phone_name())
+        .unwrap()
+        .first_message()
+        .unwrap();
+    let mut stream = TcpStream::connect(pc.addr).unwrap();
+    stream.write_all(&framed(&frame1)).unwrap();
+    let frame2 = read_exact_frame(&mut stream);
+    let (_reply, frame3) = awaiting.read_second(&frame2).unwrap();
+    stream.write_all(&framed(&frame3)).unwrap();
+    let connection = server.join().unwrap().unwrap();
+    // El celular se va mientras el diálogo sigue abierto en la PC.
+    drop(stream);
+    thread::sleep(Duration::from_millis(100));
+    assert_eq!(connection.confirm().err(), Some(PairingError::Closed));
+}
+
+#[test]
+fn confirm_fails_if_the_phone_sends_something_during_the_dialog() {
+    let pc = Pc::new();
+    let server = pc.serve(quick());
+    let (awaiting, frame1) = Initiator::new(&secret_keys(2), &pc.offer(7), phone_name())
+        .unwrap()
+        .first_message()
+        .unwrap();
+    let mut stream = TcpStream::connect(pc.addr).unwrap();
+    stream.write_all(&framed(&frame1)).unwrap();
+    let frame2 = read_exact_frame(&mut stream);
+    let (_reply, frame3) = awaiting.read_second(&frame2).unwrap();
+    stream.write_all(&framed(&frame3)).unwrap();
+    let connection = server.join().unwrap().unwrap();
+    // El celular no debe mandar nada mientras espera la decisión.
+    stream.write_all(&[1, 2, 3]).unwrap();
+    thread::sleep(Duration::from_millis(100));
+    assert!(connection.confirm().is_err());
+    drop(stream);
+}
