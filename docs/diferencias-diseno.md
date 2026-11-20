@@ -26,7 +26,7 @@ Son las decisiones que `DESIGN.md` (sección 15) da por hechas y que cambian la 
 | **D5.** Generador de contraseñas con modo frase (3 a 8 palabras en español). | No hay generador (etapa 4). | Generador en el núcleo y una lista de palabras en español. |
 | **D6.** Acción rápida "Enviar a PC" en la tarjeta, además de deslizar para enviar (etapas 3 y 4). | La tarjeta solo abre el detalle. | Todo el envío a la PC (etapa 3) y el gesto de deslizar (etapa 4). |
 | Pulso animado del LED de la cápsula de estado con la bóveda abierta (`DESIGN.md` 6.1 y 9). | El LED es fijo. | Animación continua que respete `MediaQuery.disableAnimations`. |
-| Escala al presionar del engranaje (0.90) y del botón "+" (0.95), `DESIGN.md` 6.8 y 9. | Responden al toque sin escala. | Animación de 100 ms que respete `disableAnimations`. |
+| Escala al presionar de todos los botones: 0.95, y 0.90 en los de ícono (`DESIGN.md` 6.8 y 9): engranaje, "+", botones de la barra, "Copiar", "Mostrar", "Reparar"… | Solo la tarjeta de entrada se reduce al presionarla (0.98); los botones responden al toque con la animación de tinta de Material, sin escala. | Animación de 100 ms en los botones que respete `disableAnimations`. |
 | Respuesta háptica: ligera al copiar y al confirmar un envío; fuerte en un error de desbloqueo (`DESIGN.md` 9). | La app no usa `HapticFeedback`. | Llamadas a `HapticFeedback` en esos tres momentos. |
 
 ## Desbloqueo
@@ -70,6 +70,7 @@ Son las decisiones que `DESIGN.md` (sección 15) da por hechas y que cambian la 
 | Título de la barra "Detalle" y un bloque de cabecera: caja de inicial de 56, servicio en `titleLarge`, etiquetas como insignias y el dominio de la URL. | El título de la barra es el nombre del servicio; las etiquetas son una fila más. No hay bloque de cabecera ni dominio. | Decidir la cabecera y derivar el dominio de la URL guardada. |
 | Botón principal al pie "Copiar contraseña" (hasta la etapa 3; luego "Enviar a PC", y copiar pasa a la fila). | "Copiar" solo está en la fila de la contraseña y en la del usuario. | Agregar el botón al pie; ver D6 para "Enviar a PC". |
 | "Sin notas" visible antes de revelar las notas. | "Sin notas" aparece solo al revelarlas: las notas son secreto y la lista y el detalle no saben si existen sin descifrarlas. | Un dato nuevo en la lista o en el detalle que diga si hay notas, sin descifrarlas (cambia el núcleo y el modelo de búsqueda). |
+| Orden de las filas: Usuario, Contraseña, URL, Notas (`DESIGN.md` 7.5), con las etiquetas en la cabecera. | Usuario, URL, Etiquetas, Contraseña y Notas, en ese orden; cada fila aparece solo si tiene dato (la contraseña y las notas, siempre). | Reordenar las filas (y decidir dónde van las etiquetas si hay cabecera). |
 | Contraseña oculta con **doce** puntos (`DESIGN.md` 6.3). | **Ocho** puntos fijos, que no delatan el largo. | Cambiar el número de puntos. |
 | Orden de las acciones de la contraseña: "Mostrar", "Copiar". | "Copiar", "Mostrar". | Cambiar el orden. |
 | "Eliminar" dentro del formulario de editar, con confirmación (`DESIGN.md` 7.6); el detalle solo tiene "Editar" en la barra. | "Eliminar" está en la barra del detalle, junto a "Editar", y en el aviso de dañado. | Mover la acción al formulario. |
