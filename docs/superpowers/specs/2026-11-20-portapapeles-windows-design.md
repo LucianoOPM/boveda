@@ -130,6 +130,22 @@ Para que Clippy no marque código muerto sin silenciarlo, el módulo y su API so
 - `deny.toml`: `BSL-1.0` en `allow`, con comentario.
 - La PR lista los crates nuevos de `Cargo.lock` (comparando antes y después) y el resultado de `cargo deny` y `cargo audit`.
 
+## Hallazgo: `OpenClipboard(NULL)` no excluye (sonda entre procesos, 2026-11-20)
+
+La sección «La carrera entre comprobar y borrar» supone que, con la guarda de `clipboard-win` abierta, ninguna otra aplicación puede abrir ni cambiar el portapapeles. **Medido en Windows 11 (build 26300) con dos procesos independientes, es falso cuando el propietario es `NULL`**, que es como abre `clipboard-win` (`Clipboard::new_attempts`). El propietario que cuenta es la ventana (`hwnd`); con `NULL` no hay bloqueo.
+
+| Proceso 1 retiene… | Proceso 2 con `NULL` | Proceso 2 con ventana propia |
+| --- | --- | --- |
+| `NULL` (como hoy) | abre (`ok`) | abre (`ok`) |
+| una ventana propia (mensajes, clase `STATIC`) | `busy` | `busy` |
+| la ventana del escritorio | `busy` | `busy` |
+
+Con `NULL`, además, otro proceso pudo **escribir** (`WRITE=ok`) y **ejecutar el mismo borrado condicional** (`CLEAR=Cleared`) mientras el primero «retenía» la apertura; con una ventana propietaria, otro hilo del mismo proceso también queda excluido. Evidencia: `examples/clipboard_probe.rs` y las pruebas `#[ignore]` de `tests/clipboard_windows.rs` (cuatro fallan hoy, por esa razón), y el experimento de la tabla (guardado fuera del repo).
+
+**Consecuencia:** hoy el borrado condicional **no** es atómico frente a otras aplicaciones; queda la ventana, corta, entre comprobar y vaciar. La #98 no debe cerrarse con esa afirmación.
+
+**Propuesta (pendiente de aprobación; no implementada):** abrir con una ventana propietaria propia y de vida corta, creada en cada `clear_if_matches` en el hilo trabajador: crear la ventana de solo mensajes, `Clipboard::new_attempts_for(hwnd, 5)`, leer, comparar y vaciar, soltar la guarda y destruir la ventana. Destruirla al final evita dejar a la ventana como propietaria del portapapeles (si no, cada copia de otra aplicación le enviaría `WM_DESTROYCLIPBOARD` a un hilo que no procesa mensajes). Cuesta dos llamadas de `user32` (`CreateWindowExW`, `DestroyWindow`) con `unsafe`: o la crate `windows-sys` (ya está en el lock; habría que declararla y activar las funciones de `Win32_UI_WindowsAndMessaging`) o declaraciones `extern` a mano (sin dependencias). Se validaría con las pruebas ya escritas (deben pasar) y con la mutación de «dos aperturas» (debe hacer fallar `clipboard_stays_open_while_matching`).
+
 ## Limitaciones conocidas
 
 - **Escritura dudosa y el historial de Win+V** (hallazgo de la revisión final). `arboard` pone el texto y después agrega los formatos de exclusión; si agregarlos falla (o si Windows no registra un formato y `arboard` omite la exclusión sin avisar), la contraseña pudo quedar un instante sin excluir y llegar al historial de Win+V o a la nube antes de la limpieza inmediata, y vaciar el portapapeles no borra entradas del historial. Es muy poco probable y no se puede detectar desde fuera; cerrarlo del todo exigiría escribir también con `clipboard-win` bajo una sola guarda, lo que choca con «escribe con `arboard`». El usuario aceptó provisionalmente este riesgo residual y mantiene `arboard` (2026-11-20). La exclusión del historial y de la nube **no es una garantía absoluta** en ese escenario: si el contenido ya entró al historial, vaciar el portapapeles **no lo elimina de Win+V**.
