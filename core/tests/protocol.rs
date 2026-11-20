@@ -912,8 +912,7 @@ fn confirm_fails_if_the_phone_sends_something_during_the_dialog() {
 // ---------------------------------------------------------------------------
 
 use vault_core::protocol::{
-    AwaitingResponse, MAX_SEND_FRAME_LEN, Responder, SendError, SendTimeouts, Sender, receive_send,
-    send_to_pc,
+    AwaitingResponse, MAX_SEND_FRAME_LEN, SendError, SendTimeouts, Sender, receive_send, send_to_pc,
 };
 
 /// La PC tiene la llave 1 (la de `pc_key()`) y el celular emparejado, la 2.
