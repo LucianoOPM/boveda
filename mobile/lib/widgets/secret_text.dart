@@ -35,16 +35,23 @@ class SecretText extends StatelessWidget {
 
     final spans = <TextSpan>[];
     Color? runColor;
+    // Lo que se dibuja y lo que lee el lector de pantalla (el original).
     final run = StringBuffer();
+    final original = StringBuffer();
     void flush() {
       if (run.isEmpty) return;
+      final shown = run.toString();
+      final spoken = original.toString();
       spans.add(
         TextSpan(
-          text: run.toString(),
+          text: shown,
+          // Un espacio se dibuja `␣`, pero se lee como espacio.
+          semanticsLabel: spoken == shown ? null : spoken,
           style: TextStyle(color: runColor),
         ),
       );
       run.clear();
+      original.clear();
     }
 
     for (final grapheme in text.characters) {
@@ -54,6 +61,7 @@ class SecretText extends StatelessWidget {
         runColor = color;
       }
       run.write(shown);
+      original.write(grapheme);
     }
     flush();
 
@@ -69,10 +77,19 @@ class SecretText extends StatelessWidget {
     );
   }
 
+  /// Solo marcas combinantes (acentos sueltos), o nada.
+  static final _marks = RegExp(r'^\p{M}*$', unicode: true);
+
   /// El color de un grafema y lo que se dibuja en su lugar.
+  ///
+  /// Todo blanco (espacio, tabulador, espacio de no separación…) se dibuja
+  /// como `␣`; si lo siguen marcas combinantes, se conservan.
   static (Color, String) _classify(String grapheme, SyntaxColors colors) {
     final first = String.fromCharCode(grapheme.runes.first);
-    if (first.trim().isEmpty) return (colors.space, '␣');
+    if (first.trim().isEmpty) {
+      final rest = grapheme.substring(first.length);
+      return (colors.space, _marks.hasMatch(rest) ? '␣$rest' : '␣');
+    }
     if (_letter.hasMatch(first)) return (colors.letter, grapheme);
     final unit = first.codeUnitAt(0);
     if (first.length == 1 && unit >= 0x30 && unit <= 0x39) {

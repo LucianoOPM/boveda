@@ -498,6 +498,9 @@ class _EntryDetailScreenState extends State<EntryDetailScreen> {
                     foregroundColor: BovedaColors.textPrimary,
                     disabledBackgroundColor: BovedaColors.surfaceElevated,
                     disabledForegroundColor: BovedaColors.textDisabled,
+                    side: const BorderSide(
+                      color: BovedaColors.borderInteractive,
+                    ),
                   ),
                   onPressed: canEdit ? () => _openForm(repair: true) : null,
                   child: const Text('Reparar'),
@@ -622,12 +625,24 @@ class _Field extends StatelessWidget {
     final content = Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        FieldLabel(label),
+        // La etiqueta visible va en mayúsculas; el lector de pantalla lee la
+        // original (`FieldLabel` solo es lo que se ve).
+        Semantics(
+          container: true,
+          label: label,
+          child: ExcludeSemantics(child: FieldLabel(label)),
+        ),
         const SizedBox(height: Space.xs),
         child,
       ],
     );
     final action = this.action;
+    // Con letra grande, o con la contraseña revelada (ocupa todo el ancho), la
+    // acción pasa debajo del valor: a su lado lo dejaría una columna muy
+    // estrecha. Es un solo `Flex` que cambia de dirección, no un `Row` y un
+    // `Column`: así los botones conservan su elemento y el lector de pantalla
+    // no pierde el foco al revelar u ocultar.
+    final below = actionBelow || isLargeText(context);
     return Padding(
       padding: const EdgeInsets.only(bottom: Space.s10),
       child: Container(
@@ -640,22 +655,22 @@ class _Field extends StatelessWidget {
         ),
         child: action == null
             ? content
-            // Con letra grande la acción pasa debajo del valor: a su lado lo
-            // dejaría una columna muy estrecha.
-            : (actionBelow || isLargeText(context))
-            ? Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
+            : Flex(
+                direction: below ? Axis.vertical : Axis.horizontal,
+                mainAxisSize: below ? MainAxisSize.min : MainAxisSize.max,
+                crossAxisAlignment: below
+                    ? CrossAxisAlignment.stretch
+                    : CrossAxisAlignment.center,
                 children: [
-                  content,
-                  const SizedBox(height: Space.sm),
+                  // Horizontal, el valor ocupa el ancho que deja la acción;
+                  // vertical, mide lo que mida (sin `flex`).
+                  Flexible(
+                    flex: below ? 0 : 1,
+                    fit: below ? FlexFit.loose : FlexFit.tight,
+                    child: content,
+                  ),
+                  SizedBox(height: below ? Space.sm : 0),
                   Align(alignment: Alignment.centerRight, child: action),
-                ],
-              )
-            : Row(
-                crossAxisAlignment: CrossAxisAlignment.center,
-                children: [
-                  Expanded(child: content),
-                  action,
                 ],
               ),
       ),

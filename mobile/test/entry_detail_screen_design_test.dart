@@ -150,6 +150,25 @@ void main() {
     }
   });
 
+  testWidgets('el lector de pantalla lee las etiquetas de fila con su texto '
+      'original, no en mayúsculas', (tester) async {
+    final handle = tester.ensureSemantics();
+    await pumpDetail(tester);
+
+    for (final label in [
+      'Usuario',
+      'URL',
+      'Etiquetas',
+      'Contraseña',
+      'Notas',
+    ]) {
+      expect(find.bySemanticsLabel(label), findsOneWidget, reason: label);
+    }
+    expect(find.bySemanticsLabel('USUARIO'), findsNothing);
+    expect(find.bySemanticsLabel('CONTRASEÑA'), findsNothing);
+    handle.dispose();
+  });
+
   testWidgets('la etiqueta de cada fila va encima, en mayúsculas', (
     tester,
   ) async {
@@ -320,6 +339,32 @@ void main() {
       expect(find.text('••••••••'), findsOneWidget);
     });
 
+    for (final scale in [1.0, 2.0]) {
+      testWidgets('al revelar y ocultar, los botones conservan su elemento a '
+          '${scale * 100} % (el foco de accesibilidad no salta)', (
+        tester,
+      ) async {
+        await pumpDetail(tester, textScale: scale);
+        await tester.scrollUntilVisible(
+          copyPassword,
+          200,
+          scrollable: find.byType(Scrollable).first,
+        );
+        final copy = tester.element(copyPassword);
+        final toggle = tester.element(showPassword);
+
+        await tap(tester, showPassword);
+
+        expect(identical(tester.element(copyPassword), copy), isTrue);
+        expect(identical(tester.element(hidePassword), toggle), isTrue);
+
+        await tap(tester, hidePassword);
+
+        expect(identical(tester.element(copyPassword), copy), isTrue);
+        expect(identical(tester.element(showPassword), toggle), isTrue);
+      });
+    }
+
     testWidgets('revelada, las acciones pasan debajo de la contraseña', (
       tester,
     ) async {
@@ -450,6 +495,10 @@ void main() {
       expect(
         repair.style!.backgroundColor!.resolve(const {}),
         BovedaColors.surfaceElevated,
+      );
+      expect(
+        repair.style!.side!.resolve(const {})!.color,
+        BovedaColors.borderInteractive,
       );
       final delete = tester.widget<TextButton>(
         find.descendant(

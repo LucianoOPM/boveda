@@ -119,7 +119,30 @@ void main() {
     await pumpSecret(tester, 'una clave  con espacios');
 
     final root = tester.widget<Text>(richText()).textSpan!;
-    expect(root.toPlainText(), 'una␣clave␣␣con␣espacios');
+    // Lo que se ve lleva `␣`.
+    expect(
+      root.toPlainText(includeSemanticsLabels: false),
+      'una␣clave␣␣con␣espacios',
+    );
+  });
+
+  testWidgets('el lector de pantalla recibe la contraseña original, con sus '
+      'espacios', (tester) async {
+    await pumpSecret(tester, 'una clave  con espacios');
+
+    final root = tester.widget<Text>(richText()).textSpan!;
+    // La semántica lleva el espacio real, no el símbolo `␣`.
+    expect(root.toPlainText(), 'una clave  con espacios');
+    expect(find.text('una clave  con espacios'), findsOneWidget);
+  });
+
+  testWidgets('un carácter combinante tras un espacio no se pierde', (
+    tester,
+  ) async {
+    await pumpSecret(tester, 'a ́b');
+
+    final root = tester.widget<Text>(richText()).textSpan!;
+    expect(root.toPlainText(includeSemanticsLabels: false), 'a␣́b');
   });
 
   for (final accent in BovedaAccent.values) {

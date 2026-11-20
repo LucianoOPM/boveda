@@ -38,6 +38,17 @@ void main() {
     expect(style.foregroundColor!.resolve(disabled), BovedaColors.textDisabled);
   });
 
+  test('borde borderInteractive de 1 (DESIGN 6.8), también con foreground', () {
+    for (final style in [
+      secondaryActionStyle(),
+      secondaryActionStyle(foreground: BovedaColors.error),
+    ]) {
+      final side = style.side!.resolve(enabled)!;
+      expect(side.color, BovedaColors.borderInteractive);
+      expect(side.width, 1);
+    }
+  });
+
   test('forma de radio 12 y alto mínimo de 40', () {
     final style = secondaryActionStyle();
 
