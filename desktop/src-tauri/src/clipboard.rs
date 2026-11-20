@@ -106,6 +106,12 @@ impl ClipboardManager {
     /// Escribe la contraseña y arma su borrado. Vuelve cuando el portapapeles
     /// quedó escrito o falló; es lo que el envío necesita para contestar
     /// `Copied` o `Failed`.
+    ///
+    /// **Sin plazo:** espera la respuesta del trabajador mientras dure su
+    /// operación en curso. Si un intento de borrado anterior está dentro de la
+    /// lectura esperando a una aplicación que no responde, puede tardar lo que
+    /// tarde Windows. Quien lo llame con un plazo propio (#100, al contestar al
+    /// celular) debe decidirlo allí; esta issue no le agrega un `timeout`.
     pub fn deliver(&self, password: &SecretString) -> Result<(), ClipboardError> {
         let text = password.expose_secret();
         if text.is_empty() || text.contains('\0') {
