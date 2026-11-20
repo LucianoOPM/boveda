@@ -1152,10 +1152,6 @@ fn generate_fixture_v1() {
     generate_fixture("vault-v1.db", FIXTURE_V1_PASSWORD);
 }
 
-/// Contraseña de prueba de `core/tests/fixtures/vault-v2.db`. Se repite en
-/// `core/tests/vault.rs`, que no ve el código `cfg(test)` del crate.
-const FIXTURE_V2_PASSWORD: &str = "prueba-bóveda-v2";
-
 /// Genera `core/tests/fixtures/vault-v2.db`, la bóveda de ejemplo del
 /// formato 2, con el mismo contenido que la del formato 1.
 ///
@@ -1174,7 +1170,7 @@ fn generate_fixture_v2() {
 // --- Migración del formato 1 al 2 (#34) ----------------------------------
 
 #[test]
-fn unlock_migrates_v1_with_one_derivation() {
+fn unlock_migrates_v1_to_v3_with_one_derivation() {
     let (_dir, path) = fixture_v1_copy();
     let mut vault = Vault::open(&path).unwrap();
     assert_eq!(vault.storage.read_header().unwrap().format_version(), 1);
@@ -1187,29 +1183,33 @@ fn unlock_migrates_v1_with_one_derivation() {
     assert_eq!(report.unidentified_corrupt, 0);
     assert_eq!(vault.entries().unwrap().len(), 3);
     let header = vault.storage.read_header().unwrap();
-    assert_eq!(header.format_version(), 2);
+    assert_eq!(header.format_version(), 3);
     assert_eq!(header.verify_key(&vault.unlocked().unwrap().key), Ok(()));
+    drop(vault);
+    assert_eq!(pairing_row_counts(&path), (0, 0));
 }
 
 #[test]
-fn migrated_schema_equals_created_schema() {
-    let (_dir, migrated) = fixture_v1_copy();
-    let mut vault = Vault::open(&migrated).unwrap();
-    vault.unlock(&password(FIXTURE_V1_PASSWORD)).unwrap();
-    drop(vault);
-
+fn migrated_schema_equals_created_schema_from_v1_and_from_v2() {
     let (_dir2, created) = temp_path();
     drop(Vault::create_with_params(&created, &password("p-de-prueba-12"), KdfParams::MIN).unwrap());
 
-    // Hasta que la migración v2→v3 exista (Task 2), una v1 migrada solo llega
-    // a la v2: se comparan sin las tablas de identidad y de PCs.
-    let mut created_schema = schema_of(&created);
-    created_schema.retain(|row| row.1 != "identity" && row.1 != "paired_pcs");
-    assert_eq!(schema_of(&migrated), created_schema);
-    let integrity: String = raw(&migrated)
-        .query_row("PRAGMA integrity_check", [], |row| row.get(0))
-        .unwrap();
-    assert_eq!(integrity, "ok");
+    let (_dir1, from_v1) = fixture_v1_copy();
+    let (_dir_2, from_v2) = fixture_v2_copy();
+    for (path, pw) in [
+        (&from_v1, FIXTURE_V1_PASSWORD),
+        (&from_v2, FIXTURE_V2_PASSWORD),
+    ] {
+        let mut vault = Vault::open(path).unwrap();
+        vault.unlock(&password(pw)).unwrap();
+        drop(vault);
+
+        assert_eq!(schema_of(path), schema_of(&created));
+        let integrity: String = raw(path)
+            .query_row("PRAGMA integrity_check", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(integrity, "ok");
+    }
 }
 
 #[test]
@@ -1292,13 +1292,200 @@ fn wrong_password_on_v1_writes_nothing() {
 }
 
 #[test]
-fn v2_unlock_writes_nothing() {
+fn v3_unlock_writes_nothing() {
     let (_dir, path, mut vault) = new_vault();
+    assert_eq!(vault.storage.read_header().unwrap().format_version(), 3);
     vault.lock();
     let before = fs::read(&path).unwrap();
     relock(&mut vault);
     drop(vault);
     assert_eq!(fs::read(&path).unwrap(), before);
+}
+
+// --- Migración del formato 2 al 3 (#93) ----------------------------------
+
+/// Llave de bóveda de `vault-v2.db`, sacada de una copia desbloqueada con
+/// contraseña (lo que el Keystore habría guardado).
+fn fixture_v2_vault_key() -> SecretBox<[u8; 32]> {
+    let (_dir, path) = fixture_v2_copy();
+    let mut vault = Vault::open(&path).unwrap();
+    vault.unlock(&password(FIXTURE_V2_PASSWORD)).unwrap();
+    vault.export_vault_key().unwrap()
+}
+
+#[test]
+fn unlock_migrates_v2_to_v3_without_identity() {
+    let (_dir, path) = fixture_v2_copy();
+    let mut vault = Vault::open(&path).unwrap();
+    assert_eq!(vault.storage.read_header().unwrap().format_version(), 2);
+
+    DERIVE_CALLS.with(|c| c.set(0));
+    let report = vault.unlock(&password(FIXTURE_V2_PASSWORD)).unwrap();
+    assert_eq!(DERIVE_CALLS.with(|c| c.get()), 1);
+
+    assert!(report.corrupt.is_empty());
+    assert_eq!(vault.entries().unwrap().len(), 3);
+    let header = vault.storage.read_header().unwrap();
+    let key = &vault.unlocked().unwrap().key;
+    assert_eq!(header.format_version(), 3);
+    assert_eq!(header.verify_key(key), Ok(()));
+    // `key_check` quedó regenerado para la versión 3: con la 2 no se autentica.
+    assert_eq!(
+        crate::crypto::keys::verify_key_check(key, 2, header.key_check().unwrap()),
+        Err(Error::WrongVaultKey)
+    );
+    drop(vault);
+    assert_eq!(pairing_row_counts(&path), (0, 0));
+}
+
+#[test]
+fn unlock_with_key_migrates_v2_to_v3_and_keystore_copy_still_works() {
+    let key = fixture_v2_vault_key();
+    let (_dir, path) = fixture_v2_copy();
+    let mut vault = Vault::open(&path).unwrap();
+    assert_eq!(stored_format_version(&path), 2);
+
+    let report = vault.unlock_with_key(key).unwrap();
+    assert!(report.corrupt.is_empty());
+    assert_eq!(vault.entries().unwrap().len(), 3);
+    assert_eq!(stored_format_version(&path), 3);
+    assert_eq!(pairing_row_counts(&path), (0, 0));
+
+    // La copia del Keystore sigue valiendo: se vuelve a pedir la llave a la
+    // bóveda ya migrada y se desbloquea con ella.
+    let again = vault.export_vault_key().unwrap();
+    vault.lock();
+    assert!(vault.unlock_with_key(again).is_ok());
+    // Y la contraseña sigue abriendo.
+    vault.lock();
+    assert!(vault.unlock(&password(FIXTURE_V2_PASSWORD)).is_ok());
+}
+
+#[test]
+fn unlock_with_key_on_v1_is_wrong_vault_key_and_writes_nothing() {
+    let (_dir, path) = fixture_v1_copy();
+    let mut vault = Vault::open(&path).unwrap();
+    let before = fs::read(&path).unwrap();
+    assert_eq!(
+        vault.unlock_with_key(fixture_v2_vault_key()).err(),
+        Some(Error::WrongVaultKey)
+    );
+    assert!(vault.is_locked());
+    drop(vault);
+    assert_eq!(fs::read(&path).unwrap(), before);
+}
+
+#[test]
+fn wrong_vault_key_on_v2_writes_nothing() {
+    let (_dir, path) = fixture_v2_copy();
+    let mut vault = Vault::open(&path).unwrap();
+    let before = fs::read(&path).unwrap();
+    assert_eq!(
+        vault.unlock_with_key(random_key()).err(),
+        Some(Error::WrongVaultKey)
+    );
+    assert!(vault.is_locked());
+    drop(vault);
+    assert_eq!(fs::read(&path).unwrap(), before);
+    assert_eq!(stored_format_version(&path), 2);
+}
+
+#[test]
+fn wrong_password_on_v2_writes_nothing() {
+    let (_dir, path) = fixture_v2_copy();
+    let mut vault = Vault::open(&path).unwrap();
+    let before = fs::read(&path).unwrap();
+    assert_eq!(
+        vault.unlock(&password("incorrecta")).err(),
+        Some(Error::WrongPassword)
+    );
+    drop(vault);
+    assert_eq!(fs::read(&path).unwrap(), before);
+}
+
+/// Si la v1→v2 se confirma y la v2→v3 falla, el archivo queda en una v2
+/// válida y la bóveda sigue bloqueada. Aquí la v2→v3 falla porque ya existe
+/// una tabla `identity` (el mismo caso que una v3 degradada a mano).
+#[test]
+fn v1_to_v2_committed_then_v2_to_v3_failed_leaves_valid_v2_locked() {
+    let (_dir, path) = fixture_v1_copy();
+    raw(&path)
+        .execute_batch("CREATE TABLE identity (x)")
+        .unwrap();
+    let mut vault = Vault::open(&path).unwrap();
+
+    let err = vault.unlock(&password(FIXTURE_V1_PASSWORD)).unwrap_err();
+    assert_eq!(err, Error::Storage(StorageErrorKind::Corrupt));
+    assert!(vault.is_locked());
+    drop(vault);
+
+    assert_eq!(stored_format_version(&path), 2);
+    let integrity: String = raw(&path)
+        .query_row("PRAGMA integrity_check", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(integrity, "ok");
+    // Sigue siendo una v2 válida que se puede abrir.
+    let storage = Storage::open_read_only(&path).unwrap();
+    assert_eq!(storage.read_header().unwrap().format_version(), 2);
+}
+
+// Degradación: una v3 con `format_version` bajado a 2 a mano.
+//
+// - Con la contraseña abre (`unlock` no lee `key_check` y el dato autenticado
+//   de `encrypted_key` lleva la versión de la cabecera, que no cambió); la
+//   migración v2→v3 encuentra las tablas ya creadas y falla limpio.
+// - Con la llave la rechaza `key_check`, que autentica la versión 3. Ese caso
+//   lo cubre `key_check`, no `encrypted_key`.
+
+/// Una v3 con `format_version = 2` y la llave de bóveda.
+fn downgraded_v3() -> (tempfile::TempDir, PathBuf, SecretBox<[u8; 32]>) {
+    let (dir, path, mut vault) = new_vault();
+    let key = vault.export_vault_key().unwrap();
+    drop(vault);
+    raw(&path)
+        .execute("UPDATE header SET format_version = 2", [])
+        .unwrap();
+    (dir, path, key)
+}
+
+#[test]
+fn downgraded_v3_to_v2_with_password_fails_cleanly() {
+    let (_dir, path, _key) = downgraded_v3();
+    let before = fs::read(&path).unwrap();
+    let mut vault = Vault::open(&path).unwrap();
+
+    let err = vault.unlock(&password("correcta-larga")).unwrap_err();
+    assert_eq!(err, Error::Storage(StorageErrorKind::Corrupt));
+    assert!(vault.is_locked());
+    drop(vault);
+    assert_eq!(fs::read(&path).unwrap(), before);
+}
+
+#[test]
+fn downgraded_v3_to_v2_with_key_is_wrong_vault_key() {
+    let (_dir, path, key) = downgraded_v3();
+    let before = fs::read(&path).unwrap();
+    let mut vault = Vault::open(&path).unwrap();
+
+    assert_eq!(vault.unlock_with_key(key).err(), Some(Error::WrongVaultKey));
+    assert!(vault.is_locked());
+    drop(vault);
+    assert_eq!(fs::read(&path).unwrap(), before);
+}
+
+#[test]
+fn open_and_read_only_open_never_modify_any_version() {
+    let (_dir1, v1) = fixture_v1_copy();
+    let (_dir2, v2) = fixture_v2_copy();
+    let (_dir3, v3, vault) = new_vault();
+    drop(vault);
+    for path in [&v1, &v2, &v3] {
+        let before = fs::read(path).unwrap();
+        drop(Vault::open(path).unwrap());
+        assert_eq!(fs::read(path).unwrap(), before, "open {path:?}");
+        Storage::open_read_only(path).unwrap().close().unwrap();
+        assert_eq!(fs::read(path).unwrap(), before, "solo lectura {path:?}");
+    }
 }
 
 // --- Desbloqueo con la llave de bóveda (#34) -----------------------------
@@ -1486,15 +1673,14 @@ fn failed_unlock_with_key_then_password_works() {
 
 // --- Migración concurrente (#34, hallazgo de la revisión) -----------------
 
-/// Ejecuta la primera mitad de `unlock` en `vault` (leer la cabecera v1 y
-/// derivar), como si estuviera a mitad de Argon2id.
-fn derive_for_unlock(vault: &Vault, pw: &str) -> (VaultKey, Option<VaultHeader>) {
-    vault
-        .storage
-        .read_header()
-        .unwrap()
-        .unlock_upgrading(&password(pw))
-        .unwrap()
+/// Ejecuta la primera mitad de `unlock` en `vault` (leer la cabecera y
+/// derivar), como si estuviera a mitad de Argon2id. Devuelve también la
+/// versión de formato que leyó.
+fn derive_for_unlock(vault: &Vault, pw: &str) -> (VaultKey, u16, Option<VaultHeader>) {
+    let header = vault.storage.read_header().unwrap();
+    let version = header.format_version();
+    let (key, upgraded) = header.unlock_upgrading(&password(pw)).unwrap();
+    (key, version, upgraded)
 }
 
 #[test]
@@ -1505,7 +1691,7 @@ fn concurrent_migration_does_not_revert_password_change() {
 
     // La A derivó con la cabecera v1; antes de que migre, la B migra y
     // cambia la contraseña.
-    let (key, upgraded) = derive_for_unlock(&a, FIXTURE_V1_PASSWORD);
+    let (key, version, upgraded) = derive_for_unlock(&a, FIXTURE_V1_PASSWORD);
     assert!(upgraded.is_some());
     b.unlock(&password(FIXTURE_V1_PASSWORD)).unwrap();
     b.change_master_password_with_params(
@@ -1518,7 +1704,7 @@ fn concurrent_migration_does_not_revert_password_change() {
 
     // La A termina: no sobrescribe la cabecera de la B.
     assert_eq!(
-        a.finish_unlock(&password(FIXTURE_V1_PASSWORD), key, upgraded)
+        a.finish_unlock(&password(FIXTURE_V1_PASSWORD), key, version, upgraded)
             .err(),
         Some(Error::WrongPassword)
     );
@@ -1540,13 +1726,72 @@ fn concurrent_migration_without_password_change_unlocks() {
     let mut a = Vault::open(&path).unwrap();
     let mut b = Vault::open(&path).unwrap();
 
-    let (key, upgraded) = derive_for_unlock(&a, FIXTURE_V1_PASSWORD);
+    let (key, version, upgraded) = derive_for_unlock(&a, FIXTURE_V1_PASSWORD);
     b.unlock(&password(FIXTURE_V1_PASSWORD)).unwrap();
     let check_from_b = b.storage.read_header().unwrap().key_check().copied();
     drop(b);
 
     let report = a
-        .finish_unlock(&password(FIXTURE_V1_PASSWORD), key, upgraded)
+        .finish_unlock(&password(FIXTURE_V1_PASSWORD), key, version, upgraded)
+        .unwrap();
+    assert!(report.corrupt.is_empty());
+    assert_eq!(a.entries().unwrap().len(), 3);
+    // La cabecera es la que escribió la B: la A no migró otra vez.
+    assert_eq!(
+        a.storage.read_header().unwrap().key_check().copied(),
+        check_from_b
+    );
+}
+
+#[test]
+fn concurrent_v2_to_v3_migration_does_not_revert_password_change() {
+    let (_dir, path) = fixture_v2_copy();
+    let mut a = Vault::open(&path).unwrap();
+    let mut b = Vault::open(&path).unwrap();
+
+    // La A derivó con la cabecera v2; antes de que migre, la B migra a v3 y
+    // cambia la contraseña.
+    let (key, version, upgraded) = derive_for_unlock(&a, FIXTURE_V2_PASSWORD);
+    assert_eq!((version, upgraded.is_none()), (2, true));
+    b.unlock(&password(FIXTURE_V2_PASSWORD)).unwrap();
+    b.change_master_password_with_params(
+        &password(FIXTURE_V2_PASSWORD),
+        &password("nueva-maestra"),
+        KdfParams::MIN,
+    )
+    .unwrap();
+    drop(b);
+
+    // La A termina: no migra otra vez ni revierte la contraseña nueva.
+    assert_eq!(
+        a.finish_unlock(&password(FIXTURE_V2_PASSWORD), key, version, upgraded)
+            .err(),
+        Some(Error::WrongPassword)
+    );
+    assert!(a.is_locked());
+
+    a.unlock(&password("nueva-maestra")).unwrap();
+    assert_eq!(a.entries().unwrap().len(), 3);
+    a.lock();
+    assert_eq!(
+        a.unlock(&password(FIXTURE_V2_PASSWORD)).err(),
+        Some(Error::WrongPassword)
+    );
+}
+
+#[test]
+fn concurrent_v2_to_v3_migration_without_password_change_unlocks() {
+    let (_dir, path) = fixture_v2_copy();
+    let mut a = Vault::open(&path).unwrap();
+    let mut b = Vault::open(&path).unwrap();
+
+    let (key, version, upgraded) = derive_for_unlock(&a, FIXTURE_V2_PASSWORD);
+    b.unlock(&password(FIXTURE_V2_PASSWORD)).unwrap();
+    let check_from_b = b.storage.read_header().unwrap().key_check().copied();
+    drop(b);
+
+    let report = a
+        .finish_unlock(&password(FIXTURE_V2_PASSWORD), key, version, upgraded)
         .unwrap();
     assert!(report.corrupt.is_empty());
     assert_eq!(a.entries().unwrap().len(), 3);

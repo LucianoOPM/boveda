@@ -960,6 +960,90 @@ fn migrate_header_on_v2_does_nothing() {
     assert_eq!(fs::read(&path).unwrap(), before);
 }
 
+// --- Migración del formato 2 al 3 (#93) ---------------------------------
+
+fn v3_key_check() -> [u8; KEY_CHECK_LEN] {
+    let key = crate::crypto::keys::generate_vault_key().unwrap();
+    crate::crypto::keys::seal_key_check(&key, 3).unwrap()
+}
+
+#[test]
+fn migrate_v2_to_v3_creates_tables_and_only_touches_version_and_key_check() {
+    let (_dir, path, storage) = new_vault();
+    let before = storage.read_header().unwrap();
+    storage.close().unwrap();
+    downgrade_to_v2(&path);
+    let mut storage = Storage::open(&path).unwrap();
+
+    let key_check = v3_key_check();
+    assert_eq!(
+        storage.migrate_v2_to_v3(&key_check).unwrap(),
+        Migration::Done
+    );
+
+    let after = storage.read_header().unwrap();
+    assert_eq!(after.format_version(), 3);
+    assert_eq!(after.key_check(), Some(&key_check));
+    // Lo demás de la cabecera no se toca.
+    assert_eq!(after.salt(), before.salt());
+    assert_eq!(after.params(), before.params());
+    assert!(after.encrypted_key() == before.encrypted_key());
+    drop(storage);
+    assert_eq!(pairing_row_counts(&path), (0, 0));
+}
+
+#[test]
+fn migrate_v2_to_v3_on_v3_does_nothing() {
+    let (_dir, path, mut storage) = new_vault();
+    let before = fs::read(&path).unwrap();
+    assert_eq!(
+        storage.migrate_v2_to_v3(&v3_key_check()).unwrap(),
+        Migration::NotNeeded
+    );
+    drop(storage);
+    assert_eq!(fs::read(&path).unwrap(), before);
+}
+
+#[test]
+fn migrate_v2_to_v3_with_existing_pairing_tables_is_corrupt_and_writes_nothing() {
+    let (_dir, path, storage) = new_vault();
+    storage.close().unwrap();
+    raw(&path)
+        .execute("UPDATE header SET format_version = 2", [])
+        .unwrap();
+    let before = fs::read(&path).unwrap();
+    let mut storage = Storage::open(&path).unwrap();
+
+    assert_eq!(
+        storage.migrate_v2_to_v3(&v3_key_check()).err(),
+        Some(Error::Storage(StorageErrorKind::Corrupt))
+    );
+    drop(storage);
+    assert_eq!(fs::read(&path).unwrap(), before);
+}
+
+#[test]
+fn migrate_v2_to_v3_on_an_unexpected_version_is_corrupt() {
+    let (_dir, path, mut storage) = new_vault();
+    raw(&path)
+        .execute("UPDATE header SET format_version = 1", [])
+        .unwrap();
+    assert_eq!(
+        storage.migrate_v2_to_v3(&v3_key_check()).err(),
+        Some(Error::Storage(StorageErrorKind::Corrupt))
+    );
+}
+
+#[test]
+fn migrate_v2_to_v3_without_header_row_is_corrupt() {
+    let (_dir, path, mut storage) = new_vault();
+    raw(&path).execute("DELETE FROM header", []).unwrap();
+    assert_eq!(
+        storage.migrate_v2_to_v3(&v3_key_check()).err(),
+        Some(Error::Storage(StorageErrorKind::Corrupt))
+    );
+}
+
 #[test]
 fn migrate_header_without_header_row_is_corrupt() {
     let (_dir, path) = fixture_v1_copy();

@@ -26,7 +26,7 @@ pub(crate) mod test_support;
 pub use crate::error::{Error, InvalidEntryField, Result, StorageErrorKind};
 use entry::sealed::SealedEntry;
 pub use entry::{EntryId, SearchData, Secret};
-use header::VaultHeader;
+use header::{FORMAT_VERSION, FORMAT_VERSION_V2, VaultHeader};
 use password::require_master_password;
 pub use password::{
     MIN_MASTER_PASSWORD_CHARS, PasswordStrength, STRONG_MASTER_PASSWORD_CHARS, password_strength,
@@ -182,29 +182,35 @@ impl Vault {
     /// secretos no se descifran aquí; uno dañado aparece al usar
     /// [`Vault::reveal`]. Si falla, la bóveda sigue bloqueada.
     ///
-    /// Sobre una bóveda de la versión de formato 1, la migra a la 2 antes de
-    /// cargar las entradas, con una sola derivación de Argon2id y en una
-    /// transacción: abrir no modifica el archivo, pero desbloquear una
-    /// versión 1 sí. Si la migración falla, devuelve el error de
-    /// almacenamiento, la bóveda sigue bloqueada y el archivo sigue siendo
-    /// de la versión 1. Sobre una versión 2 no escribe nada.
+    /// Sobre una bóveda de una versión de formato anterior, la migra a la 3
+    /// antes de cargar las entradas (la 1 pasa por la 2): abrir no modifica
+    /// el archivo, pero desbloquear una versión 1 o 2 sí. Cada paso es una
+    /// transacción y la derivación de Argon2id ocurre una sola vez. Si un
+    /// paso falla, devuelve el error de almacenamiento y la bóveda sigue
+    /// bloqueada; el archivo queda en la última versión confirmada (una v1 que
+    /// migró a v2 y falló en la v3 queda en una v2 válida). Sobre una versión
+    /// 3 no escribe nada.
     ///
     /// Si otra conexión migró la cabecera mientras esta derivaba, no se
     /// sobrescribe: se vuelve a derivar contra la cabecera actual (una
     /// segunda derivación), y si esa conexión cambió la contraseña el
-    /// resultado es [`Error::WrongPassword`], con el archivo ya en la
-    /// versión 2.
+    /// resultado es [`Error::WrongPassword`], con el archivo ya migrado por
+    /// la otra conexión.
     pub fn unlock(&mut self, password: &SecretString) -> Result<UnlockReport> {
         if self.unlocked.is_some() {
             return Err(Error::AlreadyUnlocked);
         }
-        let (key, upgraded) = self.storage.read_header()?.unlock_upgrading(password)?;
-        self.finish_unlock(password, key, upgraded)
+        let header = self.storage.read_header()?;
+        let version = header.format_version();
+        let (key, upgraded) = header.unlock_upgrading(password)?;
+        self.finish_unlock(password, key, version, upgraded)
     }
 
     /// Segunda mitad de [`Vault::unlock`], después de derivar: migra si
-    /// hace falta y carga las entradas. Separada para que las pruebas
-    /// puedan intercalar otra `Vault` entre la derivación y la migración.
+    /// hace falta y carga las entradas. `version` es la versión de formato de
+    /// la cabecera que se leyó antes de derivar. Separada para que las
+    /// pruebas puedan intercalar otra `Vault` entre la derivación y la
+    /// migración.
     ///
     /// Si otra conexión migró la cabecera mientras esta derivaba
     /// ([`Migration::NotNeeded`]), no se sobrescribe nada: se vuelve a leer
@@ -215,17 +221,27 @@ impl Vault {
         &mut self,
         password: &SecretString,
         key: VaultKey,
+        version: u16,
         upgraded: Option<VaultHeader>,
     ) -> Result<UnlockReport> {
-        let key = match upgraded {
-            Some(header) => match self.storage.migrate_header(&header)? {
-                Migration::Done => key,
+        let mut key = key;
+        // La llave ya se verificó contra la cabecera actual (segunda
+        // derivación): no hace falta repetirla en el paso siguiente.
+        let mut rederived = false;
+        if let Some(header) = upgraded {
+            if self.storage.migrate_header(&header)? == Migration::NotNeeded {
                 // La llave derivada de la cabecera vieja se suelta (y se
                 // borra); vale la que abre la cabecera actual.
-                Migration::NotNeeded => self.storage.read_header()?.unlock(password)?,
-            },
-            None => key,
-        };
+                key = self.storage.read_header()?.unlock(password)?;
+                rederived = true;
+            }
+        }
+        if version < FORMAT_VERSION {
+            let key_check = keys::seal_key_check(&key, FORMAT_VERSION)?;
+            if self.storage.migrate_v2_to_v3(&key_check)? == Migration::NotNeeded && !rederived {
+                key = self.storage.read_header()?.unlock(password)?;
+            }
+        }
         let (unlocked, report) = Self::load_entries(&self.storage, key)?;
         self.unlocked = Some(unlocked);
         Ok(report)
@@ -577,6 +593,12 @@ impl Vault {
     /// bóveda de la versión de formato 1 dan [`Error::WrongVaultKey`], y la
     /// bóveda sigue bloqueada.
     ///
+    /// Una bóveda de la versión 2 se migra a la 3 después de verificar la
+    /// llave (una llave equivocada no escribe nada): la migración no necesita
+    /// la contraseña porque no toca `encrypted_key`. Una v3 a la que se le
+    /// bajó `format_version` a mano la rechaza `key_check`, que autentica la
+    /// versión 3.
+    ///
     /// Recibe la llave por valor: si falla, se descarta y se borra de
     /// memoria al soltarse. Quien llama no la recupera: para reintentar,
     /// debe pedirla de nuevo al Keystore.
@@ -584,7 +606,16 @@ impl Vault {
         if self.unlocked.is_some() {
             return Err(Error::AlreadyUnlocked);
         }
-        self.storage.read_header()?.verify_key(&key)?;
+        let header = self.storage.read_header()?;
+        header.verify_key(&key)?;
+        if header.format_version() == FORMAT_VERSION_V2 {
+            let key_check = keys::seal_key_check(&key, FORMAT_VERSION)?;
+            if self.storage.migrate_v2_to_v3(&key_check)? == Migration::NotNeeded {
+                // Otra conexión migró antes: se verifica contra la cabecera
+                // actual (v3), no contra la leída.
+                self.storage.read_header()?.verify_key(&key)?;
+            }
+        }
         let (unlocked, report) = Self::load_entries(&self.storage, key)?;
         self.unlocked = Some(unlocked);
         Ok(report)

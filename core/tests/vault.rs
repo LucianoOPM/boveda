@@ -531,22 +531,54 @@ fn fixture_v2_opens_with_known_contents() {
     assert_fixture_contents(&mut vault);
 }
 
-/// `vault-v2.db` es de verdad de la versión 2 (#53): una v2 no escribe nada
-/// al desbloquear, mientras que una v1 se migraría en silencio y el archivo
-/// cambiaría. `fixture_v2_opens_with_known_contents` no lo distingue: pasaría
-/// igual con una v1 y la contraseña de la v2. Aquí no se revela ningún
-/// secreto, porque revelar actualiza `last_used_at`.
+/// `vault-v2.db` es de verdad de la versión 2 (#53, #93): desbloquearla la
+/// migra a la 3 y el archivo cambia (una v1 también cambiaría, pero queda en la
+/// 3 tras pasar por la 2). El segundo desbloqueo ya no escribe nada: una v3 no
+/// escribe al desbloquear. Aquí no se revela ningún secreto, porque revelar
+/// actualiza `last_used_at`.
 #[test]
-fn fixture_v2_unlock_does_not_write() {
+fn fixture_v2_unlock_migrates_to_v3_and_then_writes_nothing() {
     let (_dir, path) = fixture_copy_of("vault-v2.db");
-    let before = fs::read(&path).unwrap();
+    let original = fs::read(&path).unwrap();
+    let version = |path: &Path| -> i64 {
+        rusqlite::Connection::open(path)
+            .unwrap()
+            .query_row("SELECT format_version FROM header WHERE id = 1", [], |r| {
+                r.get(0)
+            })
+            .unwrap()
+    };
+    assert_eq!(version(&path), 2);
+
     let mut vault = Vault::open(&path).unwrap();
     assert_eq!(
         vault.unlock(&password(FIXTURE_V2_PASSWORD)).unwrap(),
         clean_report()
     );
     drop(vault);
-    assert_eq!(fs::read(&path).unwrap(), before);
+    assert_eq!(version(&path), 3);
+    let migrated = fs::read(&path).unwrap();
+    assert_ne!(migrated, original);
+
+    let mut vault = Vault::open(&path).unwrap();
+    assert_eq!(
+        vault.unlock(&password(FIXTURE_V2_PASSWORD)).unwrap(),
+        clean_report()
+    );
+    drop(vault);
+    assert_eq!(fs::read(&path).unwrap(), migrated);
+}
+
+/// Abrir (`Vault::open`) nunca modifica el archivo, sea de la versión que sea
+/// (la especificación lo exige): solo desbloquear una v1 o una v2 las migra.
+#[test]
+fn open_never_modifies_a_v1_or_v2_fixture() {
+    for name in ["vault-v1.db", "vault-v2.db"] {
+        let (_dir, path) = fixture_copy_of(name);
+        let before = fs::read(&path).unwrap();
+        drop(Vault::open(&path).unwrap());
+        assert_eq!(fs::read(&path).unwrap(), before, "{name}");
+    }
 }
 
 #[test]

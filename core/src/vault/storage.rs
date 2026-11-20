@@ -402,18 +402,7 @@ impl Storage {
             .conn
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(map_sqlite_error)?;
-        let current: i64 = tx
-            .query_row(
-                "SELECT format_version FROM header WHERE id = 1",
-                [],
-                |row| row.get(0),
-            )
-            // Sin fila de cabecera no hay bóveda: el mismo error que en
-            // `read_header`.
-            .map_err(|e| match e {
-                rusqlite::Error::QueryReturnedNoRows => Error::Storage(StorageErrorKind::Corrupt),
-                other => map_sqlite_error(other),
-            })?;
+        let current = stored_format_version(&tx)?;
         if current != i64::from(FORMAT_VERSION_V1) {
             // Al soltar `tx` sin confirmar, SQLite revierte (no hubo cambios).
             return Ok(Migration::NotNeeded);
@@ -438,6 +427,42 @@ impl Storage {
         if (version, key_check_len) != (i64::from(FORMAT_VERSION_V2), KEY_CHECK_LEN as i64) {
             return Err(Error::Storage(StorageErrorKind::Corrupt));
         }
+        tx.commit().map_err(map_sqlite_error)?;
+        Ok(Migration::Done)
+    }
+
+    /// Migra la bóveda de la versión 2 a la 3 (#93): crea `identity` y
+    /// `paired_pcs` y deja `format_version = 3` con el `key_check` de la
+    /// versión 3 (`key_check`, que arma quien llama con la llave de bóveda).
+    ///
+    /// Una sola transacción `IMMEDIATE`. Nunca toca `encrypted_key`, la sal ni
+    /// los parámetros: la tabla `header` no cambia, así que no hay que
+    /// volver a cifrar nada y la migración sirve también cuando solo se tiene
+    /// la llave de bóveda. Tampoco puede revertir un cambio de contraseña de
+    /// otra conexión.
+    ///
+    /// Antes de tocar nada, ya con el candado de escritura, vuelve a leer
+    /// `format_version`: si ya es la 3 (otra conexión migró), no escribe y
+    /// devuelve [`Migration::NotNeeded`]; si no es la 2 ni la 3, o ya existe
+    /// alguna de las dos tablas (una v3 degradada a mano), da
+    /// `Storage(Corrupt)` y se revierte sin escribir.
+    pub(crate) fn migrate_v2_to_v3(
+        &mut self,
+        key_check: &[u8; KEY_CHECK_LEN],
+    ) -> Result<Migration> {
+        let tx = self
+            .conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(map_sqlite_error)?;
+        let current = stored_format_version(&tx)?;
+        if current == i64::from(FORMAT_VERSION) {
+            // Al soltar `tx` sin confirmar, SQLite revierte (no hubo cambios).
+            return Ok(Migration::NotNeeded);
+        }
+        if current != i64::from(FORMAT_VERSION_V2) {
+            return Err(Error::Storage(StorageErrorKind::Corrupt));
+        }
+        upgrade_v2_to_v3(&tx, key_check)?;
         tx.commit().map_err(map_sqlite_error)?;
         Ok(Migration::Done)
     }
@@ -727,6 +752,64 @@ impl HeaderTable {
             }
         }
     }
+}
+
+/// `format_version` guardada en la cabecera. Sin fila no hay bóveda: da
+/// `Storage(Corrupt)`, como `read_header`.
+fn stored_format_version(conn: &Connection) -> Result<i64> {
+    conn.query_row(
+        "SELECT format_version FROM header WHERE id = 1",
+        [],
+        |row| row.get(0),
+    )
+    .map_err(|e| match e {
+        rusqlite::Error::QueryReturnedNoRows => Error::Storage(StorageErrorKind::Corrupt),
+        other => map_sqlite_error(other),
+    })
+}
+
+/// Pasos de la migración de la versión 2 a la 3 dentro de la transacción de
+/// quien llama: crea las dos tablas (que no deben existir) y sube
+/// `format_version` con el nuevo `key_check`. La versión de origen ya la
+/// comprobó quien llama.
+fn upgrade_v2_to_v3(conn: &Connection, key_check: &[u8; KEY_CHECK_LEN]) -> Result<()> {
+    const COUNT_PAIRING_TABLES: &str = "SELECT count(*) FROM sqlite_schema \
+         WHERE type = 'table' AND name IN ('identity', 'paired_pcs')";
+    let corrupt = || Error::Storage(StorageErrorKind::Corrupt);
+
+    let existing: i64 = conn
+        .query_row(COUNT_PAIRING_TABLES, [], |row| row.get(0))
+        .map_err(map_sqlite_error)?;
+    if existing != 0 {
+        return Err(corrupt());
+    }
+    conn.execute_batch(pairing_tables!())
+        .map_err(map_sqlite_error)?;
+    let changed = conn
+        .execute(
+            "UPDATE header SET format_version = ?1, key_check = ?2 \
+             WHERE id = 1 AND format_version = ?3",
+            params![FORMAT_VERSION, key_check.as_slice(), FORMAT_VERSION_V2],
+        )
+        .map_err(map_sqlite_error)?;
+    if changed != 1 {
+        return Err(corrupt());
+    }
+
+    let (version, key_check_len): (i64, i64) = conn
+        .query_row(
+            "SELECT format_version, length(key_check) FROM header WHERE id = 1",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .map_err(map_sqlite_error)?;
+    let tables: i64 = conn
+        .query_row(COUNT_PAIRING_TABLES, [], |row| row.get(0))
+        .map_err(map_sqlite_error)?;
+    if (version, key_check_len, tables) != (i64::from(FORMAT_VERSION), KEY_CHECK_LEN as i64, 2) {
+        return Err(corrupt());
+    }
+    Ok(())
 }
 
 /// `key_check` de una cabecera de la versión 2 o 3. Una cabecera sin él
