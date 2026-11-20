@@ -13,6 +13,8 @@ pub mod dpapi;
 #[cfg(windows)]
 pub mod identity;
 #[cfg(windows)]
+pub mod paired_devices;
+#[cfg(windows)]
 pub mod protected_file;
 mod tray;
 
