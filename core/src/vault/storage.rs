@@ -1,5 +1,6 @@
 //! Almacenamiento SQLite de la bóveda: una tabla de cabecera con una sola
-//! fila y una tabla de entradas.
+//! fila, una tabla de entradas y, desde la versión 3, `identity` (una sola
+//! fila) y `paired_pcs`.
 //!
 //! Este módulo solo mueve bytes y fechas: no cifra, no descifra y no conoce
 //! la llave. Tampoco lee el reloj: cada escritura recibe la hora (`now`, en
@@ -125,13 +126,15 @@ CREATE TABLE entries (
     pairing_tables!(),
 );
 
-/// Resultado de [`Storage::migrate_header`].
+/// Resultado de [`Storage::migrate_header`] (v1→v2) y de
+/// [`Storage::migrate_v2_to_v3`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Migration {
-    /// La cabecera era de la versión 1 y quedó en la 2.
+    /// La cabecera estaba en la versión de origen y quedó en la siguiente
+    /// (1→2 o 2→3).
     Done,
-    /// La cabecera ya no era de la versión 1 al abrir la transacción (otra
-    /// conexión la migró): no se tocó nada.
+    /// La cabecera ya no estaba en la versión de origen al abrir la
+    /// transacción (otra conexión la migró): no se tocó nada.
     NotNeeded,
 }
 

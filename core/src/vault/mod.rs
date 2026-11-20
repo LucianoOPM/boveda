@@ -615,6 +615,18 @@ impl Vault {
             return Err(Error::AlreadyUnlocked);
         }
         let header = self.storage.read_header()?;
+        self.finish_unlock_with_key(key, &header)
+    }
+
+    /// Segunda mitad de [`Vault::unlock_with_key`], después de leer la
+    /// cabecera: verifica la llave, migra una v2 y carga las entradas.
+    /// Separada para que las pruebas puedan intercalar otra `Vault` entre la
+    /// lectura de la cabecera y la migración.
+    fn finish_unlock_with_key(
+        &mut self,
+        key: SecretBox<[u8; VAULT_KEY_LEN]>,
+        header: &VaultHeader,
+    ) -> Result<UnlockReport> {
         header.verify_key(&key)?;
         if header.format_version() == FORMAT_VERSION_V2 {
             let key_check = keys::seal_key_check(&key, FORMAT_VERSION)?;

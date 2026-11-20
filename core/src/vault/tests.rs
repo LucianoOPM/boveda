@@ -2758,3 +2758,78 @@ fn identity_swapped_with_a_pc_row_is_corrupt() {
         .unwrap();
     assert_eq!(vault.identity().err(), Some(Error::CorruptIdentity));
 }
+
+// --- Menores de la revisión final de la #93 ------------------------------
+
+/// Otra conexión migró la v2 a v3 entre la lectura de la cabecera y la
+/// migración de `unlock_with_key`: no se migra otra vez ni se escribe nada, y
+/// se desbloquea con la cabecera actual.
+#[test]
+fn concurrent_v2_to_v3_migration_with_key_unlocks_without_migrating_again() {
+    let key = fixture_v2_vault_key();
+    let (_dir, path) = fixture_v2_copy();
+    let mut a = Vault::open(&path).unwrap();
+    let mut b = Vault::open(&path).unwrap();
+
+    // La A leyó la cabecera v2; antes de migrar, la B migra a v3.
+    let header = a.storage.read_header().unwrap();
+    assert_eq!(header.format_version(), 2);
+    b.unlock(&password(FIXTURE_V2_PASSWORD)).unwrap();
+    let check_from_b = b.storage.read_header().unwrap().key_check().copied();
+    drop(b);
+
+    let report = a.finish_unlock_with_key(key, &header).unwrap();
+    assert!(report.corrupt.is_empty());
+    assert_eq!(a.entries().unwrap().len(), 3);
+    assert_eq!(stored_version_of(&path), 3);
+    // La cabecera es la que escribió la B: la A no migró otra vez.
+    assert_eq!(
+        a.storage.read_header().unwrap().key_check().copied(),
+        check_from_b
+    );
+}
+
+/// Dos conexiones crean la identidad a la vez: la que pierde la carrera
+/// devuelve la de la ganadora y no la sobrescribe.
+#[test]
+fn store_identity_returns_the_existing_one_when_another_connection_created_it() {
+    let (_dir, path, mut a) = new_vault();
+    let mut b = Vault::open(&path).unwrap();
+    b.unlock(&password("correcta-larga")).unwrap();
+
+    // La A ya comprobó que no había identidad; antes de escribir, la B la crea.
+    let winner = b.ensure_identity().unwrap();
+    let data_after_b = identity_data(&path);
+
+    let result = a.store_identity(Identity::from_bytes([1u8; 32])).unwrap();
+    assert_eq!(key_bytes(&result), key_bytes(&winner));
+    assert_ne!(key_bytes(&result), [1u8; 32]);
+    assert_eq!(identity_data(&path), data_after_b);
+}
+
+#[test]
+fn pc_row_with_data_shorter_than_nonce_and_tag_is_corrupt() {
+    // El `CHECK` de longitud solo se aplica al escribir: un archivo alterado
+    // puede traer una PC con menos de 40 bytes.
+    let (_dir, path, mut vault) = new_vault();
+    vault.add_paired_pc(new_pc(1, "Buena")).unwrap();
+    let short_id = [0x5A_u8; 16];
+    let conn = raw(&path);
+    conn.execute_batch("PRAGMA ignore_check_constraints = ON")
+        .unwrap();
+    conn.execute(
+        "INSERT INTO paired_pcs (id, pc_schema_version, data) VALUES (?1, 1, zeroblob(10))",
+        [short_id.as_slice()],
+    )
+    .unwrap();
+
+    let listed = vault.paired_pcs().unwrap();
+    assert_eq!(listed.valid.len(), 1);
+    assert_eq!(listed.corrupt, vec![PairedPcId::from_bytes(short_id)]);
+    assert_eq!(listed.unidentified_corrupt, 0);
+    // Se puede quitar.
+    vault
+        .remove_paired_pc(PairedPcId::from_bytes(short_id))
+        .unwrap();
+    assert!(vault.paired_pcs().unwrap().corrupt.is_empty());
+}

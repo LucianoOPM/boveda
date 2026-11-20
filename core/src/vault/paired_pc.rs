@@ -25,7 +25,7 @@ use std::fmt;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
 use serde::{Deserialize, Serialize};
-use zeroize::{Zeroize, Zeroizing};
+use zeroize::{Zeroize, ZeroizeOnDrop, Zeroizing};
 
 use super::entry::flavor::ZeroizingVec;
 use crate::crypto::aead::{self, EncryptedPart};
@@ -241,8 +241,10 @@ fn associated_data(id: &[u8; PAIRED_PC_ID_LEN], version: u16) -> [u8; AAD_LEN] {
     ad
 }
 
-/// Estructura de la versión 1, tal como se serializa.
-#[derive(Serialize, Deserialize)]
+/// Estructura de la versión 1, tal como se serializa. Se borra al soltarse,
+/// también en los caminos de error: el nombre y la IP revelan con qué equipos
+/// se usa la bóveda.
+#[derive(Serialize, Deserialize, Zeroize, ZeroizeOnDrop)]
 struct RawPcV1 {
     public_key: [u8; PUBLIC_KEY_LEN],
     name: String,
@@ -264,11 +266,13 @@ pub(crate) fn seal(key: &VaultKey, pc: &PairedPc) -> Result<EncryptedPart> {
         paired_at: pc.paired_at,
         last_seen_at: pc.last_seen_at,
     };
+    // Solo falla si el tamaño desborda `usize`, lo que no ocurre con los
+    // límites de la versión 1; se reutiliza `CorruptPairedPc` en vez de crear
+    // un error que nadie puede provocar. `raw` se borra al soltarse, también
+    // si esta línea sale con error.
     let plain: Zeroizing<Vec<u8>> =
         postcard::serialize_with_flavor(&raw, ZeroizingVec::with_capacity(ENCODE_INITIAL_CAPACITY))
             .map_err(|_| Error::CorruptPairedPc)?;
-    let mut raw = raw;
-    raw.name.zeroize();
     aead::seal_with_ad(key, &associated_data(&pc.id.0, PC_SCHEMA_VERSION), &plain)
 }
 
@@ -290,7 +294,7 @@ pub(crate) fn open(
     }
     let plain =
         aead::open_with_ad(key, &associated_data(&id.0, version), sealed).map_err(|_| corrupt())?;
-    let raw: RawPcV1 = match postcard::take_from_bytes(&plain) {
+    let mut raw: RawPcV1 = match postcard::take_from_bytes(&plain) {
         Ok((raw, [])) => raw,
         _ => return Err(corrupt()),
     };
@@ -314,10 +318,12 @@ pub(crate) fn open(
             _ => return Err(corrupt()),
         }),
     };
+    // `raw` se borra al soltarse: el nombre se mueve fuera de él y, si algo
+    // falló antes, se borra con el resto.
     Ok(PairedPc::new(
         id,
         raw.public_key,
-        raw.name,
+        std::mem::take(&mut raw.name),
         last_ip,
         raw.paired_at,
         raw.last_seen_at,
