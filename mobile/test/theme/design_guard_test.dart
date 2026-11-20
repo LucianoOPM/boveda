@@ -50,6 +50,9 @@ void main() {
       'lib/widgets/tag_badge.dart',
       'lib/screens/entry_detail_screen.dart',
       'lib/widgets/secret_text.dart',
+      'lib/screens/entry_form_screen.dart',
+      'lib/widgets/tags_field.dart',
+      'lib/widgets/labeled_field.dart',
     ];
     final offenders = [
       for (final path in migrated)

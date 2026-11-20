@@ -299,7 +299,7 @@ void main() {
       expect(textOf(tester, service), 'Gmail');
       expect(textOf(tester, username), 'ana@example.com');
       expect(textOf(tester, url), 'https://mail.example.com');
-      expect(find.widgetWithText(InputChip, 'correo'), findsOneWidget);
+      expect(find.widgetWithText(InputChip, 'CORREO'), findsOneWidget);
       expect(find.text('Contraseña: sin cambios'), findsOneWidget);
       expect(find.text('Notas: sin cambios'), findsOneWidget);
       expect(password, findsNothing);
@@ -590,7 +590,7 @@ void main() {
       expect(find.text(repairText), findsOneWidget);
       expect(find.widgetWithText(AppBar, 'Reparar entrada'), findsOneWidget);
       expect(textOf(tester, username), 'nuevo@example.com');
-      expect(find.widgetWithText(InputChip, 'personal'), findsOneWidget);
+      expect(find.widgetWithText(InputChip, 'PERSONAL'), findsOneWidget);
       expect(password, findsOneWidget);
       expect(notes, findsOneWidget);
       expect(cancelPassword, findsNothing);
@@ -814,7 +814,7 @@ void main() {
       await tester.pump();
       expect(fieldHasFocus(tester, service), isTrue);
 
-      await tester.tap(find.widgetWithText(InputChip, 'correo'));
+      await tester.tap(find.widgetWithText(InputChip, 'CORREO'));
       await tester.pump();
       expect(fieldHasFocus(tester, service), isTrue);
 
@@ -839,11 +839,17 @@ void main() {
       await pumpForm(tester, editing: gmail);
       await tester.tap(service);
       await tester.pump();
+      // Con las etiquetas encima el formulario es más alto: hay que
+      // desplazarse hasta los botones antes de tocarlos.
+      await tester.ensureVisible(editNotes);
+      await tester.pump();
       await tester.tap(editNotes);
       await tester.pump();
       expect(saveEnabled(tester), isFalse);
       expect(fieldHasFocus(tester, service), isTrue);
 
+      await tester.ensureVisible(saveButton);
+      await tester.pump();
       await tester.tap(saveButton);
       await tester.pump();
       expect(fieldHasFocus(tester, service), isTrue);

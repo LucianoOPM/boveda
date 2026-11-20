@@ -66,7 +66,7 @@ void main() {
     await tester.pump();
 
     expect(tags, ['trabajo']);
-    expect(chips(tester), ['trabajo']);
+    expect(chips(tester), ['TRABAJO']);
     expect(pending.text, isEmpty);
     expect(fieldHasFocus(tester, field), isTrue);
   });
@@ -124,7 +124,7 @@ void main() {
     await tester.pump();
 
     expect(tags, ['a', 'c']);
-    expect(chips(tester), ['a', 'c']);
+    expect(chips(tester), ['A', 'C']);
   });
 
   testWidgets('tocar un chip o su ✕ no quita el foco; tocar fuera sí', (
@@ -135,7 +135,8 @@ void main() {
     await tester.pump();
     expect(fieldHasFocus(tester, field), isTrue);
 
-    await tester.tap(find.text('a'));
+    // El chip dibuja la etiqueta en mayúsculas.
+    await tester.tap(find.text('A'));
     await tester.pump();
     expect(fieldHasFocus(tester, field), isTrue);
 
@@ -158,7 +159,7 @@ void main() {
     expect(text.autocorrect, isFalse);
     expect(text.enableIMEPersonalizedLearning, isFalse);
     expect(text.enableSuggestions, isTrue);
-    expect(find.text('Agregar etiqueta'), findsOneWidget);
+    expect(find.text('AGREGAR ETIQUETA'), findsOneWidget);
   });
 
   testWidgets('muestra el error', (tester) async {
@@ -170,7 +171,7 @@ void main() {
     await pumpTags(tester, initial: ['a'], enabled: false);
     expect(tester.widget<TextField>(input).enabled, isFalse);
     expect(tester.widget<InputChip>(find.byType(InputChip)).onDeleted, isNull);
-    expect(chips(tester), ['a']);
+    expect(chips(tester), ['A']);
   });
 
   testWidgets('una etiqueta larga no desborda', (tester) async {
