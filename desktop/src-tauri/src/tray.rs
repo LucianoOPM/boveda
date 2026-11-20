@@ -105,8 +105,8 @@ pub fn setup(app: &App) -> tauri::Result<()> {
                     // Windows ya cambió la marca al hacer clic; se reconcilia
                     // siempre con el estado real del sistema.
                     let item = app.state::<AutostartItem>();
-                    let shown = item.0.is_checked().unwrap_or(false);
-                    let real = toggle_autostart(&*app.autolaunch(), shown);
+                    let checked_after_click = item.0.is_checked().unwrap_or(true);
+                    let real = toggle_autostart(&*app.autolaunch(), checked_after_click);
                     if let Err(error) = item.0.set_checked(real) {
                         eprintln!("No se pudo actualizar la casilla: {error}");
                     }

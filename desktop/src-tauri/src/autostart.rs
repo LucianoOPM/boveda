@@ -25,15 +25,17 @@ impl AutostartControl for tauri_plugin_autostart::AutoLaunchManager {
 }
 
 /// Cambia «Iniciar con Windows» al estado contrario del real y devuelve el
-/// estado que la casilla debe mostrar. `shown` es lo que la casilla muestra
-/// ahora; solo se usa si el sistema no deja leer el estado real. Si el cambio
-/// falla, se devuelve igualmente lo que el sistema dice, no lo que se pedía.
-pub(crate) fn toggle_autostart(control: &dyn AutostartControl, shown: bool) -> bool {
+/// estado que la casilla debe mostrar. `checked_after_click` es la marca que
+/// la casilla ya tiene tras el clic (Windows la invierte antes de avisar);
+/// solo sirve para restaurar la anterior si el sistema no deja leer el estado
+/// real. Si el cambio falla, se devuelve igualmente lo que el sistema dice, no
+/// lo que se pedía.
+pub(crate) fn toggle_autostart(control: &dyn AutostartControl, checked_after_click: bool) -> bool {
     let real = match control.is_enabled() {
         Ok(real) => real,
         Err(error) => {
             eprintln!("No se pudo leer «Iniciar con Windows»: {error}");
-            return shown;
+            return !checked_after_click;
         }
     };
     let changed = if real {
@@ -132,13 +134,26 @@ mod tests {
     }
 
     #[test]
-    fn keeps_shown_state_when_reading_fails() {
+    fn restores_previous_state_when_reading_fails() {
+        // Windows ya invirtió la marca al hacer clic: la casilla muestra
+        // `true` (tras el clic) y antes mostraba `false`.
         let control = FakeControl {
             fail_read: true,
             ..fake(false)
         };
 
-        assert!(toggle_autostart(&control, true));
+        assert!(!toggle_autostart(&control, true));
+        assert_eq!(control.changes.get(), 0);
+    }
+
+    #[test]
+    fn restores_previous_state_when_reading_fails_and_it_was_enabled() {
+        let control = FakeControl {
+            fail_read: true,
+            ..fake(true)
+        };
+
+        assert!(toggle_autostart(&control, false));
         assert_eq!(control.changes.get(), 0);
     }
 
