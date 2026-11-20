@@ -12,7 +12,7 @@ Al llevar una pantalla del diseño a Flutter se trabaja sobre lo que la app ya t
 - **App hoy** es lo que hace el código en `dev`.
 - **Qué haría falta** es lo mínimo que habría que construir; la especificación (`docs/especificacion.md`) manda sobre el diseño.
 
-Pantallas todavía sin restilizar (sus diferencias se agregarán cuando se hagan): formulario de crear y editar, Ajustes y diálogo de importar.
+Pantallas todavía sin restilizar (sus diferencias se agregarán cuando se hagan): Ajustes y diálogo de importar.
 
 ## General
 
@@ -74,3 +74,16 @@ Son las decisiones que `DESIGN.md` (sección 15) da por hechas y que cambian la 
 | Contraseña oculta con **doce** puntos (`DESIGN.md` 6.3). | **Ocho** puntos fijos, que no delatan el largo. | Cambiar el número de puntos. |
 | Orden de las acciones de la contraseña: "Mostrar", "Copiar". | "Copiar", "Mostrar". | Cambiar el orden. |
 | "Eliminar" dentro del formulario de editar, con confirmación (`DESIGN.md` 7.6); el detalle solo tiene "Editar" en la barra. | "Eliminar" está en la barra del detalle, junto a "Editar", y en el aviso de dañado. | Mover la acción al formulario. |
+
+## Formulario de crear y editar
+
+| Diseño | App hoy | Qué haría falta |
+| --- | --- | --- |
+| Botón "Eliminar entrada", en texto rojo bajo "Guardar", con confirmación (`DESIGN.md` 7.6 y board *Formulario de entrada*). | El formulario no elimina: "Eliminar" está en la barra del detalle y en su aviso de dañado. | Agregar o mover la acción al formulario; ver también la fila de "Eliminar" del detalle. |
+| Etiqueta de grupo "ETIQUETAS" sobre las etiquetas, con las insignias y la entrada de texto dentro de un mismo contenedor. | Las etiquetas (`InputChip`) van encima de un campo aparte con la etiqueta "AGREGAR ETIQUETA" y la ayuda "Enter o coma para agregar"; no hay etiqueta de grupo. | Unir el grupo y el campo en un solo contenedor con su etiqueta. |
+| Contraseña cerrada como un campo con los puntos `••••••••••••` y el botón "Cambiar" dentro. | Una tarjeta con el texto "Contraseña: sin cambios" y el botón "Cambiar". | Solo el contenido de la tarjeta. |
+| Notas cerradas con la pista "Sin notas" y el botón "Editar notas". | "Notas: sin cambios" y "Editar notas": las notas son secreto y el formulario no sabe si existen sin descifrarlas. | Un dato que diga si hay notas sin descifrarlas (cambia el núcleo y el modelo de búsqueda). |
+| Orden de los campos: Servicio, Usuario, Contraseña, URL, Etiquetas, Notas. | Servicio, Usuario, URL, Etiquetas, Contraseña, Notas. | Reordenar los campos. |
+| Los campos obligatorios dicen "Obligatorio" en su texto de ayuda desde el principio (`DESIGN.md` 7.6). | Sin texto de ayuda; los errores "El servicio es obligatorio" y "La contraseña es obligatoria" salen del núcleo al guardar y se muestran en su campo. | Agregar la ayuda "Obligatorio" a Servicio y a la contraseña de una entrada nueva. |
+| Botón del generador junto al campo de contraseña, que abre `EntropyGenerator` en una hoja (etapa 4). | No hay generador. | Todo el generador (D5 y la etapa 4). |
+| El aviso de reparación no está dibujado (ni el board ni `DESIGN.md` 7.6 lo describen). | Un aviso con el texto "La contraseña y las notas de esta entrada están dañadas. Escribe una contraseña nueva para repararla.", en una tarjeta `errorContainer` como las demás entradas dañadas. | Dibujarlo en el diseño. |
