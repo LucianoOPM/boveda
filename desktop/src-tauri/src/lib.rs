@@ -6,6 +6,8 @@ use clipboard::ClipboardManager;
 
 mod autostart;
 pub mod clipboard;
+#[cfg(debug_assertions)]
+mod dev_demo;
 mod tray;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -26,6 +28,9 @@ pub fn run() {
             // El gestor del portapapeles vive toda la sesión; el servidor de
             // red (#100) lo usará al recibir una contraseña.
             app.manage(ClipboardManager::start());
+            // Solo en depuración: dispara entregas ficticias para las pruebas manuales.
+            #[cfg(debug_assertions)]
+            dev_demo::start(app.handle().clone());
             Ok(())
         })
         .build(tauri::generate_context!())
