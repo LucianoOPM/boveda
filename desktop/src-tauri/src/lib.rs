@@ -18,6 +18,25 @@ pub mod paired_devices;
 pub mod protected_file;
 mod tray;
 
+/// Garantiza que la identidad de la PC exista tras el primer arranque (#99).
+///
+/// El par de llaves se descarta: el emparejamiento (#101) y el servidor (#100)
+/// abrirán los almacenes por su cuenta con la misma carpeta. Si falla (archivo
+/// dañado, de otra cuenta), solo se registra el tipo de error y la app sigue en
+/// la bandeja; cuando exista una ventana de emparejamiento, ahí se mostrará.
+/// Nunca se regenera una identidad que no se pudo leer.
+#[cfg(windows)]
+fn ensure_identity(app: &tauri::App) {
+    let Ok(dir) = app.path().app_data_dir() else {
+        eprintln!("identidad de la PC: no se encontró la carpeta de datos de la app");
+        return;
+    };
+    let store = identity::IdentityStore::new(dir.join("identity.bin"));
+    if let Err(err) = store.load_or_create() {
+        eprintln!("identidad de la PC: {err}");
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let app = tauri::Builder::default()
@@ -36,6 +55,7 @@ pub fn run() {
             // El gestor del portapapeles vive toda la sesión; el servidor de
             // red (#100) lo usará al recibir una contraseña.
             app.manage(ClipboardManager::start());
+            ensure_identity(app);
             Ok(())
         })
         .build(tauri::generate_context!())
