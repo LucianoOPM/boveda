@@ -42,6 +42,8 @@ enum Kind {
     PairingOffer = 1,
     Send = 2,
     Ack = 3,
+    PairingRequest = 4,
+    PairingReply = 5,
 }
 
 /// Codifica `body` como `versión | tipo | cuerpo`.
@@ -414,6 +416,88 @@ impl Ack {
     /// Decodifica una confirmación.
     pub fn decode(bytes: &[u8]) -> Result<Self> {
         decode_body(Kind::Ack, bytes)
+    }
+}
+
+/// Cuerpo de [`PairingRequest`] en el cable: el nombre como cadena.
+#[derive(Serialize, Deserialize)]
+struct RequestBody {
+    name: String,
+}
+
+/// Petición de emparejamiento que el celular manda en el tercer mensaje
+/// Noise (#95): su nombre, solo informativo.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PairingRequest {
+    name: DeviceName,
+}
+
+impl PairingRequest {
+    /// Arma la petición con ese nombre.
+    pub fn new(name: DeviceName) -> Self {
+        Self { name }
+    }
+
+    /// Nombre del celular.
+    pub fn name(&self) -> &DeviceName {
+        &self.name
+    }
+
+    /// Codifica la petición (`versión | tipo | nombre`).
+    pub fn encode(&self) -> Result<Zeroizing<Vec<u8>>> {
+        let body = RequestBody {
+            name: self.name.as_str().to_owned(),
+        };
+        encode_body(Kind::PairingRequest, &body)
+    }
+
+    /// Decodifica y valida la petición. El nombre debe llegar ya recortado:
+    /// cada mensaje tiene una sola codificación.
+    pub fn decode(bytes: &[u8]) -> Result<Self> {
+        let body: RequestBody = decode_body(Kind::PairingRequest, bytes)?;
+        let name = DeviceName::new(&body.name)?;
+        if name.as_str() != body.name {
+            return Err(ProtocolError::InvalidField(InvalidField::DeviceName));
+        }
+        Ok(Self { name })
+    }
+}
+
+/// Decisión de la PC sobre un emparejamiento.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum AckDecision {
+    /// El usuario aceptó el emparejamiento.
+    Accepted,
+    /// El usuario lo rechazó, o no decidió a tiempo.
+    Rejected,
+}
+
+/// Respuesta de la PC al celular tras la confirmación, ya cifrada por el
+/// canal Noise (#95).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PairingReply {
+    decision: AckDecision,
+}
+
+impl PairingReply {
+    /// Arma la respuesta.
+    pub fn new(decision: AckDecision) -> Self {
+        Self { decision }
+    }
+
+    /// La decisión de la PC.
+    pub fn decision(&self) -> AckDecision {
+        self.decision
+    }
+
+    /// Codifica la respuesta (`versión | tipo | decisión`).
+    pub fn encode(&self) -> Result<Zeroizing<Vec<u8>>> {
+        encode_body(Kind::PairingReply, self)
+    }
+
+    /// Decodifica la respuesta.
+    pub fn decode(bytes: &[u8]) -> Result<Self> {
+        decode_body(Kind::PairingReply, bytes)
     }
 }
 
