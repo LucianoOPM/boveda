@@ -5,11 +5,20 @@
 //! mano, avisando antes:
 //!
 //! ```text
+//! cargo build -p boveda-desktop --example clipboard_probe
 //! cargo test -p boveda-desktop --test clipboard_windows -- --ignored --test-threads=1 --nocapture
 //! ```
+//!
+//! Para comprobar la exclusión usan **otro proceso** (`examples/clipboard_probe.rs`):
+//! con `OpenClipboard(NULL)`, Windows 11 (build 26300) deja que otro hilo del
+//! MISMO proceso abra el portapapeles aunque ya esté abierto, así que una
+//! comprobación con hilos no demuestra nada. Lo que importa es otra aplicación.
 #![cfg(windows)]
 
 use std::cell::Cell;
+use std::io::Read;
+use std::path::PathBuf;
+use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
 use boveda_desktop_lib::clipboard::{
@@ -40,11 +49,101 @@ fn read_text() -> Option<Vec<u8>> {
     Some(out)
 }
 
-/// ¿Puede otro hilo abrir el portapapeles ahora mismo (sin reintentos)?
-fn another_thread_can_open() -> bool {
-    std::thread::spawn(|| Clipboard::new().is_ok())
-        .join()
-        .expect("el hilo no debe caer")
+/// El ejecutable de la sonda, en `examples/` del directorio de salida de Cargo
+/// (el ejecutable de la prueba vive en el directorio de compilación, que no es
+/// ese).
+fn probe_exe() -> PathBuf {
+    let target = std::env::var_os("CARGO_TARGET_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target"));
+    let profile = if cfg!(debug_assertions) {
+        "debug"
+    } else {
+        "release"
+    };
+    let path = target
+        .join(profile)
+        .join("examples")
+        .join("clipboard_probe.exe");
+    assert!(
+        path.exists(),
+        "falta {path:?}: compílalo con `cargo build -p boveda-desktop --example clipboard_probe`"
+    );
+    path
+}
+
+/// Lanza la sonda como un proceso independiente, espera a que termine (como
+/// mucho 10 s; si no, la mata) y devuelve su línea de salida.
+fn run_probe(args: &[&str]) -> String {
+    let mut child = Command::new(probe_exe())
+        .args(args)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("no se pudo lanzar la sonda");
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        match child.try_wait() {
+            Ok(Some(_)) => break,
+            Ok(None) if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(10)),
+            _ => {
+                let _ = child.kill();
+                let _ = child.wait();
+                panic!("la sonda no terminó a tiempo");
+            }
+        }
+    }
+    let mut out = String::new();
+    child
+        .stdout
+        .take()
+        .expect("salida de la sonda")
+        .read_to_string(&mut out)
+        .expect("leer la salida de la sonda");
+    out.trim().to_owned()
+}
+
+/// ¿Puede otra aplicación (otro proceso) abrir el portapapeles ahora mismo?
+fn another_process_can_open() -> bool {
+    run_probe(&["open"]) == "OPEN=ok"
+}
+
+#[test]
+#[ignore = "usa el portapapeles real: sobrescribe y vacía el del usuario"]
+fn another_process_cannot_open_while_the_guard_is_held_and_can_after() {
+    let _cleanup = EmptyOnDrop;
+    assert!(
+        another_process_can_open(),
+        "libre: la sonda debe poder abrir"
+    );
+
+    {
+        let _held = Clipboard::new_attempts(10).expect("no se pudo abrir el portapapeles");
+        assert_eq!(run_probe(&["open"]), "OPEN=busy");
+    }
+
+    assert!(
+        another_process_can_open(),
+        "liberado: la sonda debe poder abrir"
+    );
+}
+
+#[test]
+#[ignore = "usa el portapapeles real: sobrescribe y vacía el del usuario"]
+fn another_process_cannot_modify_the_clipboard_while_the_guard_is_held() {
+    let _cleanup = EmptyOnDrop;
+    let mut backend = WindowsBackend::new();
+    backend.write_sensitive("prueba-no-real-original").unwrap();
+
+    {
+        let _held = Clipboard::new_attempts(10).expect("no se pudo abrir el portapapeles");
+        assert_eq!(run_probe(&["write", "prueba-no-real-ajeno"]), "WRITE=busy");
+    }
+
+    assert_eq!(
+        read_text().as_deref(),
+        Some(&b"prueba-no-real-original"[..])
+    );
 }
 
 #[test]
@@ -82,8 +181,8 @@ fn clear_if_matches_clears_matching_text_even_with_exclusion_formats_present() {
 
     assert_eq!(outcome, ClearOutcome::Cleared);
     assert_eq!(read_text(), None);
-    // La guarda se liberó: otro hilo puede abrir el portapapeles.
-    assert!(another_thread_can_open());
+    // La guarda se liberó: otra aplicación puede abrir el portapapeles.
+    assert!(another_process_can_open());
 }
 
 #[test]
@@ -98,7 +197,7 @@ fn clear_if_matches_leaves_different_text_untouched() {
     assert_eq!(outcome, ClearOutcome::NotOurs);
     assert_eq!(read_text().as_deref(), Some(&b"copiado-por-el-usuario"[..]));
     // También se libera en el camino que no borra.
-    assert!(another_thread_can_open());
+    assert!(another_process_can_open());
 }
 
 #[test]
@@ -152,22 +251,30 @@ fn clipboard_stays_open_while_matching() {
     let _cleanup = EmptyOnDrop;
     let mut backend = WindowsBackend::new();
     backend.write_sensitive("prueba-no-real-abierto").unwrap();
-    let was_held = Cell::new(false);
+    let observed = Cell::new((String::new(), String::new()));
 
     let outcome = backend.clear_if_matches(&|bytes| {
-        // Esto corre mientras `clear_if_matches` tiene el portapapeles abierto:
-        // ningún otro hilo puede abrirlo, es decir, nada puede cambiarlo entre
-        // la lectura, la comparación y el vaciado.
-        was_held.set(!another_thread_can_open());
+        // Esto corre mientras `clear_if_matches` tiene el portapapeles abierto
+        // (entre la lectura y el vaciado): otra aplicación no puede abrirlo ni
+        // cambiarlo. Con la mutación de «dos aperturas» esto falla.
+        observed.set((
+            run_probe(&["open"]),
+            run_probe(&["write", "prueba-no-real-ajeno"]),
+        ));
         bytes == b"prueba-no-real-abierto"
     });
 
-    assert_eq!(outcome, ClearOutcome::Cleared);
-    assert!(
-        was_held.get(),
-        "el portapapeles no estaba abierto durante la comparación"
+    let (open, write) = observed.take();
+    assert_eq!(
+        open, "OPEN=busy",
+        "otra aplicación pudo abrir durante la comparación"
     );
-    assert!(another_thread_can_open(), "la guarda no se liberó");
+    assert_eq!(
+        write, "WRITE=busy",
+        "otra aplicación pudo escribir durante la comparación"
+    );
+    assert_eq!(outcome, ClearOutcome::Cleared);
+    assert!(another_process_can_open(), "la guarda no se liberó");
 }
 
 #[test]
@@ -177,17 +284,14 @@ fn occupied_clipboard_is_unavailable_and_nothing_is_cleared() {
     let mut backend = WindowsBackend::new();
     backend.write_sensitive("prueba-no-real-ocupado").unwrap();
 
-    // Esta prueba mantiene el portapapeles abierto; otro hilo intenta borrar.
+    // Esta prueba mantiene el portapapeles abierto; otra aplicación (otro
+    // proceso, con el mismo borrado condicional) intenta borrar.
     let outcome = {
         let _held = Clipboard::new_attempts(10).unwrap();
-        std::thread::spawn(|| {
-            WindowsBackend::new().clear_if_matches(&|bytes| bytes == b"prueba-no-real-ocupado")
-        })
-        .join()
-        .unwrap()
+        run_probe(&["clear", "prueba-no-real-ocupado"])
     };
 
-    assert_eq!(outcome, ClearOutcome::Unavailable);
+    assert_eq!(outcome, "CLEAR=Unavailable");
     // Soltado el portapapeles, el texto seguía ahí: no se borró a ciegas.
     assert_eq!(read_text().as_deref(), Some(&b"prueba-no-real-ocupado"[..]));
     // Y ahora sí se puede borrar normalmente.
