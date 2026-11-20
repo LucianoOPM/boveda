@@ -43,6 +43,11 @@ void main() {
       'lib/widgets/password_field.dart',
       'lib/widgets/strength_indicator.dart',
       'lib/widgets/status_capsule.dart',
+      'lib/screens/search_screen.dart',
+      'lib/widgets/damaged_entries_banner.dart',
+      'lib/widgets/vault_card.dart',
+      'lib/widgets/vault_header.dart',
+      'lib/widgets/tag_badge.dart',
     ];
     final offenders = [
       for (final path in migrated)
