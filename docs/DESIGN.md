@@ -200,7 +200,7 @@ Las maquetas usan un marco de 390 × 820 con esquinas de 54 y pantalla interna d
 ### 6.1 Encabezado y cápsula de estado (`CryptoHeader`)
 
 - Fila superior fija en `bgBase`, alto 56, margen 16.
-- **Izquierda:** marca `BÓVEDA` en `brand` y, debajo, `XCHACHA20-POLY1305 • ARGON2ID` en `meta`, `textSecondary`.
+- **Izquierda:** marca `BÓVEDA` en `brand` y, debajo, `XCHACHA20-POLY1305 • ARGON2ID` en `meta`, `textSecondary`. A 360 dp el subtítulo no cabe junto a la cápsula y al engranaje: va en su propia línea, debajo de la fila. Con el texto del sistema por encima del 110 %, la cápsula también pasa a su línea para que la marca no se parta.
 - **Cápsula de estado:** píldora `#000000` con borde `#24242F` y un LED de 6 px:
   - Bóveda abierta: LED en `accent` con pulso y texto `CONOCIMIENTO CERO` en `accent`.
   - Bloqueada: LED en `errorStrong` fijo y texto `BLOQUEADA` en `error`.
@@ -214,7 +214,7 @@ Las maquetas usan un marco de 390 × 820 con esquinas de 54 y pantalla interna d
 - **Izquierda:** caja `iconBox` de 40 × 40, radio 12, con la inicial del servicio en `metric` y `accent`. Sin favicons ni íconos de categoría: descargarlos revelaría a qué servicios tienes cuenta.
 - **Centro:**
   - Línea 1: servicio en `titleMedium`, truncado.
-  - Línea 2: hasta dos etiquetas como insignias (`meta`, fondo `accentDim`, borde `accentBorder`, texto `accent`, radio 6), separadas por ` // `; el resto, "+N".
+  - Línea 2: hasta dos etiquetas como insignias (`meta`, fondo `accentDim`, borde `accentBorder`, texto `accent`, radio 6), una al lado de otra con 6 de separación, como en las maquetas; el resto, "+N".
   - Línea 3: usuario o, si no hay, la URL tal como está guardada, en `bodySmall` y `textSecondary`.
 - **Derecha (etapa 3):** acción rápida "Enviar a PC" (ícono, 40 × 40, `surfaceElevated`, `active` a escala 0.90). Pide huella como todo envío.
 - Deslizar a la izquierda envía a la PC (etapa 4): fondo `accent` con el ícono de enviar en `onAccent`.
