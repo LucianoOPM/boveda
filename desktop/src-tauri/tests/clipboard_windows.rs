@@ -9,10 +9,12 @@
 //! cargo test -p boveda-desktop --test clipboard_windows -- --ignored --test-threads=1 --nocapture
 //! ```
 //!
-//! Para comprobar la exclusión usan **otro proceso** (`examples/clipboard_probe.rs`):
-//! con `OpenClipboard(NULL)`, Windows 11 (build 26300) deja que otro hilo del
-//! MISMO proceso abra el portapapeles aunque ya esté abierto, así que una
-//! comprobación con hilos no demuestra nada. Lo que importa es otra aplicación.
+//! Para comprobar la exclusión usan **otro proceso** (`examples/clipboard_probe.rs`),
+//! que actúa como «otra aplicación». Medido en Windows 11 (build 26300): con
+//! `OpenClipboard(NULL)` el portapapeles NO se bloquea (otro hilo o proceso
+//! puede abrirlo, escribir y borrar); con una **ventana propietaria** sí. Por eso
+//! cuando una prueba necesita «retener» el portapapeles lo abre con
+//! `OwnerWindow`, igual que el código de producción (`MessageWindow`).
 #![cfg(windows)]
 
 use std::cell::Cell;
@@ -26,6 +28,49 @@ use boveda_desktop_lib::clipboard::{
 };
 use clipboard_win::{Clipboard, formats, raw};
 use secrecy::SecretString;
+use windows_sys::Win32::UI::WindowsAndMessaging::{CreateWindowExW, DestroyWindow, HWND_MESSAGE};
+
+/// Una ventana de solo mensajes que la prueba usa como propietaria para
+/// «retener» el portapapeles. Declárala ANTES de la guarda: se destruye después.
+struct OwnerWindow(*mut std::ffi::c_void);
+
+impl OwnerWindow {
+    fn new() -> Self {
+        let class: Vec<u16> = "STATIC".encode_utf16().chain(Some(0)).collect();
+        // SAFETY: cadena UTF-16 terminada en cero, punteros nulos admitidos y el
+        // padre `HWND_MESSAGE` es una constante válida.
+        let hwnd = unsafe {
+            CreateWindowExW(
+                0,
+                class.as_ptr(),
+                std::ptr::null(),
+                0,
+                0,
+                0,
+                0,
+                0,
+                HWND_MESSAGE,
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+                std::ptr::null(),
+            )
+        };
+        assert!(!hwnd.is_null(), "no se pudo crear la ventana propietaria");
+        Self(hwnd)
+    }
+
+    /// Abre el portapapeles con esta ventana como propietaria.
+    fn hold(&self) -> Clipboard {
+        Clipboard::new_attempts_for(self.0, 10).expect("no se pudo abrir el portapapeles")
+    }
+}
+
+impl Drop for OwnerWindow {
+    fn drop(&mut self) {
+        // SAFETY: la creó `new` en este hilo y se destruye una sola vez.
+        unsafe { DestroyWindow(self.0) };
+    }
+}
 
 /// Deja el portapapeles vacío al terminar la prueba, pase o falle.
 struct EmptyOnDrop;
@@ -118,7 +163,8 @@ fn another_process_cannot_open_while_the_guard_is_held_and_can_after() {
     );
 
     {
-        let _held = Clipboard::new_attempts(10).expect("no se pudo abrir el portapapeles");
+        let owner = OwnerWindow::new();
+        let _held = owner.hold();
         assert_eq!(run_probe(&["open"]), "OPEN=busy");
     }
 
@@ -136,7 +182,8 @@ fn another_process_cannot_modify_the_clipboard_while_the_guard_is_held() {
     backend.write_sensitive("prueba-no-real-original").unwrap();
 
     {
-        let _held = Clipboard::new_attempts(10).expect("no se pudo abrir el portapapeles");
+        let owner = OwnerWindow::new();
+        let _held = owner.hold();
         assert_eq!(run_probe(&["write", "prueba-no-real-ajeno"]), "WRITE=busy");
     }
 
@@ -287,7 +334,8 @@ fn occupied_clipboard_is_unavailable_and_nothing_is_cleared() {
     // Esta prueba mantiene el portapapeles abierto; otra aplicación (otro
     // proceso, con el mismo borrado condicional) intenta borrar.
     let outcome = {
-        let _held = Clipboard::new_attempts(10).unwrap();
+        let owner = OwnerWindow::new();
+        let _held = owner.hold();
         run_probe(&["clear", "prueba-no-real-ocupado"])
     };
 
