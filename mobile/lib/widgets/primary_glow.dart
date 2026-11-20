@@ -9,11 +9,18 @@ import '../theme/theme.dart';
 ///
 /// Va fuera del botón y no en el tema porque `ButtonStyle` no admite sombras
 /// de color. Solo brilla con [enabled]: un botón deshabilitado no es la acción
-/// principal. No cambia el tamaño de [child]; el radio es el de los botones.
+/// principal. No cambia el tamaño de [child]; [radius] es el del control que
+/// envuelve (12 en los botones, 16 en el botón "+").
 class PrimaryGlow extends StatelessWidget {
-  const PrimaryGlow({super.key, required this.enabled, required this.child});
+  const PrimaryGlow({
+    super.key,
+    required this.enabled,
+    this.radius = Radii.control,
+    required this.child,
+  });
 
   final bool enabled;
+  final double radius;
   final Widget child;
 
   @override
@@ -24,7 +31,7 @@ class PrimaryGlow extends StatelessWidget {
             .glow;
     return DecoratedBox(
       decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(Radii.control),
+        borderRadius: BorderRadius.circular(radius),
         boxShadow: enabled
             ? [BoxShadow(color: glow, blurRadius: 25)]
             : const <BoxShadow>[],

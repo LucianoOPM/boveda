@@ -8,6 +8,7 @@ import 'package:boveda/screens/entry_form_screen.dart';
 import 'package:boveda/screens/search_screen.dart';
 import 'package:boveda/src/rust/api/entries.dart';
 import 'package:boveda/src/rust/api/error.dart';
+import 'package:boveda/widgets/vault_card.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -92,10 +93,18 @@ void main() {
     final url = tester.widget<Text>(find.text(longUrl));
     expect(url.maxLines, 1);
     expect(url.overflow, TextOverflow.ellipsis);
-    // "C" también es la inicial: se toma el tercer elemento de la lista.
-    final c = tester.widgetList<ListTile>(find.byType(ListTile)).elementAt(2);
-    expect((c.title as Text).data, 'C');
-    expect(c.subtitle, isNull);
+    // "C" sin usuario ni URL: la tercera tarjeta no tiene detalle.
+    final c = tester.widgetList<VaultCard>(find.byType(VaultCard)).elementAt(2);
+    expect(c.service, 'C');
+    expect(c.detail, isNull);
+    // Lo que se ve: solo la inicial y el servicio, sin segunda línea.
+    expect(
+      find.descendant(
+        of: find.byType(VaultCard).at(2),
+        matching: find.byType(Text),
+      ),
+      findsNWidgets(2),
+    );
   });
 
   testWidgets('inicial: primer grafema en mayúscula', (tester) async {
@@ -110,7 +119,7 @@ void main() {
     for (final initial in ['G', 'É', '🔑', '👩‍💻']) {
       expect(
         find.descendant(
-          of: find.byType(CircleAvatar),
+          of: find.byKey(const Key('vault-card-initial')),
           matching: find.text(initial),
         ),
         findsOneWidget,
@@ -357,15 +366,16 @@ void main() {
     await pumpSearch(tester, damaged: 2);
     final banner = find.text('2 entradas no se pudieron leer');
     expect(banner, findsOneWidget);
+    // Debajo del campo de búsqueda, como en el diseño (antes iba encima).
     expect(
       tester.getTopLeft(banner).dy,
-      lessThan(tester.getTopLeft(searchField).dy),
+      greaterThan(tester.getBottomLeft(searchField).dy),
     );
   });
 
   testWidgets('sin dañadas no hay aviso', (tester) async {
     await pumpSearch(tester);
-    expect(find.byType(MaterialBanner), findsNothing);
+    expect(find.byKey(const Key('damaged-banner')), findsNothing);
   });
 
   testWidgets('sin desbordamiento en una pantalla baja con aviso y teclado', (

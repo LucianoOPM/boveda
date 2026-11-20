@@ -4,8 +4,14 @@ import 'package:flutter/material.dart';
 import '../src/rust/api/entries.dart';
 import '../src/rust/api/error.dart';
 import '../src/rust/api/session.dart';
+import '../theme/colors.dart';
+import '../theme/icons.dart';
+import '../theme/spacing.dart';
 import '../widgets/activity_text_field.dart';
 import '../widgets/damaged_entries_banner.dart';
+import '../widgets/primary_glow.dart';
+import '../widgets/vault_card.dart';
+import '../widgets/vault_header.dart';
 import 'entry_detail_screen.dart';
 import 'entry_form_screen.dart';
 
@@ -170,82 +176,146 @@ class _SearchScreenState extends State<SearchScreen> {
     if (!created) _refresh();
   }
 
+  /// Una zona de arriba de la lista: [child] se desplaza por dentro si pasa de
+  /// la cuarta parte de la altura disponible.
+  Widget _scrollZone(BoxConstraints constraints, Widget child) {
+    return ConstrainedBox(
+      constraints: BoxConstraints(maxHeight: constraints.maxHeight * 0.25),
+      child: SingleChildScrollView(
+        keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+        child: child,
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      floatingActionButton: FloatingActionButton(
-        tooltip: 'Agregar contraseña',
-        onPressed: _openCreate,
-        child: const Icon(Icons.add),
+      floatingActionButton: PrimaryGlow(
+        enabled: true,
+        radius: Radii.card,
+        child: FloatingActionButton(
+          tooltip: 'Agregar contraseña',
+          onPressed: _openCreate,
+          child: const Icon(BovedaIcons.plus),
+        ),
       ),
       body: SafeArea(
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            DamagedEntriesBanner(count: widget.damagedEntries),
-            Padding(
-              padding: const EdgeInsets.all(16),
-              child: Row(
-                children: [
-                  Expanded(
-                    child: ActivityTextField(
-                      controller: _query,
-                      focusNode: _focus,
-                      textInputAction: TextInputAction.search,
-                      // La tecla "buscar" no quita el foco.
-                      onEditingComplete: () {},
-                      onChanged: _onChanged,
-                      // Con false, Flutter marca el campo en Android como contraseña
-                      // visible (VISIBLE_PASSWORD) y el teclado muestra la fila de
-                      // números. Sin aprendizaje del teclado, sus sugerencias no
-                      // guardan lo que se busca.
-                      autocorrect: false,
-                      enableIMEPersonalizedLearning: false,
-                      decoration: InputDecoration(
-                        hintText: 'Buscar',
-                        prefixIcon: const Icon(Icons.search),
-                        suffixIcon: _query.text.isEmpty
-                            ? null
-                            : IconButton(
-                                tooltip: 'Borrar búsqueda',
-                                icon: const Icon(Icons.close),
-                                onPressed: _clear,
-                              ),
-                      ),
-                    ),
+        // El campo de búsqueda va fijo (`DESIGN.md` 7.4). El encabezado y el
+        // aviso de dañadas, cada uno en su zona, no pasan de la cuarta parte
+        // de la altura: con una pantalla baja, el teclado abierto o letra
+        // grande se desplazan por dentro en vez de desbordar, y la lista
+        // conserva el resto.
+        child: LayoutBuilder(
+          builder: (context, constraints) => Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              _scrollZone(
+                constraints,
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(
+                    Space.lg,
+                    Space.md,
+                    Space.lg,
+                    0,
                   ),
-                  if (widget.onOpenSettings case final openSettings?)
-                    IconButton(
-                      key: const Key('open-settings'),
-                      tooltip: 'Ajustes',
-                      icon: const Icon(Icons.settings),
-                      onPressed: openSettings,
-                    ),
-                ],
+                  child: VaultHeader(onOpenSettings: widget.onOpenSettings),
+                ),
               ),
-            ),
-            Expanded(child: _body()),
-          ],
+              Padding(
+                padding: const EdgeInsets.fromLTRB(
+                  Space.lg,
+                  Space.md,
+                  Space.lg,
+                  Space.lg,
+                ),
+                child: ActivityTextField(
+                  controller: _query,
+                  focusNode: _focus,
+                  textInputAction: TextInputAction.search,
+                  // La tecla "buscar" no quita el foco.
+                  onEditingComplete: () {},
+                  onChanged: _onChanged,
+                  // Con false, Flutter marca el campo en Android como contraseña
+                  // visible (VISIBLE_PASSWORD) y el teclado muestra la fila de
+                  // números. Sin aprendizaje del teclado, sus sugerencias no
+                  // guardan lo que se busca.
+                  autocorrect: false,
+                  enableIMEPersonalizedLearning: false,
+                  decoration: InputDecoration(
+                    hintText: 'Buscar',
+                    constraints: const BoxConstraints(minHeight: 52),
+                    prefixIcon: const Icon(
+                      BovedaIcons.search,
+                      size: IconSizes.control,
+                    ),
+                    suffixIcon: _query.text.isEmpty
+                        ? null
+                        : IconButton(
+                            tooltip: 'Borrar búsqueda',
+                            icon: const Icon(
+                              BovedaIcons.x,
+                              size: IconSizes.control,
+                            ),
+                            onPressed: _clear,
+                          ),
+                  ),
+                ),
+              ),
+              _scrollZone(
+                constraints,
+                DamagedEntriesBanner(count: widget.damagedEntries),
+              ),
+              Expanded(child: _body()),
+            ],
+          ),
         ),
       ),
     );
   }
 
-  Widget _body() {
-    if (_failed) {
-      return Center(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Text('No se pudo buscar'),
-            const SizedBox(height: 8),
-            TextButton(
-              onPressed: () => _search(_query.text),
-              child: const Text('Reintentar'),
+  /// Un estado de la pantalla (error, vacío, sin resultados), centrado y
+  /// desplazable: con una pantalla baja, el teclado abierto o letra grande se
+  /// desplaza en vez de desbordar.
+  Widget _state(Key key, List<Widget> children) {
+    return CustomScrollView(
+      keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+      slivers: [
+        SliverFillRemaining(
+          hasScrollBody: false,
+          child: Center(
+            child: Padding(
+              key: key,
+              padding: const EdgeInsets.all(Space.lg),
+              child: Column(mainAxisSize: MainAxisSize.min, children: children),
             ),
-          ],
+          ),
         ),
-      );
+      ],
+    );
+  }
+
+  Widget _body() {
+    final theme = Theme.of(context);
+    if (_failed) {
+      return _state(const Key('search-failed'), [
+        Icon(
+          BovedaIcons.triangleAlert,
+          size: IconSizes.feature,
+          color: theme.colorScheme.error,
+        ),
+        const SizedBox(height: Space.md),
+        Text(
+          'No se pudo buscar',
+          textAlign: TextAlign.center,
+          style: theme.textTheme.titleMedium,
+        ),
+        const SizedBox(height: Space.sm),
+        TextButton(
+          onPressed: () => _search(_query.text),
+          child: const Text('Reintentar'),
+        ),
+      ]);
     }
     final results = _results;
     if (results == null) {
@@ -253,58 +323,73 @@ class _SearchScreenState extends State<SearchScreen> {
     }
     if (results.isEmpty) {
       final text = _shownQuery.trim();
-      return Center(
-        child: Padding(
-          padding: const EdgeInsets.all(16),
-          child: Text(
-            text.isEmpty
-                ? 'Todavía no hay contraseñas guardadas. '
-                      'Toca + para agregar la primera.'
-                : 'Sin resultados para «$text»',
-            textAlign: TextAlign.center,
+      if (text.isEmpty) {
+        // Bóveda vacía: caja con el ícono, el texto y el mismo acceso al
+        // formulario que el botón "+".
+        return _state(const Key('vault-empty'), [
+          Container(
+            key: const Key('empty-icon-box'),
+            width: 72,
+            height: 72,
+            decoration: BoxDecoration(
+              color: BovedaColors.surface2,
+              borderRadius: BorderRadius.circular(Radii.card),
+              border: Border.all(color: BovedaColors.borderCard),
+            ),
+            child: Icon(
+              BovedaIcons.vault,
+              size: IconSizes.feature,
+              color: theme.colorScheme.primary,
+            ),
           ),
+          const SizedBox(height: Space.lg),
+          Text(
+            'Todavía no hay contraseñas guardadas. '
+            'Toca + para agregar la primera.',
+            textAlign: TextAlign.center,
+            style: theme.textTheme.bodyLarge,
+          ),
+          const SizedBox(height: Space.xl),
+          OutlinedButton(
+            key: const Key('empty-add'),
+            onPressed: _openCreate,
+            child: const Text('Agregar la primera'),
+          ),
+        ]);
+      }
+      return _state(const Key('no-results'), [
+        Icon(
+          BovedaIcons.search,
+          size: IconSizes.large,
+          color: theme.colorScheme.onSurfaceVariant,
         ),
-      );
+        const SizedBox(height: Space.md),
+        Text(
+          'Sin resultados para «$text»',
+          textAlign: TextAlign.center,
+          style: theme.textTheme.titleMedium,
+        ),
+      ]);
     }
-    return ListView.builder(
+    return ListView.separated(
       controller: _scroll,
       keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
-      // Espacio para que el botón "+" no tape la última entrada.
-      padding: const EdgeInsets.only(bottom: 88),
+      // Margen lateral de 16 y espacio abajo para que el botón "+" no tape la
+      // última entrada.
+      padding: const EdgeInsets.fromLTRB(Space.lg, 0, Space.lg, 88),
       itemCount: results.length,
+      separatorBuilder: (_, _) => const SizedBox(height: Space.s10),
       itemBuilder: (context, index) {
         final entry = results[index];
-        return _EntryTile(entry: entry, onTap: () => _openDetail(entry));
+        return VaultCard(
+          key: ValueKey(entry.id),
+          service: entry.service,
+          tags: entry.tags,
+          // Usuario o, si no hay, la URL tal como está guardada.
+          detail: entry.username ?? entry.url,
+          onTap: () => _openDetail(entry),
+        );
       },
-    );
-  }
-}
-
-/// Un elemento de la lista: inicial, servicio y usuario (o la URL).
-class _EntryTile extends StatelessWidget {
-  _EntryTile({required this.entry, required this.onTap})
-    : super(key: ValueKey(entry.id));
-
-  final EntrySummary entry;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final service = entry.service;
-    // El primer grafema, para acentos y emoji compuestos. El núcleo no
-    // admite servicios vacíos; '?' es solo defensa.
-    final initial = service.isEmpty
-        ? '?'
-        : service.characters.first.toUpperCase();
-    final detail = entry.username ?? entry.url;
-    return ListTile(
-      onTap: onTap,
-      // El lector de pantalla no lee la letra antes del servicio.
-      leading: ExcludeSemantics(child: CircleAvatar(child: Text(initial))),
-      title: Text(service),
-      subtitle: detail == null
-          ? null
-          : Text(detail, maxLines: 1, overflow: TextOverflow.ellipsis),
     );
   }
 }

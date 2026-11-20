@@ -1,5 +1,10 @@
 import 'package:flutter/material.dart';
 
+import '../theme/colors.dart';
+import '../theme/icons.dart';
+import '../theme/spacing.dart';
+import '../theme/text_scale.dart';
+
 /// Aviso de entradas que no se pudieron leer al desbloquear.
 ///
 /// [count] es el total de dañadas del `UnlockReport` (con y sin id). Con 0,
@@ -34,15 +39,63 @@ class _DamagedEntriesBannerState extends State<DamagedEntriesBanner> {
     final message = widget.count == 1
         ? '1 entrada no se pudo leer'
         : '${widget.count} entradas no se pudieron leer';
-    return MaterialBanner(
-      content: Text(message),
-      leading: const Icon(Icons.warning_amber),
-      actions: [
-        TextButton(
-          onPressed: () => setState(() => _dismissed = true),
-          child: const Text('Entendido'),
+    final theme = Theme.of(context);
+    final error = theme.colorScheme.error;
+    // Con el texto del sistema más grande que un 110 %, "Entendido" deja al
+    // mensaje una columna muy estrecha: pasa debajo, a la derecha.
+    final stacked = isLargeText(context);
+    final text = Row(
+      children: [
+        Icon(BovedaIcons.triangleAlert, size: IconSizes.control, color: error),
+        const SizedBox(width: Space.sm),
+        Expanded(
+          child: Text(
+            message,
+            style: theme.textTheme.bodyMedium?.copyWith(
+              color: theme.colorScheme.onSurface,
+            ),
+          ),
         ),
+        if (!stacked) const SizedBox(width: Space.sm),
+        if (!stacked) _dismissButton(error),
       ],
+    );
+    // Una tarjeta de `errorContainer` (`DESIGN.md` 6.6), no un
+    // `MaterialBanner`: este no admite radio ni borde.
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(Space.lg, 0, Space.lg, Space.s10),
+      child: Material(
+        key: const Key('damaged-banner'),
+        color: BovedaColors.errorContainer,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(Radii.card),
+          side: BorderSide(color: error.withValues(alpha: 0.38)),
+        ),
+        child: Padding(
+          padding: const EdgeInsets.all(Space.md),
+          child: stacked
+              ? Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    text,
+                    Align(
+                      alignment: Alignment.centerRight,
+                      child: _dismissButton(error),
+                    ),
+                  ],
+                )
+              : text,
+        ),
+      ),
+    );
+  }
+
+  Widget _dismissButton(Color error) {
+    return TextButton(
+      style: TextButton.styleFrom(foregroundColor: error),
+      onPressed: () => setState(() => _dismissed = true),
+      child: const Text('Entendido'),
     );
   }
 }

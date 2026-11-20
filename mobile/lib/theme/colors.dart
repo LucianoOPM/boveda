@@ -15,6 +15,9 @@ abstract final class BovedaColors {
   static const borderSubtle = Color(0xFF22222C);
   static const borderCard = Color(0xFF242430);
   static const borderInteractive = Color(0xFF282836);
+
+  /// Borde de una tarjeta presionada (`DESIGN.md` 6.2).
+  static const borderPressed = Color(0xFF52525B);
   static const outline = Color(0xFF71717A);
   static const lockScrim = Color(0xFF09090C);
 

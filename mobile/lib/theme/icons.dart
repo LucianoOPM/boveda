@@ -13,4 +13,9 @@ abstract final class BovedaIcons {
   static const eyeOff = IconData(0xe0bb, fontFamily: _family);
   static const fingerprint = IconData(0xe2cb, fontFamily: _family);
   static const triangleAlert = IconData(0xe193, fontFamily: _family);
+  static const search = IconData(0xe151, fontFamily: _family);
+  static const x = IconData(0xe1b2, fontFamily: _family);
+  static const settings = IconData(0xe154, fontFamily: _family);
+  static const plus = IconData(0xe13d, fontFamily: _family);
+  static const vault = IconData(0xe58f, fontFamily: _family);
 }

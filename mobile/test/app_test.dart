@@ -10,6 +10,7 @@ import 'package:boveda/screens/entry_form_screen.dart';
 import 'package:boveda/screens/first_run_screen.dart';
 import 'package:boveda/screens/search_screen.dart';
 import 'package:boveda/screens/unlock_screen.dart';
+import 'package:boveda/widgets/vault_card.dart';
 import 'package:boveda/services/biometric_service.dart';
 import 'package:boveda/src/rust/api/entries.dart';
 import 'package:boveda/src/rust/api/error.dart';
@@ -409,10 +410,10 @@ void main() {
     await tester.pageBack();
     await tester.pumpAndSettle();
     expect(find.byType(SearchScreen), findsOneWidget);
-    expect(find.widgetWithText(ListTile, 'Gmail'), findsOneWidget);
+    expect(find.widgetWithText(VaultCard, 'Gmail'), findsOneWidget);
 
     // Eliminar: con confirmación, y desaparece de la lista.
-    await tester.tap(find.widgetWithText(ListTile, 'Gmail'));
+    await tester.tap(find.widgetWithText(VaultCard, 'Gmail'));
     await tester.pumpAndSettle();
     await tester.tap(find.byTooltip('Eliminar'));
     await tester.pumpAndSettle();
@@ -425,7 +426,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(session.deleteCalls, [fakeNewId]);
     expect(find.byType(EntryDetailScreen), findsNothing);
-    expect(find.widgetWithText(ListTile, 'Gmail'), findsNothing);
+    expect(find.widgetWithText(VaultCard, 'Gmail'), findsNothing);
     expect(find.textContaining('Toca + para agregar'), findsOneWidget);
   });
 }
