@@ -58,10 +58,16 @@ class _LabeledFieldState extends State<LabeledField> {
       mainAxisSize: MainAxisSize.min,
       children: [
         ExcludeSemantics(
-          child: GestureDetector(
-            behavior: HitTestBehavior.opaque,
-            onTap: widget.enabled ? _focusField : null,
-            child: FieldLabel(widget.label, enabled: widget.enabled),
+          // La etiqueta es parte del grupo del campo: tocarla no cuenta como
+          // "tocar fuera" (`onTapOutside` quita el foco y cierra el teclado),
+          // así que pasar de un campo a otro por su etiqueta no hace parpadear
+          // el teclado.
+          child: TextFieldTapRegion(
+            child: GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onTap: widget.enabled ? _focusField : null,
+              child: FieldLabel(widget.label, enabled: widget.enabled),
+            ),
           ),
         ),
         const SizedBox(height: Space.sm),

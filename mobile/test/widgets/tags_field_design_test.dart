@@ -90,6 +90,43 @@ void main() {
     });
   }
 
+  testWidgets('la zona táctil de la ✕ mide 48 dp de ancho', (tester) async {
+    await pumpTags(tester, initial: ['personal']);
+    final chip = tester.getRect(find.byType(InputChip));
+
+    // Un toque a la izquierda no quita la etiqueta.
+    await tester.tapAt(Offset(chip.left + 20, chip.center.dy));
+    await tester.pump();
+    expect(tags, ['personal']);
+
+    // A 40 dp del borde derecho todavía es la ✕ (con el ícono por omisión
+    // de Material la zona era de unos 26 a 34 dp).
+    await tester.tapAt(Offset(chip.right - 40, chip.center.dy));
+    await tester.pump();
+    expect(tags, isEmpty);
+  });
+
+  testWidgets('el lector de pantalla lee la etiqueta con su texto original', (
+    tester,
+  ) async {
+    final handle = tester.ensureSemantics();
+    await pumpTags(tester, initial: ['personal']);
+
+    final label = tester.getSemantics(find.byType(InputChip)).label;
+    expect(label, contains('personal'));
+    expect(label, isNot(contains('PERSONAL')));
+    handle.dispose();
+  });
+
+  testWidgets('mientras guarda (desactivadas) las etiquetas conservan su '
+      'fondo', (tester) async {
+    await pumpTags(tester, initial: ['personal'], enabled: false);
+
+    final chip = tester.widget<InputChip>(find.byType(InputChip));
+    expect(chip.disabledColor, defaultAccent.accentDim);
+    expect(chip.backgroundColor, defaultAccent.accentDim);
+  });
+
   testWidgets('la ✕ quita la etiqueta', (tester) async {
     await pumpTags(tester, initial: ['a', 'b']);
     expect(find.byTooltip('Quitar etiqueta'), findsNWidgets(2));

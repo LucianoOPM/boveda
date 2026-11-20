@@ -3,6 +3,7 @@
 
 import 'package:boveda/theme/colors.dart';
 import 'package:boveda/theme/theme.dart';
+import 'package:boveda/widgets/activity_text_field.dart';
 import 'package:boveda/widgets/labeled_field.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -103,6 +104,59 @@ void main() {
     await tester.tap(find.text('NOMBRE DEL SERVICIO'));
     await tester.pump();
     expect(editable(tester).focusNode.hasFocus, isFalse);
+  });
+
+  testWidgets('tocar la etiqueta de otro campo no le quita el foco al campo '
+      'enfocado al bajar el dedo (el teclado no parpadea)', (tester) async {
+    tester.view.physicalSize = const Size(360, 640);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    final first = FocusNode();
+    final second = FocusNode();
+    addTearDown(first.dispose);
+    addTearDown(second.dispose);
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildTheme(defaultAccent),
+        home: Scaffold(
+          body: Column(
+            children: [
+              LabeledField(
+                label: 'Primero',
+                child: ActivityTextField(
+                  controller: TextEditingController(),
+                  focusNode: first,
+                ),
+              ),
+              LabeledField(
+                label: 'Segundo',
+                child: ActivityTextField(
+                  controller: TextEditingController(),
+                  focusNode: second,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+    await tester.tap(find.byType(TextField).first);
+    await tester.pump();
+    expect(first.hasFocus, isTrue);
+
+    final gesture = await tester.startGesture(
+      tester.getCenter(find.text('SEGUNDO')),
+    );
+    await tester.pump();
+
+    // La etiqueta es parte del grupo del campo: tocarla no es "tocar fuera",
+    // así que el campo enfocado conserva el foco y el teclado no se cierra.
+    expect(first.hasFocus, isTrue);
+
+    await gesture.up();
+    await tester.pump();
+
+    expect(second.hasFocus, isTrue);
   });
 
   testWidgets('sin las extensiones del tema no falla', (tester) async {

@@ -469,7 +469,7 @@ class _EntryFormScreenState extends State<EntryFormScreen> {
                       children: [
                         Icon(
                           BovedaIcons.triangleAlert,
-                          size: IconSizes.inline + 2,
+                          size: IconSizes.control,
                           color: Theme.of(context).colorScheme.error,
                         ),
                         const SizedBox(width: Space.sm),
@@ -642,7 +642,7 @@ class _EntryFormScreenState extends State<EntryFormScreen> {
                 children: [
                   Icon(
                     BovedaIcons.triangleAlert,
-                    size: IconSizes.inline + 2,
+                    size: IconSizes.control,
                     color: Theme.of(context).colorScheme.error,
                   ),
                   const SizedBox(width: Space.sm),

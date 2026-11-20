@@ -81,8 +81,11 @@ class TagsField extends StatelessWidget {
                     // Con el estilo de insignia de la tarjeta (`DESIGN.md` 6.2
                     // y 7.6); el texto va en MAYÚSCULAS solo al dibujarse.
                     InputChip(
+                      // En mayúsculas solo al dibujarse: el lector de pantalla
+                      // lee la etiqueta original.
                       label: Text(
                         tag.toUpperCase(),
+                        semanticsLabel: tag,
                         overflow: TextOverflow.ellipsis,
                       ),
                       labelStyle: meta.copyWith(
@@ -90,6 +93,9 @@ class TagsField extends StatelessWidget {
                         fontWeight: FontWeight.w700,
                       ),
                       backgroundColor: accents.dim,
+                      // Mientras guarda (desactivado), un \`InputChip\` toma el
+                      // fondo de \`disabledColor\`, no de \`backgroundColor\`.
+                      disabledColor: accents.dim,
                       side: BorderSide(color: accents.border),
                       shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(Radii.tag),
@@ -98,6 +104,14 @@ class TagsField extends StatelessWidget {
                         BovedaIcons.x,
                         size: IconSizes.inline,
                         color: accent,
+                      ),
+                      // La zona táctil de la ✕ crece con su caja (Material la
+                      // limita a \`24 + ancho / 2\`): con una caja de 48 de ancho
+                      // llega a los 48 dp de \`DESIGN.md\` 12. Con el ícono de
+                      // 14 por omisión eran unos 26 dp. Una etiqueta muy corta
+                      // sigue limitada por Material a la mitad del chip.
+                      deleteIconBoxConstraints: const BoxConstraints(
+                        minWidth: 48,
                       ),
                       isEnabled: enabled,
                       deleteButtonTooltipMessage: 'Quitar etiqueta',
