@@ -4,8 +4,8 @@
 //!
 //! Sin el servidor de red (#100) nada llama todavía al gestor del portapapeles,
 //! así que no habría forma de ver el aviso, el borrado ni la limpieza al salir
-//! en la app real. Con `BOVEDA_DEMO_PASSWORDS` (contraseñas FICTICIAS separadas por
-//! comas), definida en `desktop/.env` o como variable de entorno (esta gana), la app entrega la primera a los 10 s de
+//! en la app real. Con la variable de entorno `BOVEDA_DEMO_PASSWORDS` (contraseñas
+//! FICTICIAS separadas por comas), la app entrega la primera a los 10 s de
 //! arrancar y cada una de las siguientes 5 s después de la anterior, usando el
 //! mismo `ClipboardManager` y el mismo aviso que usará el envío real. Sin la
 //! variable no hace nada. No escribe las contraseñas en ninguna salida.
@@ -18,8 +18,6 @@ use tauri::{AppHandle, Manager};
 use crate::clipboard::{ClipboardManager, notify_ready};
 
 const VARIABLE: &str = "BOVEDA_DEMO_PASSWORDS";
-/// `desktop/.env`, relativo a este crate (`desktop/src-tauri`). Está en `.gitignore`.
-const DOTENV: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../.env");
 const FIRST_DELAY: Duration = Duration::from_secs(10);
 const BETWEEN: Duration = Duration::from_secs(5);
 
@@ -32,39 +30,9 @@ fn parse_passwords(raw: &str) -> Vec<String> {
         .collect()
 }
 
-/// El valor de `key` en el contenido de un `.env`: líneas `CLAVE=valor`, sin
-/// las que empiezan por `#` ni las vacías, con espacios recortados y comillas
-/// simples o dobles quitadas. Gana la primera aparición.
-fn dotenv_value(contents: &str, key: &str) -> Option<String> {
-    contents.lines().find_map(|line| {
-        let line = line.trim();
-        if line.starts_with('#') {
-            return None;
-        }
-        let (name, value) = line.split_once('=')?;
-        if name.trim() != key {
-            return None;
-        }
-        let value = value.trim();
-        let unquoted = ['"', '\'']
-            .iter()
-            .find_map(|quote| value.strip_prefix(*quote)?.strip_suffix(*quote))
-            .unwrap_or(value);
-        Some(unquoted.to_owned())
-    })
-}
-
-/// La variable de entorno, o si no existe, el valor del `.env`.
-fn configured_passwords() -> Option<String> {
-    std::env::var(VARIABLE).ok().or_else(|| {
-        let contents = std::fs::read_to_string(DOTENV).ok()?;
-        dotenv_value(&contents, VARIABLE)
-    })
-}
-
 /// Si la variable tiene contraseñas, lanza un hilo que las entrega con su aviso.
 pub fn start(app: AppHandle) {
-    let Some(raw) = configured_passwords() else {
+    let Ok(raw) = std::env::var(VARIABLE) else {
         return;
     };
     let passwords = parse_passwords(&raw);
@@ -99,50 +67,6 @@ pub fn start(app: AppHandle) {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn dotenv_value_finds_the_key_and_ignores_comments_and_blank_lines() {
-        let contents = "# comentario
-
-OTRA=x
-BOVEDA_DEMO_PASSWORDS = prueba-no-real-1,prueba-no-real-2 
-";
-        assert_eq!(
-            dotenv_value(contents, "BOVEDA_DEMO_PASSWORDS"),
-            Some("prueba-no-real-1,prueba-no-real-2".to_owned())
-        );
-    }
-
-    #[test]
-    fn dotenv_value_strips_matching_quotes() {
-        assert_eq!(dotenv_value("K=\"a,b\"", "K"), Some("a,b".to_owned()));
-        assert_eq!(dotenv_value("K='a,b'", "K"), Some("a,b".to_owned()));
-    }
-
-    #[test]
-    fn dotenv_value_ignores_a_commented_or_missing_key() {
-        assert_eq!(
-            dotenv_value(
-                "# K=a
-", "K"
-            ),
-            None
-        );
-        assert_eq!(
-            dotenv_value(
-                "OTRA=a
-", "K"
-            ),
-            None
-        );
-        assert_eq!(
-            dotenv_value(
-                "KK=a
-", "K"
-            ),
-            None
-        );
-    }
 
     #[test]
     fn parse_passwords_splits_on_commas_and_trims() {
