@@ -6,6 +6,8 @@ use clipboard::ClipboardManager;
 
 mod autostart;
 pub mod clipboard;
+#[cfg(windows)]
+pub mod dpapi;
 mod tray;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]

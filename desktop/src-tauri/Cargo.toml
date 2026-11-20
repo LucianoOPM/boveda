@@ -27,6 +27,12 @@ tauri-plugin-notification = "2.8.1"
 arboard = { version = "3.7.0", default-features = false }
 secrecy = "0.10"
 zeroize = "1.9"
+# Núcleo compartido: `KeyPair` de la identidad de la PC (#99).
+vault-core = { path = "../../core" }
+# Serialización de la lista de celulares emparejados (#99). Mismas versiones y
+# features que `core/`; no son criptografía ni red y no suman crates al lock.
+serde = { version = "1", default-features = false, features = ["derive"] }
+postcard = { version = "1", default-features = false, features = ["alloc"] }
 
 # Borrado condicional del portapapeles bajo una sola apertura (#98). Es la misma
 # crate que `arboard` usa en Windows, así que no agrega otra versión.
@@ -35,7 +41,13 @@ clipboard-win = "5.4"
 # Ventana de solo mensajes que hace de propietaria del portapapeles: con un
 # propietario NULL Windows no lo bloquea (#98). Misma versión que ya está en el
 # lock (la usa tauri); solo las funciones de ventanas.
-windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging"] }
+# Para #99 se suman DPAPI (`Win32_Security_Cryptography`) y el reemplazo atómico
+# de archivos (`Win32_Storage_FileSystem`); siguen sin crates nuevos.
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging", "Win32_Security_Cryptography", "Win32_Storage_FileSystem"] }
+
+[dev-dependencies]
+# Carpetas temporales de las pruebas de la identidad y la lista (#99).
+tempfile = "3"
 
 # El perfil de release vive en el Cargo.toml de la raíz: Cargo ignora los
 # perfiles declarados en los miembros del workspace.
