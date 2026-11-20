@@ -5,6 +5,7 @@
 
 mod bind;
 mod generation;
+mod supervisor;
 #[cfg(test)]
 pub(crate) mod test_support;
 
