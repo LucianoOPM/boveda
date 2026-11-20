@@ -168,8 +168,8 @@ De la API pública (`core/tests/protocol.rs`, `TcpStream` en `127.0.0.1`):
 
 ## Criterios de aceptación (de la issue)
 
-- [ ] Un celular emparejado envía y recibe confirmación.
-- [ ] Un no emparejado es rechazado en el intercambio, sin que la PC lea contenido.
-- [ ] Un mensaje con más de 30 s, o repetido, se rechaza (se entiende como en las decisiones 2 y 3: la recepción vence a los 30 s, y una captura no se puede reproducir).
-- [ ] La contraseña en claro se borra de memoria tras usarse y nunca aparece en errores ni `Debug`.
-- [ ] `cargo test --workspace`, `clippy`, `fmt` y `deny` pasan.
+- [x] Un celular emparejado envía y recibe confirmación.
+- [x] Un no emparejado es rechazado en el intercambio, sin que la PC lea contenido.
+- [x] Un mensaje con más de 30 s, o repetido, se rechaza (se entiende como en las decisiones 2 y 3: la recepción vence a los 30 s, y una captura no se puede reproducir).
+- [x] La contraseña en claro se borra de memoria tras usarse y nunca aparece en errores ni `Debug`.
+- [x] `cargo test --workspace`, `clippy`, `fmt` y `deny` pasan.
