@@ -663,3 +663,71 @@ fn ack_rejects_bad_input() {
         Some(ProtocolError::UnsupportedVersion(2))
     );
 }
+
+// --- Hallazgos de la revisión final ---
+
+#[test]
+fn non_canonical_varints_are_malformed() {
+    // Un varint con ceros de relleno (`0x80 0x00` por `0x00`) es otra forma de
+    // escribir el mismo valor: cada mensaje tiene una sola forma en el cable.
+    assert_eq!(
+        Ack::decode(&[1, 3, 0x80, 0x00]).err(),
+        Some(ProtocolError::Malformed)
+    );
+    assert_eq!(
+        SendMessage::decode(&[1, 2, 30, 0x85, 0x00, b'c', b'l', b'a', b'v', b'e']).err(),
+        Some(ProtocolError::Malformed)
+    );
+    // Puerto 50000 con un byte de relleno: D0 86 83 00 en vez de D0 86 03.
+    let bytes = raw_offer(&[0, 192, 168, 1, 20, 0xD0, 0x86, 0x83, 0x00]);
+    assert_eq!(
+        PairingOffer::decode(&bytes).err(),
+        Some(ProtocolError::Malformed)
+    );
+    // Variante de la dirección con relleno.
+    let bytes = raw_offer(&[0x80, 0x00, 192, 168, 1, 20, 0xD0, 0x86, 0x03]);
+    assert_eq!(
+        PairingOffer::decode(&bytes).err(),
+        Some(ProtocolError::Malformed)
+    );
+}
+
+#[test]
+fn ipv4_mapped_unspecified_and_multicast_are_invalid() {
+    let mapped = |a: u8, b: u8, c: u8, d: u8| {
+        SocketAddr::new(Ipv4Addr::new(a, b, c, d).to_ipv6_mapped().into(), 50000)
+    };
+    for address in [mapped(0, 0, 0, 0), mapped(224, 0, 0, 251)] {
+        assert_eq!(
+            offer(address).err(),
+            Some(ProtocolError::InvalidField(InvalidField::Address)),
+            "{address}"
+        );
+    }
+    // Lo mismo al decodificar, con los bytes armados a mano.
+    for (a, d) in [([0u8, 0, 0, 0], 0u8), ([224, 0, 0, 251], 251)] {
+        let mut address = vec![1];
+        address.extend_from_slice(&[0; 10]);
+        address.extend_from_slice(&[0xff, 0xff]);
+        address.extend_from_slice(&a);
+        address.extend_from_slice(&[0xD0, 0x86, 0x03]);
+        assert_eq!(
+            PairingOffer::decode(&raw_offer(&address)).err(),
+            Some(ProtocolError::InvalidField(InvalidField::Address)),
+            "{d}"
+        );
+    }
+}
+
+#[test]
+fn send_message_buffer_is_exact_for_short_passwords_too() {
+    // Con una contraseña larga, la última ampliación de un búfer que crece ya
+    // es exacta y la prueba no podría fallar: las cortas sí detectan el
+    // crecimiento.
+    for len in [1usize, 2, 3, 5, 10, 33] {
+        let bytes = send(&"k".repeat(len)).unwrap().encode().unwrap();
+        assert_eq!(bytes.capacity(), bytes.len(), "contraseña de {len} bytes");
+        let bytes = encode_body(Kind::Send, &with_secret(&"k".repeat(len))).unwrap();
+        assert_eq!(bytes.capacity(), bytes.len(), "texto de {len} bytes");
+    }
+}

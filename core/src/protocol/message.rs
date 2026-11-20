@@ -73,7 +73,7 @@ fn encode_body<T: Serialize>(kind: Kind, body: &T) -> Result<Zeroizing<Vec<u8>>>
 ///
 /// El error de `postcard` nunca se reenvía: un final inesperado es
 /// [`ProtocolError::Truncated`] y cualquier otro es [`ProtocolError::Malformed`].
-fn decode_body<'a, T: Deserialize<'a>>(kind: Kind, bytes: &'a [u8]) -> Result<T> {
+fn decode_body<'a, T: Deserialize<'a> + Serialize>(kind: Kind, bytes: &'a [u8]) -> Result<T> {
     if bytes.len() > MAX_MESSAGE_LEN {
         return Err(ProtocolError::TooLarge);
     }
@@ -98,6 +98,14 @@ fn decode_body<'a, T: Deserialize<'a>>(kind: Kind, bytes: &'a [u8]) -> Result<T>
     })?;
     if !rest.is_empty() {
         return Err(ProtocolError::TrailingBytes);
+    }
+    // `postcard` acepta varints con ceros de relleno (`0x80 0x00` por `0x00`):
+    // si el cuerpo vuelve a medir distinto de lo recibido, no está en su forma
+    // canónica y el mismo mensaje tendría varias codificaciones.
+    let canonical =
+        postcard::experimental::serialized_size(&body).map_err(|_| ProtocolError::Malformed)?;
+    if canonical != bytes.len() - HEADER_LEN {
+        return Err(ProtocolError::Malformed);
     }
     Ok(body)
 }
@@ -235,7 +243,8 @@ fn validate_address(address: &SocketAddr) -> Result<()> {
     if address.port() == 0 {
         return Err(ProtocolError::InvalidField(InvalidField::Port));
     }
-    let ip = address.ip();
+    // Una IPv6 que envuelve una IPv4 (`::ffff:a.b.c.d`) se juzga como la IPv4.
+    let ip = address.ip().to_canonical();
     if ip.is_unspecified() || ip.is_multicast() {
         return Err(ProtocolError::InvalidField(InvalidField::Address));
     }
