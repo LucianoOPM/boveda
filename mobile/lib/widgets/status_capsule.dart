@@ -61,11 +61,15 @@ class StatusCapsule extends StatelessWidget {
                   ),
                 ),
                 const SizedBox(width: Space.sm - 2),
-                Text(
-                  text,
-                  style: meta.copyWith(
-                    color: textColor,
-                    fontWeight: FontWeight.w700,
+                // `Flexible`: con texto grande el texto se parte en dos líneas
+                // en vez de desbordar.
+                Flexible(
+                  child: Text(
+                    text,
+                    style: meta.copyWith(
+                      color: textColor,
+                      fontWeight: FontWeight.w700,
+                    ),
                   ),
                 ),
               ],

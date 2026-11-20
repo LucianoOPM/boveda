@@ -568,10 +568,14 @@ class _UnlockScreenState extends State<UnlockScreen> {
                                 ),
                               ),
                               const SizedBox(width: Space.md),
-                              Text(
-                                _activating
-                                    ? 'Activando huella…'
-                                    : 'Desbloqueando…',
+                              // `Flexible`: con texto grande se parte en dos
+                              // líneas en vez de desbordar.
+                              Flexible(
+                                child: Text(
+                                  _activating
+                                      ? 'Activando huella…'
+                                      : 'Desbloqueando…',
+                                ),
                               ),
                             ],
                           )

@@ -267,6 +267,21 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('el botón ocupado a 200 % a 360 dp no desborda', (tester) async {
+    final pending = Completer<UnlockReport>();
+    session.onUnlock = (_) => pending.future;
+    await pumpScreen(tester, textScale: 2);
+    await typePassword(tester);
+    await tester.ensureVisible(find.byKey(submitKey));
+    await tester.tap(find.byKey(submitKey));
+    await tester.pump();
+
+    expect(find.text('Desbloqueando…'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+    pending.complete(emptyReport);
+    await drain(tester);
+  });
+
   testWidgets('con la casilla de huella a 200 % no hay desbordes', (
     tester,
   ) async {

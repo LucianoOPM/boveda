@@ -150,6 +150,35 @@ void main() {
     },
   );
 
+  testWidgets('StatusCapsule parte su texto con letra grande en vez de '
+      'desbordar', (tester) async {
+    tester.view.physicalSize = const Size(360, 640);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildTheme(defaultAccent),
+        builder: (context, child) => MediaQuery(
+          data: MediaQuery.of(context)
+              .copyWith(textScaler: const TextScaler.linear(2)),
+          child: child!,
+        ),
+        home: const Scaffold(
+          body: Padding(
+            padding: EdgeInsets.all(16),
+            child: Align(
+              alignment: Alignment.centerLeft,
+              child: StatusCapsule(text: 'CONOCIMIENTO CERO'),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    expect(tester.takeException(), isNull);
+    expect(find.text('CONOCIMIENTO CERO'), findsOneWidget);
+  });
+
   testWidgets('StatusCapsule anuncia su etiqueta semántica', (tester) async {
     final handle = tester.ensureSemantics();
     await pump(
