@@ -38,12 +38,18 @@ postcard = { version = "1", default-features = false, features = ["alloc"] }
 # crate que `arboard` usa en Windows, así que no agrega otra versión.
 [target.'cfg(windows)'.dependencies]
 clipboard-win = "5.4"
+# Anuncio mDNS de la PC en las redes privadas (#100). Aprobada en el épico.
+mdns-sd = "0.22"
 # Ventana de solo mensajes que hace de propietaria del portapapeles: con un
 # propietario NULL Windows no lo bloquea (#98). Misma versión que ya está en el
 # lock (la usa tauri); solo las funciones de ventanas.
 # Para #99 se suman DPAPI (`Win32_Security_Cryptography`) y el reemplazo atómico
 # de archivos (`Win32_Storage_FileSystem`); siguen sin crates nuevos.
-windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging", "Win32_Security_Cryptography", "Win32_Storage_FileSystem"] }
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging", "Win32_Security_Cryptography", "Win32_Storage_FileSystem", "Win32_NetworkManagement_IpHelper", "Win32_NetworkManagement_Ndis", "Win32_Networking_WinSock"] }
+# Perfil de las redes (#100): `INetworkListManager` es COM y `windows-sys` no trae
+# sus envoltorios. Ya está en el lock (la usa tao); solo `desktop/`, nunca `core/`.
+# `Win32_System_Com` da `CoCreateInstance` y `CoInitializeEx`.
+windows = { version = "0.62", features = ["Win32_Networking_NetworkListManager", "Win32_System_Com"] }
 
 [dev-dependencies]
 # Carpetas temporales de las pruebas de la identidad y la lista (#99).
