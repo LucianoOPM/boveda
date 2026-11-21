@@ -15,3 +15,19 @@ fn real_probe_returns_only_usable_addresses() {
     println!("IPv4 de redes privadas: {addresses:?}");
     assert!(addresses.iter().all(|ip| is_usable(*ip)));
 }
+
+#[test]
+#[ignore = "depende de las redes de la máquina"]
+fn real_probe_candidates_are_usable_and_eligible_ones_have_hardware() {
+    let mut probe = NlmProbe::new();
+    let candidates = probe
+        .private_candidates()
+        .expect("el detector debe responder");
+    for candidate in &candidates {
+        println!("{candidate:?}");
+        assert!(
+            is_usable(candidate.ip),
+            "no debe haber direcciones inservibles"
+        );
+    }
+}

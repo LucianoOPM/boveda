@@ -21,6 +21,8 @@ pub mod network;
 #[cfg(windows)]
 pub mod paired_devices;
 #[cfg(windows)]
+pub mod pairing;
+#[cfg(windows)]
 pub mod protected_file;
 pub mod qr;
 #[cfg(windows)]
