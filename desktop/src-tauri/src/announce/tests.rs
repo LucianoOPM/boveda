@@ -103,3 +103,28 @@ fn withdraw_also_cleans_up_after_a_failed_announce() {
     let events = log.events.lock().expect("candado");
     assert_eq!(events.last().expect("evento"), "withdraw:never_announced");
 }
+
+#[test]
+fn slot_retries_after_the_announcer_reports_unhealthy() {
+    let log = Arc::new(AnnounceLog::default());
+    let mut slot = slot(&log);
+    let t0 = Instant::now();
+    slot.poll(t0);
+    assert!(slot.is_announced());
+
+    // El daemon falló después de anunciar: se retira y se vuelve al reintento.
+    log.unhealthy.store(true, Ordering::SeqCst);
+    slot.poll(t0 + Duration::from_secs(1));
+    assert!(!slot.is_announced());
+    assert_eq!(
+        log.events.lock().expect("candado").last().expect("evento"),
+        "withdraw:listener_closed"
+    );
+
+    log.unhealthy.store(false, Ordering::SeqCst);
+    slot.poll(t0 + Duration::from_secs(2));
+    assert_eq!(log.calls.load(Ordering::SeqCst), 1, "aún no toca");
+    slot.poll(t0 + Duration::from_secs(1) + BASE);
+    assert!(slot.is_announced());
+    assert_eq!(log.calls.load(Ordering::SeqCst), 2);
+}

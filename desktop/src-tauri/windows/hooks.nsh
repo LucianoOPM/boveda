@@ -12,6 +12,8 @@
 !macro NSIS_HOOK_POSTINSTALL
   ; Se borran primero las reglas anteriores (si las hay) para no dejar
   ; duplicados con otra ruta tras una reinstalacion.
+  ; La bandera de error pudo quedar puesta por pasos anteriores del instalador.
+  ClearErrors
   ExecShellWait "runas" "$SYSDIR\cmd.exe" '/c netsh advfirewall firewall delete rule name="${BOVEDA_RULE_TCP}" & netsh advfirewall firewall delete rule name="${BOVEDA_RULE_MDNS}" & netsh advfirewall firewall add rule name="${BOVEDA_RULE_TCP}" dir=in action=allow program="$INSTDIR\${MAINBINARYNAME}.exe" profile=private protocol=TCP enable=yes && netsh advfirewall firewall add rule name="${BOVEDA_RULE_MDNS}" dir=in action=allow program="$INSTDIR\${MAINBINARYNAME}.exe" profile=private protocol=UDP localport=5353 enable=yes' SW_HIDE
   IfErrors boveda_firewall_failed boveda_firewall_done
   boveda_firewall_failed:

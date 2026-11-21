@@ -9,7 +9,7 @@
 use std::net::IpAddr;
 use std::time::Duration;
 
-use mdns_sd::{IfKind, ServiceDaemon, ServiceInfo};
+use mdns_sd::{DaemonEvent, IfKind, ServiceDaemon, ServiceInfo, TryRecvError};
 
 use super::{AnnounceError, Announcer, SERVICE_TYPE, Service};
 
@@ -23,6 +23,8 @@ pub struct MdnsAnnouncer {
     daemon: Option<ServiceDaemon>,
     /// Nombre completo del servicio registrado, si lo hay.
     fullname: Option<String>,
+    /// Eventos del daemon: un `DaemonEvent::Error` lo marca como no sano.
+    events: Option<mdns_sd::Receiver<DaemonEvent>>,
 }
 
 impl MdnsAnnouncer {
@@ -57,6 +59,7 @@ impl MdnsAnnouncer {
             shut_down(&daemon);
         }
         self.fullname = None;
+        self.events = None;
     }
 }
 
@@ -112,6 +115,9 @@ impl Announcer for MdnsAnnouncer {
         };
         match fullname {
             Some(fullname) => {
+                // Sin monitor no se detectan fallos posteriores; es mejor anunciar así
+                // que no anunciar, y el anuncio sigue siendo válido.
+                self.events = daemon.monitor().ok();
                 self.daemon = Some(daemon);
                 self.fullname = Some(fullname);
                 Ok(())
@@ -125,6 +131,19 @@ impl Announcer for MdnsAnnouncer {
 
     fn withdraw(&mut self) {
         self.teardown();
+    }
+
+    fn healthy(&mut self) -> bool {
+        let Some(events) = &self.events else {
+            return true;
+        };
+        loop {
+            match events.try_recv() {
+                Ok(DaemonEvent::Error(_)) | Err(TryRecvError::Disconnected) => return false,
+                Ok(_) => {}
+                Err(TryRecvError::Empty) => return true,
+            }
+        }
     }
 }
 

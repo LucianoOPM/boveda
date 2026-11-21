@@ -163,6 +163,8 @@ pub(crate) struct AnnounceLog {
     pub(crate) calls: AtomicUsize,
     /// Anunciantes creados por la fábrica.
     pub(crate) created: AtomicUsize,
+    /// Mientras sea `true`, `healthy` dice que el anunciante falló.
+    pub(crate) unhealthy: AtomicBool,
     /// Cuántas llamadas a `announce` deben fallar todavía.
     pub(crate) fail_remaining: AtomicUsize,
     /// Último servicio anunciado con éxito.
@@ -201,6 +203,10 @@ impl Announcer for FakeAnnouncer {
         *self.log.last.lock().expect("candado") = Some(service.clone());
         self.service = Some(service.clone());
         Ok(())
+    }
+
+    fn healthy(&mut self) -> bool {
+        !self.log.unhealthy.load(Ordering::SeqCst)
     }
 
     fn withdraw(&mut self) {

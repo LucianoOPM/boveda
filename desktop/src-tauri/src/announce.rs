@@ -85,6 +85,13 @@ pub trait Announcer: Send + 'static {
     /// Retira el anuncio y libera lo que haya abierto. Idempotente, acotado en
     /// el tiempo y sin errores: se llama también tras un anuncio fallido.
     fn withdraw(&mut self);
+
+    /// ¿Sigue sano tras un `announce` exitoso? `register` solo encola el trabajo:
+    /// los fallos del daemon llegan después. `false` hace que el anuncio se retire
+    /// y se reintente. Por defecto, sano.
+    fn healthy(&mut self) -> bool {
+        true
+    }
 }
 
 /// Crea un anunciante nuevo por generación.
@@ -111,7 +118,15 @@ impl AnnounceSlot {
 
     /// Intenta anunciar si aún no está anunciado y ya toca.
     pub(crate) fn poll(&mut self, now: Instant) {
-        if self.announced || !self.backoff.ready(now) {
+        if self.announced {
+            if !self.announcer.healthy() {
+                eprintln!("mDNS: el anuncio falló después de publicarse; se reintentará");
+                self.withdraw();
+                self.backoff.fail(now);
+            }
+            return;
+        }
+        if !self.backoff.ready(now) {
             return;
         }
         match self.announcer.announce(&self.service) {
