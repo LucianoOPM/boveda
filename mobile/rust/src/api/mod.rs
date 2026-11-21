@@ -5,6 +5,7 @@ pub mod entries;
 pub mod error;
 pub mod net;
 pub mod password;
+pub mod pcs;
 pub mod session;
 
 #[flutter_rust_bridge::frb(init)]

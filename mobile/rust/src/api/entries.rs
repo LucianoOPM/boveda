@@ -155,12 +155,25 @@ fn secret_data(secret: NewSecret) -> FacadeResult<Secret> {
 
 /// Id de entrada en 32 caracteres hexadecimales en minúsculas.
 pub(crate) fn entry_id_to_hex(id: EntryId) -> String {
-    id.as_bytes().iter().map(|b| format!("{b:02x}")).collect()
+    bytes16_to_hex(*id.as_bytes())
 }
 
 /// Lee un id de 32 caracteres hexadecimales en minúsculas. Cualquier otra
 /// cosa da `InvalidEntryId`.
 pub(crate) fn entry_id_from_hex(hex: &str) -> FacadeResult<EntryId> {
+    hex_to_bytes16(hex).map(EntryId::from_bytes)
+}
+
+/// 16 bytes (un id) en 32 caracteres hexadecimales en minúsculas. Lo usan
+/// los ids de entradas y de PCs.
+pub(crate) fn bytes16_to_hex(bytes: [u8; 16]) -> String {
+    bytes.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+/// Lee 16 bytes de 32 caracteres hexadecimales en minúsculas. Cualquier otra
+/// cosa da `InvalidEntryId`: quien lo usa para otro tipo de id traduce el
+/// error.
+pub(crate) fn hex_to_bytes16(hex: &str) -> FacadeResult<[u8; 16]> {
     // Se valida antes de cortar: así un carácter multibyte nunca cae a la
     // mitad de un par.
     let valid = hex.len() == 32 && hex.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'));
@@ -171,7 +184,7 @@ pub(crate) fn entry_id_from_hex(hex: &str) -> FacadeResult<EntryId> {
     for (byte, pair) in bytes.iter_mut().zip(hex.as_bytes().as_chunks::<2>().0) {
         *byte = (hex_value(pair[0]) << 4) | hex_value(pair[1]);
     }
-    Ok(EntryId::from_bytes(bytes))
+    Ok(bytes)
 }
 
 /// Valor de un dígito hexadecimal ya validado (`0-9a-f`).

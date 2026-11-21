@@ -9,6 +9,7 @@
 import 'api/entries.dart';
 import 'api/error.dart';
 import 'api/password.dart';
+import 'api/pcs.dart';
 import 'api/session.dart';
 
 import 'dart:async';
@@ -76,10 +77,16 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   PlatformInt64 dco_decode_i_64(dynamic raw);
 
   @protected
+  IdentityInfo dco_decode_identity_info(dynamic raw);
+
+  @protected
   List<String> dco_decode_list_String(dynamic raw);
 
   @protected
   List<EntrySummary> dco_decode_list_entry_summary(dynamic raw);
+
+  @protected
+  List<PairedPcSummary> dco_decode_list_paired_pc_summary(dynamic raw);
 
   @protected
   List<int> dco_decode_list_prim_u_8_loose(dynamic raw);
@@ -95,6 +102,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   PlatformInt64? dco_decode_opt_box_autoadd_i_64(dynamic raw);
+
+  @protected
+  PairedPcList dco_decode_paired_pc_list(dynamic raw);
+
+  @protected
+  PairedPcSummary dco_decode_paired_pc_summary(dynamic raw);
 
   @protected
   PasswordStrength dco_decode_password_strength(dynamic raw);
@@ -163,10 +176,18 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   PlatformInt64 sse_decode_i_64(SseDeserializer deserializer);
 
   @protected
+  IdentityInfo sse_decode_identity_info(SseDeserializer deserializer);
+
+  @protected
   List<String> sse_decode_list_String(SseDeserializer deserializer);
 
   @protected
   List<EntrySummary> sse_decode_list_entry_summary(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  List<PairedPcSummary> sse_decode_list_paired_pc_summary(
     SseDeserializer deserializer,
   );
 
@@ -184,6 +205,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   PlatformInt64? sse_decode_opt_box_autoadd_i_64(SseDeserializer deserializer);
+
+  @protected
+  PairedPcList sse_decode_paired_pc_list(SseDeserializer deserializer);
+
+  @protected
+  PairedPcSummary sse_decode_paired_pc_summary(SseDeserializer deserializer);
 
   @protected
   PasswordStrength sse_decode_password_strength(SseDeserializer deserializer);
@@ -264,11 +291,20 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   void sse_encode_i_64(PlatformInt64 self, SseSerializer serializer);
 
   @protected
+  void sse_encode_identity_info(IdentityInfo self, SseSerializer serializer);
+
+  @protected
   void sse_encode_list_String(List<String> self, SseSerializer serializer);
 
   @protected
   void sse_encode_list_entry_summary(
     List<EntrySummary> self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_list_paired_pc_summary(
+    List<PairedPcSummary> self,
     SseSerializer serializer,
   );
 
@@ -290,6 +326,15 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void sse_encode_opt_box_autoadd_i_64(
     PlatformInt64? self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_paired_pc_list(PairedPcList self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_paired_pc_summary(
+    PairedPcSummary self,
     SseSerializer serializer,
   );
 

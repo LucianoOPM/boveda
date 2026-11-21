@@ -9,6 +9,8 @@ import 'error.dart';
 
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
+import 'pcs.dart';
+
 // These functions are ignored because they are not marked as `pub`: `path`, `secret_from`, `slot`, `with_vault`
 // These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `clone`, `eq`, `fmt`, `from`
 
@@ -33,6 +35,11 @@ abstract class VaultSession implements RustOpaqueInterface {
     String? newPassword,
     String? newNotes,
   });
+
+  /// La identidad del celular; la crea si todavía no hay ninguna. Una
+  /// identidad que existe pero no se puede leer da `CorruptIdentity` y no
+  /// se sobrescribe (las PCs emparejadas conocen esa llave).
+  Future<IdentityInfo> ensureIdentity();
 
   /// Datos de búsqueda y fechas de una entrada, desde la caché del núcleo:
   /// no toca el disco ni el secreto. Un id que no está en la lista da
@@ -87,6 +94,12 @@ abstract class VaultSession implements RustOpaqueInterface {
 
   /// Abre la bóveda existente; queda bloqueada.
   Future<void> open();
+
+  /// Las PCs emparejadas.
+  Future<PairedPcList> pairedPcs();
+
+  /// Quita una PC emparejada, también una fila dañada.
+  Future<void> removePairedPc({required String id});
 
   /// Notas de una entrada, para mostrarlas. La contraseña se descarta sin
   /// salir del núcleo.

@@ -7,7 +7,7 @@ import '../frb_generated.dart';
 
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
-// These functions are ignored because they are not marked as `pub`: `entry_id_from_hex`, `entry_id_to_hex`, `hex_value`, `search_data`, `secret_data`
+// These functions are ignored because they are not marked as `pub`: `bytes16_to_hex`, `entry_id_from_hex`, `entry_id_to_hex`, `hex_to_bytes16`, `hex_value`, `search_data`, `secret_data`
 // These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `clone`, `eq`, `fmt`, `from`
 
 /// Datos de búsqueda para agregar o editar. El núcleo los normaliza y valida.

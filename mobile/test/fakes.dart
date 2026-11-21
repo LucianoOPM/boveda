@@ -7,6 +7,7 @@ import 'package:boveda/services/local_clipboard.dart';
 import 'package:boveda/src/rust/api/error.dart';
 import 'package:boveda/src/rust/api/entries.dart';
 import 'package:boveda/src/rust/api/password.dart';
+import 'package:boveda/src/rust/api/pcs.dart';
 import 'package:boveda/src/rust/api/session.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
@@ -214,6 +215,18 @@ class FakeVaultSession implements VaultSession {
       rethrow;
     }
   }
+
+  // La identidad y la lista de PCs (#102) todavía no las usa ninguna pantalla
+  // (llegan con #103, #104 y #107): una llamada inesperada falla la prueba.
+  @override
+  Future<IdentityInfo> ensureIdentity() => throw UnimplementedError();
+
+  @override
+  Future<PairedPcList> pairedPcs() => throw UnimplementedError();
+
+  @override
+  Future<void> removePairedPc({required String id}) =>
+      throw UnimplementedError();
 
   /// Llaves entregadas por `exportVaultKey` (la misma referencia), para
   /// comprobar que quien las recibe las pone en ceros.
