@@ -230,6 +230,51 @@ impl PairingOffer {
         validate_address(&offer.address)?;
         Ok(offer)
     }
+
+    /// Decodifica el texto de un QR: la oferta en base64url sin relleno
+    /// (alfabeto `A-Z a-z 0-9 - _`), como la escribe la PC.
+    ///
+    /// Es estricto: no recorta espacios ni saltos de línea (un QR válido no
+    /// los lleva; si un lector los añade, la pantalla del celular los quita
+    /// antes de llamar), no acepta `=`, `+` ni `/`, y exige la forma canónica
+    /// (los bits sobrantes del último carácter son cero). El largo se
+    /// comprueba **antes** de reservar memoria. El texto contiene el código
+    /// de un solo uso: los bytes decodificados van en un búfer que se borra
+    /// al soltarse.
+    pub fn decode_qr_text(text: &str) -> Result<Self> {
+        let chars = text.as_bytes();
+        if chars.len() > (MAX_PAIRING_OFFER_LEN * 4).div_ceil(3) {
+            return Err(ProtocolError::TooLarge);
+        }
+        // Un solo carácter de más no completa ningún byte.
+        if chars.len() % 4 == 1 {
+            return Err(ProtocolError::Malformed);
+        }
+        // Capacidad exacta: sin reasignaciones que dejen copias sin borrar.
+        let mut bytes = Zeroizing::new(Vec::with_capacity(chars.len() * 3 / 4));
+        let (mut buffer, mut bits) = (0u32, 0u32);
+        for &c in chars {
+            let value = match c {
+                b'A'..=b'Z' => c - b'A',
+                b'a'..=b'z' => c - b'a' + 26,
+                b'0'..=b'9' => c - b'0' + 52,
+                b'-' => 62,
+                b'_' => 63,
+                _ => return Err(ProtocolError::Malformed),
+            };
+            buffer = (buffer << 6) | u32::from(value);
+            bits += 6;
+            if bits >= 8 {
+                bits -= 8;
+                bytes.push((buffer >> bits) as u8);
+                buffer &= (1 << bits) - 1;
+            }
+        }
+        if buffer != 0 {
+            return Err(ProtocolError::Malformed);
+        }
+        Self::decode(&bytes)
+    }
 }
 
 impl fmt::Debug for PairingOffer {

@@ -137,6 +137,21 @@ fn offer_text_round_trips_through_decode() {
 }
 
 #[test]
+fn offer_text_decodes_with_the_core() {
+    // El celular (#102) decodifica con `decode_qr_text` el texto que escribe
+    // la PC: si uno de los dos extremos cambia el formato, esta prueba falla.
+    let original = fixed_offer();
+    let text = offer_text(&original).expect("texto");
+    let decoded = PairingOffer::decode_qr_text(&text).expect("decodificar");
+    assert_eq!(decoded.address(), original.address());
+    assert_eq!(decoded.public_key(), original.public_key());
+    assert_eq!(
+        decoded.code().expose_bytes(),
+        original.code().expose_bytes()
+    );
+}
+
+#[test]
 fn svg_uses_the_design_colors_and_size() {
     let svg = render_svg(&offer_text(&fixed_offer()).expect("texto")).expect("SVG");
     assert!(svg.contains("#0F1720"), "módulos del diseño");
