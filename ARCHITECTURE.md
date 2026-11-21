@@ -61,7 +61,7 @@ boveda/
 │   │       │               #   de la contraseña maestra), net.rs (época, operación de red única y
 │   │       │               #   conexión, #102), pcs.rs (identidad y lista de PCs), pairing.rs (pair) y
 │   │       │               #   sending.rs (send_to_pc); pruebas en <área>/tests.rs
-│   │       ├── test_support.rs   # ayudantes de pruebas (copia de vault-v2.db)
+│   │       ├── test_support.rs   # ayudantes de pruebas: copias de vault-v2.db y vault-v3.db, FakePc (la PC de las pruebas, en 127.0.0.1) y alteración de filas
 │   │       └── frb_generated.rs  # generado; no se edita
 │   ├── hook/
 │   │   └── build.dart      # build hook (flutter_rust_bridge_hooks y native_toolchain_rust): compila la librería de Rust de Android con rust/rust-toolchain.toml; reemplaza a cargokit
