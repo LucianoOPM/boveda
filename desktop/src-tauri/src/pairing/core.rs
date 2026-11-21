@@ -13,8 +13,8 @@ use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use secrecy::SecretBox;
 use vault_core::protocol::{
-    CancelToken, MAX_FAILED_ATTEMPTS, PAIRING_CODE_TTL, PairingCode, PairingError, PairingOffer,
-    PairingSession, Refusal,
+    CancelToken, KeyPair, MAX_FAILED_ATTEMPTS, PAIRING_CODE_TTL, PairingCode, PairingError,
+    PairingOffer, PairingSession, Refusal,
 };
 use zeroize::Zeroizing;
 
@@ -458,11 +458,20 @@ impl PairingCore {
 
     /// Crea una sesión nueva con la dirección elegida y deja el QR listo.
     fn start_session(&mut self, net: Option<&NetworkSnapshot>, now: Instant) {
+        // Primero la identidad: si no se puede leer, ese es el problema que el
+        // usuario debe ver, haya red o no.
+        let identity = match self.identity.load() {
+            Ok(identity) => identity,
+            Err(_) => {
+                self.finish(Phase::Ended(EndReason::IdentityUnavailable));
+                return;
+            }
+        };
         let Some((net, ip)) = net.and_then(|net| pick(net).map(|ip| (net, ip))) else {
             self.finish(Phase::NoNetwork);
             return;
         };
-        match self.build_session(net, ip, now) {
+        match self.build_session(identity, net, ip, now) {
             Ok((live, svg, _text)) => {
                 self.finish(Phase::Waiting { live, svg });
                 #[cfg(test)]
@@ -476,14 +485,11 @@ impl PairingCore {
 
     fn build_session(
         &mut self,
+        identity: KeyPair,
         net: &NetworkSnapshot,
         ip: Ipv4Addr,
         now: Instant,
     ) -> Result<(Live, Zeroizing<String>, Zeroizing<String>), EndReason> {
-        let identity = self
-            .identity
-            .load()
-            .map_err(|_| EndReason::IdentityUnavailable)?;
         let code = PairingCode::generate().map_err(|_| EndReason::CodeUnavailable)?;
         let offer = PairingOffer::new(
             identity.public(),

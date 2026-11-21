@@ -872,3 +872,16 @@ fn bad_frames_of_an_old_session_do_not_count_for_the_new_one() {
     }
     assert!(matches!(rig.core.view(t0), PairingView::Waiting { .. }));
 }
+
+#[test]
+fn unreadable_identity_is_reported_even_without_a_network() {
+    let mut rig = rig();
+    rig.identity.fail.store(true, Ordering::SeqCst);
+    let t0 = Instant::now();
+    rig.core.open(None, t0);
+    assert_eq!(ended(rig.core.view(t0)), EndReason::IdentityUnavailable);
+    // Con la red de vuelta pero la identidad aún ilegible, sigue igual.
+    rig.core
+        .tick(Some(&net(1, 40000)), t0 + Duration::from_secs(1));
+    assert_eq!(ended(rig.core.view(t0)), EndReason::IdentityUnavailable);
+}

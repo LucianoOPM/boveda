@@ -65,16 +65,6 @@ pub trait PairingHandler: Send + Sync + 'static {
     fn serve(&self, stream: TcpStream, generation: u64);
 }
 
-/// Manejador que cierra todo: para cuando no hay quien empareje.
-#[derive(Debug, Clone, Copy, Default)]
-pub struct RefusePairing;
-
-impl PairingHandler for RefusePairing {
-    fn serve(&self, stream: TcpStream, _generation: u64) {
-        drop(stream);
-    }
-}
-
 /// No se pudo escribir la contraseña. Sin datos.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct DeliverFailed;

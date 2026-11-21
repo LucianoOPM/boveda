@@ -4,17 +4,17 @@
 //! Diseño: `docs/superpowers/specs/2026-11-20-ventana-qr-design.md`.
 
 mod address;
-#[cfg_attr(not(test), allow(dead_code))] // Lo arranca lib.rs en la Tarea 8 de #101.
 mod controller;
-#[cfg_attr(not(test), allow(dead_code))] // Lo arranca lib.rs en la Tarea 8 de #101.
 mod core;
 mod view;
+pub mod window;
 
 #[cfg(test)]
 mod tests;
 
 pub use address::choose_address;
 pub use controller::{LateNetworkView, Notifier, PairingController};
+pub(crate) use core::PairingCore;
 pub use view::{EndReason, PairingView};
 
 use vault_core::protocol::KeyPair;

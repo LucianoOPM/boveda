@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "pairing",
+  "description": "La ventana de emparejamiento solo escucha el evento con su estado; las órdenes son comandos propios sin datos (#101).",
+  "windows": ["pairing"],
+  "permissions": ["core:event:allow-listen", "core:event:allow-unlisten"]
+}

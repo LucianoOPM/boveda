@@ -28,8 +28,8 @@ pub(crate) enum MenuEntry {
     Separator,
 }
 
-/// El menú completo. «Emparejar celular» y «Dispositivos emparejados» siguen
-/// deshabilitadas hasta que #101 y #107 implementen sus ventanas.
+/// El menú completo. «Emparejar celular» abre la ventana del QR (#101);
+/// «Dispositivos emparejados» sigue deshabilitada hasta que #107 implemente la suya.
 pub(crate) fn menu_spec(autostart_enabled: bool) -> Vec<MenuEntry> {
     let item = |id, label, enabled, checked| {
         MenuEntry::Item(MenuItemSpec {
@@ -40,7 +40,7 @@ pub(crate) fn menu_spec(autostart_enabled: bool) -> Vec<MenuEntry> {
         })
     };
     vec![
-        item(ID_PAIR, "Emparejar celular", false, None),
+        item(ID_PAIR, "Emparejar celular", true, None),
         item(ID_DEVICES, "Dispositivos emparejados", false, None),
         item(
             ID_AUTOSTART,
@@ -101,6 +101,8 @@ pub fn setup(app: &App) -> tauri::Result<()> {
         .on_menu_event(|app, event| {
             match event.id().as_ref() {
                 ID_QUIT => app.exit(0),
+                #[cfg(windows)]
+                ID_PAIR => crate::pairing::window::open_window(app),
                 ID_AUTOSTART => {
                     // Windows ya cambió la marca al hacer clic; se reconcilia
                     // siempre con el estado real del sistema.
@@ -163,10 +165,10 @@ mod tests {
     }
 
     #[test]
-    fn window_items_are_disabled_until_their_windows_exist() {
+    fn pair_is_enabled_and_devices_wait_for_107() {
         let entries = menu_spec(false);
 
-        assert!(!item(&entries, ID_PAIR).enabled);
+        assert!(item(&entries, ID_PAIR).enabled);
         assert!(!item(&entries, ID_DEVICES).enabled);
         assert!(item(&entries, ID_AUTOSTART).enabled);
         assert!(item(&entries, ID_QUIT).enabled);
