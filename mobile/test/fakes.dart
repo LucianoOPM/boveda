@@ -8,6 +8,7 @@ import 'package:boveda/src/rust/api/error.dart';
 import 'package:boveda/src/rust/api/entries.dart';
 import 'package:boveda/src/rust/api/password.dart';
 import 'package:boveda/src/rust/api/pcs.dart';
+import 'package:boveda/src/rust/api/sending.dart';
 import 'package:boveda/src/rust/api/session.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
@@ -223,6 +224,13 @@ class FakeVaultSession implements VaultSession {
 
   @override
   Future<PairedPcList> pairedPcs() => throw UnimplementedError();
+
+  @override
+  Future<SendOutcome> sendToPc({
+    required String pcId,
+    required String entryId,
+    required String address,
+  }) => throw UnimplementedError();
 
   @override
   Future<PairedPcSummary> pair({

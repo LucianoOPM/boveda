@@ -10,6 +10,7 @@ import 'api/entries.dart';
 import 'api/error.dart';
 import 'api/password.dart';
 import 'api/pcs.dart';
+import 'api/sending.dart';
 import 'api/session.dart';
 
 import 'dart:async';
@@ -113,6 +114,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   PasswordStrength dco_decode_password_strength(dynamic raw);
 
   @protected
+  SendOutcome dco_decode_send_outcome(dynamic raw);
+
+  @protected
   int dco_decode_u_32(dynamic raw);
 
   @protected
@@ -214,6 +218,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   PasswordStrength sse_decode_password_strength(SseDeserializer deserializer);
+
+  @protected
+  SendOutcome sse_decode_send_outcome(SseDeserializer deserializer);
 
   @protected
   int sse_decode_u_32(SseDeserializer deserializer);
@@ -343,6 +350,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
     PasswordStrength self,
     SseSerializer serializer,
   );
+
+  @protected
+  void sse_encode_send_outcome(SendOutcome self, SseSerializer serializer);
 
   @protected
   void sse_encode_u_32(int self, SseSerializer serializer);

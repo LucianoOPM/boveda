@@ -7,6 +7,7 @@ import 'api/entries.dart';
 import 'api/error.dart';
 import 'api/password.dart';
 import 'api/pcs.dart';
+import 'api/sending.dart';
 import 'api/session.dart';
 
 import 'dart:async';
@@ -73,7 +74,7 @@ class RustLib extends BaseEntrypoint<RustLibApi, RustLibApiImpl, RustLibWire> {
   String get codegenVersion => '2.13.0';
 
   @override
-  int get rustContentHash => 49761574;
+  int get rustContentHash => 290189219;
 
   static const kDefaultExternalLibraryLoaderConfig =
       ExternalLibraryLoaderConfig(
@@ -171,6 +172,13 @@ abstract class RustLibApi extends BaseApi {
   Future<List<EntrySummary>> crateApiSessionVaultSessionSearch({
     required VaultSession that,
     required String query,
+  });
+
+  Future<SendOutcome> crateApiSessionVaultSessionSendToPc({
+    required VaultSession that,
+    required String pcId,
+    required String entryId,
+    required String address,
   });
 
   Future<UnlockReport> crateApiSessionVaultSessionUnlock({
@@ -903,6 +911,48 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       );
 
   @override
+  Future<SendOutcome> crateApiSessionVaultSessionSendToPc({
+    required VaultSession that,
+    required String pcId,
+    required String entryId,
+    required String address,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerVaultSession(
+            that,
+            serializer,
+          );
+          sse_encode_String(pcId, serializer);
+          sse_encode_String(entryId, serializer);
+          sse_encode_String(address, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 20,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_send_outcome,
+          decodeErrorData: sse_decode_vault_error,
+        ),
+        constMeta: kCrateApiSessionVaultSessionSendToPcConstMeta,
+        argValues: [that, pcId, entryId, address],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiSessionVaultSessionSendToPcConstMeta =>
+      const TaskConstMeta(
+        debugName: "VaultSession_send_to_pc",
+        argNames: ["that", "pcId", "entryId", "address"],
+      );
+
+  @override
   Future<UnlockReport> crateApiSessionVaultSessionUnlock({
     required VaultSession that,
     required String password,
@@ -919,7 +969,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 20,
+            funcId: 21,
             port: port_,
           );
         },
@@ -957,7 +1007,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 21,
+            funcId: 22,
             port: port_,
           );
         },
@@ -987,7 +1037,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 22,
+            funcId: 23,
             port: port_,
           );
         },
@@ -1014,7 +1064,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         callFfi: () {
           final serializer = SseSerializer(generalizedFrbRustBinding);
           sse_encode_String(password, serializer);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 23)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 24)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_password_strength,
@@ -1237,6 +1287,12 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   PasswordStrength dco_decode_password_strength(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return PasswordStrength.values[raw as int];
+  }
+
+  @protected
+  SendOutcome dco_decode_send_outcome(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return SendOutcome.values[raw as int];
   }
 
   @protected
@@ -1527,6 +1583,13 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  SendOutcome sse_decode_send_outcome(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var inner = sse_decode_i_32(deserializer);
+    return SendOutcome.values[inner];
+  }
+
+  @protected
   int sse_decode_u_32(SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     return deserializer.buffer.getUint32();
@@ -1801,6 +1864,12 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  void sse_encode_send_outcome(SendOutcome self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_32(self.index, serializer);
+  }
+
+  @protected
   void sse_encode_u_32(int self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     serializer.buffer.putUint32(self);
@@ -1997,6 +2066,25 @@ class VaultSessionImpl extends RustOpaque implements VaultSession {
       .instance
       .api
       .crateApiSessionVaultSessionSearch(that: this, query: query);
+
+  /// Envía la contraseña de la entrada `entry_id` a la PC `pc_id`, que
+  /// escucha en `address` (`ip:puerto`).
+  ///
+  /// Una sola operación de red a la vez (`Busy`). Un bloqueo de la bóveda
+  /// mientras corre la cancela (`Cancelled`; en ese caso la contraseña pudo
+  /// haber llegado ya a la PC). Revelar la entrada actualiza su
+  /// `last_used_at`, como cualquier revelado. Cómo se obtiene la dirección
+  /// (última IP, mDNS, IP manual) lo decide la #104.
+  Future<SendOutcome> sendToPc({
+    required String pcId,
+    required String entryId,
+    required String address,
+  }) => RustLib.instance.api.crateApiSessionVaultSessionSendToPc(
+    that: this,
+    pcId: pcId,
+    entryId: entryId,
+    address: address,
+  );
 
   Future<UnlockReport> unlock({required String password}) => RustLib
       .instance

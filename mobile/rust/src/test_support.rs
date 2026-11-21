@@ -48,10 +48,10 @@ use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
-use secrecy::SecretBox;
+use secrecy::{ExposeSecret, SecretBox};
 use vault_core::protocol::{
-    serve_pairing, CancelToken, KeyPair, PairedDevice, PairingCode, PairingError, PairingOffer,
-    PairingSession, PairingTimeouts, PublicKey,
+    receive_send, serve_pairing, CancelToken, KeyPair, PairedDevice, PairingCode, PairingError,
+    PairingOffer, PairingSession, PairingTimeouts, PublicKey, SendError, SendTimeouts,
 };
 
 use crate::api::session::VaultSession;
@@ -63,6 +63,28 @@ pub(crate) enum PcDecision {
     Reject,
     /// Suelta la conexión sin decidir.
     Drop,
+}
+
+/// Qué hace la PC de las pruebas con el envío que le llega.
+#[derive(Clone, Copy)]
+pub(crate) enum PcSend {
+    /// Contesta `Copied`.
+    Copied,
+    /// Contesta `Failed`.
+    Failed,
+    /// Recibe el mensaje y cierra sin contestar.
+    Silent,
+    /// No tiene emparejado al celular: cierra sin escribir nada.
+    Forget,
+}
+
+/// Plazos cortos del envío para las pruebas.
+pub(crate) fn quick_send() -> SendTimeouts {
+    SendTimeouts {
+        step: Duration::from_millis(500),
+        total: Duration::from_secs(4),
+        ack_wait: Duration::from_secs(2),
+    }
 }
 
 /// Plazos cortos para las pruebas de red.
@@ -133,6 +155,58 @@ impl FakePc {
                 PcDecision::Reject => pending.reject().map(|()| None),
                 PcDecision::Drop => Ok(None),
             }
+        })
+    }
+
+    /// Atiende **un** envío en otro hilo. Devuelve la contraseña recibida y
+    /// la llave pública del celular (cualquier celular está emparejado, salvo
+    /// con `PcSend::Forget`).
+    pub(crate) fn serve_send(
+        &self,
+        timeouts: SendTimeouts,
+        behavior: PcSend,
+    ) -> JoinHandle<Result<(String, PublicKey), SendError>> {
+        let listener = self.listener.try_clone().unwrap();
+        thread::spawn(move || {
+            let (stream, _) = listener.accept().unwrap();
+            let paired = !matches!(behavior, PcSend::Forget);
+            let incoming = receive_send(
+                stream,
+                &pc_keys(),
+                |_| paired,
+                &CancelToken::new(),
+                &timeouts,
+            )?;
+            let got = (
+                incoming.message().password().expose_secret().to_owned(),
+                incoming.peer(),
+            );
+            match behavior {
+                PcSend::Copied => incoming.copied()?,
+                PcSend::Failed => incoming.failed()?,
+                PcSend::Silent | PcSend::Forget => drop(incoming),
+            }
+            Ok(got)
+        })
+    }
+
+    /// Acepta **una** conexión y cuenta los bytes que recibe hasta que se
+    /// cierre (o pasen 2 s).
+    pub(crate) fn serve_count_bytes(&self) -> JoinHandle<usize> {
+        let listener = self.listener.try_clone().unwrap();
+        thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            stream
+                .set_read_timeout(Some(Duration::from_secs(2)))
+                .unwrap();
+            let (mut total, mut buffer) = (0, [0u8; 256]);
+            while let Ok(n) = stream.read(&mut buffer) {
+                if n == 0 {
+                    break;
+                }
+                total += n;
+            }
+            total
         })
     }
 

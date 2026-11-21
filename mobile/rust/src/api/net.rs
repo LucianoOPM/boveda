@@ -19,9 +19,6 @@
 //! mientras conserva `net`. `begin_op` y el `Drop` del guard solo toman `net`,
 //! un instante.
 
-// Temporal: lo usan `pair` y `send_to_pc` (Tareas 5 y 6). Se quita en la Tarea 6.
-#![cfg_attr(not(test), allow(dead_code))]
-
 use std::net::{SocketAddr, TcpStream};
 use std::sync::MutexGuard;
 use std::time::Duration;

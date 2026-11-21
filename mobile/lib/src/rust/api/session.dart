@@ -10,6 +10,7 @@ import 'error.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
 import 'pcs.dart';
+import 'sending.dart';
 
 // These functions are ignored because they are not marked as `pub`: `path`, `secret_from`, `slot`, `with_vault`
 // These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `clone`, `eq`, `fmt`, `from`
@@ -127,6 +128,20 @@ abstract class VaultSession implements RustOpaqueInterface {
   /// Entradas que coinciden con `query`, la mejor primero. Sin texto,
   /// todas: las usadas más recientemente primero.
   Future<List<EntrySummary>> search({required String query});
+
+  /// Envía la contraseña de la entrada `entry_id` a la PC `pc_id`, que
+  /// escucha en `address` (`ip:puerto`).
+  ///
+  /// Una sola operación de red a la vez (`Busy`). Un bloqueo de la bóveda
+  /// mientras corre la cancela (`Cancelled`; en ese caso la contraseña pudo
+  /// haber llegado ya a la PC). Revelar la entrada actualiza su
+  /// `last_used_at`, como cualquier revelado. Cómo se obtiene la dirección
+  /// (última IP, mDNS, IP manual) lo decide la #104.
+  Future<SendOutcome> sendToPc({
+    required String pcId,
+    required String entryId,
+    required String address,
+  });
 
   Future<UnlockReport> unlock({required String password});
 
