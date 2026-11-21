@@ -98,7 +98,8 @@ impl VaultSession {
             &job.message,
             op.token(),
             timeouts,
-        )?;
+        )
+        .map_err(|error| op.cancelled_or(error.into()))?;
         drop(job);
         after_network();
         // Nada de éxitos tardíos: si la época cambió, no se presenta como vigente.
@@ -124,12 +125,14 @@ impl VaultSession {
             None if list.corrupt.contains(&pc) => return Err(VaultError::CorruptPairedPc),
             None => return Err(VaultError::PairedPcNotFound),
         };
+        // Antes de revelar: con la identidad dañada el envío falla sin marcar
+        // la entrada como usada (`reveal` escribe `last_used_at`).
+        let identity = vault.ensure_identity()?;
         let secret = vault.reveal(entry)?;
         // Copia de largo exacto de la contraseña; las notas no salen.
         let password = SecretString::from(secret.password().expose_secret());
         drop(secret);
         let message = SendMessage::new(password).map_err(|_| VaultError::ProtocolFailure)?;
-        let identity = vault.ensure_identity()?;
         Ok(SendJob {
             keys: key_pair_from(identity.private_key()),
             pc_key,

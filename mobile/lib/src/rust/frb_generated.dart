@@ -2033,6 +2033,11 @@ class VaultSessionImpl extends RustOpaque implements VaultSession {
   /// Una sola operación de red a la vez (`Busy`). Un bloqueo de la bóveda
   /// mientras corre la cancela (`Cancelled`) y, si llega justo después de
   /// la aceptación y antes de guardar, da `Locked` y no guarda nada.
+  ///
+  /// **`Cancelled` no implica «no guardado»**: si el bloqueo cae después de
+  /// guardar y antes de devolver, la PC ya está en la lista aunque Dart
+  /// reciba `Cancelled`. Tras un bloqueo, la pantalla vuelve a leer
+  /// `paired_pcs()` al desbloquear.
   Future<PairedPcSummary> pair({
     required String offerText,
     required String deviceName,

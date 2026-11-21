@@ -78,13 +78,27 @@ impl OpGuard<'_> {
 
     /// `Cancelled` si el token se canceló o la época cambió desde que empezó.
     ///
-    /// Llamada con el candado de la bóveda tomado (`vault` y luego `net`),
-    /// responde sobre ese mismo instante.
+    /// Solo toma `net`, así que se puede llamar con o sin el candado de la
+    /// bóveda. Las extracciones y los guardados la llaman **con** `vault`
+    /// tomado (orden `vault` y luego `net`) para que la respuesta coincida con
+    /// el estado de la bóveda en ese instante.
     pub(crate) fn check(&self) -> FacadeResult<()> {
         if self.token.is_cancelled() || self.session.net_epoch() != self.epoch {
             return Err(VaultError::Cancelled);
         }
         Ok(())
+    }
+
+    /// El error de una operación que falló: si desde que empezó hubo un
+    /// bloqueo (o una importación), la causa real es la cancelación, no el
+    /// fallo de red que vino después (la conexión que se cierra, el
+    /// `connect` que no llega).
+    pub(crate) fn cancelled_or(&self, error: VaultError) -> VaultError {
+        if self.check().is_err() {
+            VaultError::Cancelled
+        } else {
+            error
+        }
     }
 }
 
@@ -142,7 +156,7 @@ impl VaultSession {
 /// una operación cancelada no inicia Noise ni escribe un solo byte.
 pub(crate) fn connect(op: &OpGuard<'_>, address: SocketAddr) -> FacadeResult<TcpStream> {
     let stream = TcpStream::connect_timeout(&address, CONNECT_TIMEOUT)
-        .map_err(|_| VaultError::ConnectFailed)?;
+        .map_err(|_| op.cancelled_or(VaultError::ConnectFailed))?;
     op.check()?;
     Ok(stream)
 }

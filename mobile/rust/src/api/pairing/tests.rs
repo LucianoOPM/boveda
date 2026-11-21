@@ -7,8 +7,8 @@ use vault_core::vault::NewPairedPc;
 use super::*;
 use crate::api::net::connect;
 use crate::test_support::{
-    backup_and_target, fixture_copy, path_string, quick_pairing, FakePc, PcDecision,
-    FIXTURE_PASSWORD,
+    backup_and_target, corrupt_first_row, fixture_copy, path_string, quick_pairing, FakePc,
+    PcDecision, FIXTURE_PASSWORD,
 };
 
 const PHONE_NAME: &str = "Pixel de Ana";
@@ -311,10 +311,13 @@ fn lock_then_unlock_does_not_revive_the_old_operation() {
     assert!(session.paired_pcs().unwrap().pcs.is_empty());
     drop(op);
 
-    // Una operación nueva sí funciona.
-    let server = pc.serve_pairing(quick_pairing(), PcDecision::Drop);
-    let _ = session.pair(pc.offer_text(), PHONE_NAME.into());
-    let _ = server.join();
+    // Una operación nueva sí funciona (otro QR, otro código).
+    let fresh = FakePc::new();
+    let server = fresh.serve_pairing(quick_pairing(), PcDecision::Accept);
+    let summary = session.pair(fresh.offer_text(), PHONE_NAME.into()).unwrap();
+    server.join().unwrap().unwrap();
+    assert_eq!(summary.fingerprint, pc_fingerprint());
+    assert_eq!(session.paired_pcs().unwrap().pcs.len(), 1);
 }
 
 #[test]
@@ -375,9 +378,43 @@ fn no_secret_crosses_in_results_or_errors() {
     for secret in [PHONE_NAME, "127.0.0.1", &pc_fingerprint(), &summary.name] {
         assert!(!shown.contains(secret), "el Debug muestra {secret:?}");
     }
-    // El código de un solo uso (`[7; 32]`) no está en el texto del QR en
-    // claro: viaja codificado, y el error de una oferta mala no lo repite.
-    let text = pc.offer_text();
-    let error = format!("{:?}", session.pair(format!("{text}="), PHONE_NAME.into()));
-    assert!(!error.contains(&text));
+}
+
+#[test]
+fn pair_with_a_pc_whose_existing_row_is_corrupt_adds_a_new_one() {
+    // La fila dañada no se puede leer, así que no cuenta como «ya emparejada»
+    // (igual que en `add_paired_pc` del núcleo): queda aparte, y la PC nueva
+    // entra como válida.
+    let (dir, path) = fixture_copy();
+    {
+        let first = VaultSession::new(path_string(&path));
+        first.open().unwrap();
+        first.unlock(FIXTURE_PASSWORD.into()).unwrap();
+        first
+            .with_vault(|vault| {
+                vault.add_paired_pc(NewPairedPc {
+                    public_key: *FakePc::public_key().as_bytes(),
+                    name: "Dañada".into(),
+                    last_ip: None,
+                })
+            })
+            .unwrap();
+    }
+    corrupt_first_row(&path, "paired_pcs", "data");
+    let session = VaultSession::new(path_string(&path));
+    session.open().unwrap();
+    session.unlock(FIXTURE_PASSWORD.into()).unwrap();
+    let before = session.paired_pcs().unwrap();
+    assert_eq!((before.pcs.len(), before.corrupt.len()), (0, 1));
+
+    let pc = FakePc::new();
+    let server = pc.serve_pairing(quick_pairing(), PcDecision::Accept);
+    let summary = session.pair(pc.offer_text(), PHONE_NAME.into()).unwrap();
+    server.join().unwrap().unwrap();
+
+    let after = session.paired_pcs().unwrap();
+    assert_eq!(after.pcs.len(), 1);
+    assert_eq!(after.pcs[0].id, summary.id);
+    assert_eq!(after.corrupt, before.corrupt);
+    drop(dir);
 }

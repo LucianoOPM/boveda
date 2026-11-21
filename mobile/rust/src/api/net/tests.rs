@@ -257,3 +257,31 @@ fn lock_while_connecting_does_not_wait() {
         ));
     });
 }
+
+#[test]
+fn errors_after_an_invalidation_are_cancelled() {
+    let (_dir, session) = unlocked();
+    let address = {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.local_addr().unwrap()
+    };
+    let op = session.begin_op().unwrap();
+    // Sin invalidación, el error de la conexión se queda como está.
+    assert!(matches!(
+        connect(&op, address),
+        Err(VaultError::ConnectFailed)
+    ));
+    // Con el bloqueo ya hecho, el mismo fallo es una cancelación.
+    session.lock().unwrap();
+    assert!(matches!(connect(&op, address), Err(VaultError::Cancelled)));
+    assert_eq!(
+        op.cancelled_or(VaultError::ConnectionClosed),
+        VaultError::Cancelled
+    );
+    // Una operación vigente conserva su error.
+    let fresh = session.begin_op().unwrap();
+    assert_eq!(
+        fresh.cancelled_or(VaultError::ConnectionClosed),
+        VaultError::ConnectionClosed
+    );
+}

@@ -34,6 +34,11 @@ impl VaultSession {
     /// Una sola operación de red a la vez (`Busy`). Un bloqueo de la bóveda
     /// mientras corre la cancela (`Cancelled`) y, si llega justo después de
     /// la aceptación y antes de guardar, da `Locked` y no guarda nada.
+    ///
+    /// **`Cancelled` no implica «no guardado»**: si el bloqueo cae después de
+    /// guardar y antes de devolver, la PC ya está en la lista aunque Dart
+    /// reciba `Cancelled`. Tras un bloqueo, la pantalla vuelve a leer
+    /// `paired_pcs()` al desbloquear.
     pub fn pair(&self, offer_text: String, device_name: String) -> FacadeResult<PairedPcSummary> {
         self.pair_with(offer_text, device_name, &PairingTimeouts::default())
     }
@@ -55,7 +60,8 @@ impl VaultSession {
         let op = self.begin_op()?;
         let keys = self.pairing_prepare(&op)?;
         let stream = connect(&op, offer.address())?;
-        let paired = pair_with_pc(stream, &keys, &offer, name, op.token(), timeouts)?;
+        let paired = pair_with_pc(stream, &keys, &offer, name, op.token(), timeouts)
+            .map_err(|error| op.cancelled_or(error.into()))?;
         drop(keys);
         let summary = self.pairing_persist(&op, &paired)?;
         // Nada de éxitos tardíos: si la época cambió, no se presenta como vigente.

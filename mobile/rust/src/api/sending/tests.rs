@@ -8,7 +8,7 @@ use super::*;
 use crate::api::entries::{EntryInput, NewSecret};
 use crate::api::net::connect;
 use crate::test_support::{
-    fixture_copy, path_string, quick_send, FakePc, PcSend, FIXTURE_PASSWORD,
+    corrupt_first_row, fixture_copy, path_string, quick_send, FakePc, PcSend, FIXTURE_PASSWORD,
 };
 
 const PASSWORD: &str = "CLAVE-DISTINTIVA-ñ-7731";
@@ -116,16 +116,9 @@ fn password_never_crosses_to_dart() {
         .session
         .send_to_pc(s.pc_id.clone(), s.entry_id.clone(), s.pc.addr().to_string());
     server.join().unwrap().unwrap();
-    // Ni el resultado ni los errores posibles llevan el secreto.
+    // El resultado no lleva el secreto (`VaultError` es un enum sin datos: su
+    // `Debug` no puede llevarlo).
     let shown = format!("{result:?}");
-    assert!(!shown.contains(PASSWORD) && !shown.contains(NOTES));
-    let server = s.pc.serve_send(quick_send(), PcSend::Silent);
-    let error = s
-        .session
-        .send_to_pc(s.pc_id.clone(), s.entry_id.clone(), s.pc.addr().to_string())
-        .unwrap_err();
-    server.join().unwrap().unwrap();
-    let shown = format!("{error:?}");
     assert!(!shown.contains(PASSWORD) && !shown.contains(NOTES));
 }
 
@@ -411,4 +404,65 @@ fn core_outcome_maps_to_the_facade_outcome() {
     // `Failed` de la PC no es un error del protocolo.
     assert_eq!(SendOutcome::from(AckOutcome::Copied), SendOutcome::Copied);
     assert_eq!(SendOutcome::from(AckOutcome::Failed), SendOutcome::Failed);
+}
+
+/// Una sesión sobre una copia de la bóveda de ejemplo con la PC de pruebas y
+/// la entrada distintiva, con `corrupt_first_row` aplicado al archivo antes de volver a
+/// abrirla.
+fn setup_with_corruption(table: &str, column: &str) -> Setup {
+    let s = setup();
+    // Se guarda lo necesario y se suelta la sesión para poder alterar el archivo.
+    let path = s.session.path().to_path_buf();
+    let (pc_id, entry_id) = (s.pc_id.clone(), s.entry_id.clone());
+    let Setup {
+        _dir, session, pc, ..
+    } = s;
+    session.ensure_identity().unwrap();
+    drop(session);
+    corrupt_first_row(&path, table, column);
+    let session = VaultSession::new(path_string(&path));
+    session.open().unwrap();
+    session.unlock(FIXTURE_PASSWORD.into()).unwrap();
+    Setup {
+        _dir,
+        session,
+        pc,
+        pc_id,
+        entry_id,
+    }
+}
+
+#[test]
+fn send_to_a_corrupt_pc_row_is_corrupt_paired_pc_without_connecting() {
+    let s = setup_with_corruption("paired_pcs", "data");
+    let list = s.session.paired_pcs().unwrap();
+    assert_eq!((list.pcs.len(), list.corrupt.len()), (0, 1));
+    assert_eq!(
+        s.session.send_to_pc(
+            list.corrupt[0].clone(),
+            s.entry_id.clone(),
+            s.pc.addr().to_string()
+        ),
+        Err(VaultError::CorruptPairedPc)
+    );
+    assert!(s.pc.nobody_connected());
+    assert_busy_is_free(&s.session);
+}
+
+#[test]
+fn corrupt_identity_fails_before_revealing_the_entry() {
+    // Con la identidad dañada el envío falla antes de revelar: la entrada no
+    // queda marcada como usada por un envío que nunca salió.
+    let s = setup_with_corruption("identity", "data");
+    assert_eq!(
+        s.session
+            .send_to_pc(s.pc_id.clone(), s.entry_id.clone(), s.pc.addr().to_string()),
+        Err(VaultError::CorruptIdentity)
+    );
+    assert_eq!(
+        s.session.entry(s.entry_id.clone()).unwrap().last_used_at,
+        None
+    );
+    assert!(s.pc.nobody_connected());
+    assert_busy_is_free(&s.session);
 }

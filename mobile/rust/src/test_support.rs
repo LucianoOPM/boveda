@@ -72,8 +72,6 @@ pub(crate) enum PcSend {
     Copied,
     /// Contesta `Failed`.
     Failed,
-    /// Recibe el mensaje y cierra sin contestar.
-    Silent,
     /// No tiene emparejado al celular: cierra sin escribir nada.
     Forget,
 }
@@ -184,7 +182,7 @@ impl FakePc {
             match behavior {
                 PcSend::Copied => incoming.copied()?,
                 PcSend::Failed => incoming.failed()?,
-                PcSend::Silent | PcSend::Forget => drop(incoming),
+                PcSend::Forget => drop(incoming),
             }
             Ok(got)
         })
@@ -277,4 +275,19 @@ pub(crate) fn backup_and_target() -> (PathBuf, VaultSession) {
     std::mem::forget(source_dir);
     std::mem::forget(target_dir);
     (backup, target)
+}
+
+/// Altera un bit de `column` en la primera fila de `table`, solo en la copia
+/// de `path` (la bóveda no debe estar abierta). Sirve para fabricar una fila
+/// que no se autentica.
+pub(crate) fn corrupt_first_row(path: &std::path::Path, table: &str, column: &str) {
+    let conn = rusqlite::Connection::open(path).unwrap();
+    let mut blob: Vec<u8> = conn
+        .query_row(&format!("SELECT {column} FROM {table} LIMIT 1"), [], |r| {
+            r.get(0)
+        })
+        .unwrap();
+    blob[30] ^= 1;
+    conn.execute(&format!("UPDATE {table} SET {column} = ?1"), [&blob])
+        .unwrap();
 }
