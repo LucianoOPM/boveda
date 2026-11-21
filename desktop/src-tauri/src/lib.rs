@@ -21,7 +21,10 @@ pub mod network;
 #[cfg(windows)]
 pub mod paired_devices;
 #[cfg(windows)]
+pub mod pairing;
+#[cfg(windows)]
 pub mod protected_file;
+pub mod qr;
 #[cfg(windows)]
 pub mod server;
 mod tray;
@@ -45,32 +48,27 @@ fn ensure_identity(app: &tauri::App) {
     }
 }
 
-/// Arranca el servidor de red local (#100). No arranca si la identidad o la lista
-/// de emparejados no se pueden leer, y nunca regenera la identidad (ver
-/// `ensure_identity`). El servidor solo escucha en redes privadas; ver
-/// `server::supervisor`.
+/// Arranca el emparejamiento (#101) y el servidor de red local (#100).
+///
+/// La lista de emparejados es única (un solo dueño con escritura): la comparten
+/// el servidor, que la consulta para autorizar, y el controlador del
+/// emparejamiento, que agrega celulares. Sin lista legible no se arranca ninguno
+/// de los dos. Sin identidad legible el servidor no arranca (nunca se regenera,
+/// ver `ensure_identity`), pero el controlador sí existe y la ventana explica el
+/// problema. El servidor solo escucha en redes privadas; ver `server::supervisor`.
 #[cfg(windows)]
-fn start_server(app: &tauri::App) {
+fn start_pairing_and_server(app: &tauri::App) {
     use std::sync::{Arc, Mutex};
 
     use announce::MdnsAnnouncer;
     use network::NlmProbe;
-    use server::{Config, Deps, ServerSupervisor, TauriSink};
+    use pairing::{LateNetworkView, PairingController, PairingCore, window::TauriNotifier};
+    use server::{Config, Deps, NetworkView, ServerSupervisor, TauriSink};
+    use vault_core::protocol::PairingTimeouts;
 
     let Ok(dir) = app.path().app_data_dir() else {
         eprintln!("servidor: no se encontró la carpeta de datos de la app");
         return;
-    };
-    let identity = match identity::IdentityStore::new(dir.join("identity.bin")).load() {
-        Ok(Some(identity)) => identity,
-        Ok(None) => {
-            eprintln!("servidor: no hay identidad de la PC; no se arranca");
-            return;
-        }
-        Err(err) => {
-            eprintln!("servidor: identidad no disponible: {err}; no se arranca");
-            return;
-        }
     };
     let paired = match paired_devices::PairedDeviceStore::open(dir.join("paired-devices.bin")) {
         Ok(store) => Arc::new(Mutex::new(store)),
@@ -79,24 +77,53 @@ fn start_server(app: &tauri::App) {
             return;
         }
     };
-    // La misma lista la usará el emparejamiento (#101).
-    app.manage(Arc::clone(&paired));
+    let identity_store = identity::IdentityStore::new(dir.join("identity.bin"));
+    let identity = match identity_store.load() {
+        Ok(Some(identity)) => Some(identity),
+        Ok(None) => {
+            eprintln!("servidor: no hay identidad de la PC; no se arranca");
+            None
+        }
+        Err(err) => {
+            eprintln!("servidor: identidad no disponible: {err}; no se arranca");
+            None
+        }
+    };
+
+    // El controlador necesita saber qué escucha el servidor y el servidor
+    // necesita al controlador: la vista de la red se completa después.
+    let network = Arc::new(LateNetworkView::default());
+    let controller = Arc::new(PairingController::start(
+        PairingCore::new(Arc::new(identity_store), Arc::clone(&paired)),
+        Arc::clone(&network) as Arc<dyn NetworkView>,
+        Arc::new(TauriNotifier::new(app.handle().clone())),
+        PairingTimeouts::default(),
+        Duration::from_millis(250),
+    ));
+    app.manage(Arc::clone(&controller));
+
+    let Some(identity) = identity else {
+        return;
+    };
     let deps = Deps {
         identity: Arc::new(identity),
         paired,
         sink: Arc::new(TauriSink::new(app.handle().clone())),
+        pairing: controller,
         announcer: Arc::new(|| Box::new(MdnsAnnouncer::new())),
     };
-    app.manage(ServerSupervisor::start(
+    let supervisor = Arc::new(ServerSupervisor::start(
         NlmProbe::new(),
         deps,
         Config::default(),
     ));
+    network.set(Arc::clone(&supervisor) as Arc<dyn NetworkView>);
+    app.manage(supervisor);
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    let app = tauri::Builder::default()
+    let builder = tauri::Builder::default()
         // Debe registrarse primero. Si ya hay una instancia, la segunda avisa y
         // termina sola; la primera no tiene ventanas que mostrar, así que el
         // aviso no necesita hacer nada.
@@ -114,9 +141,19 @@ pub fn run() {
             app.manage(ClipboardManager::start());
             ensure_identity(app);
             #[cfg(windows)]
-            start_server(app);
+            start_pairing_and_server(app);
             Ok(())
-        })
+        });
+    // Órdenes de la ventana de emparejamiento: sin datos, Rust decide (#101).
+    #[cfg(windows)]
+    let builder = builder.invoke_handler(tauri::generate_handler![
+        pairing::window::pairing_snapshot,
+        pairing::window::pairing_cancel,
+        pairing::window::pairing_regenerate,
+        pairing::window::pairing_accept,
+        pairing::window::pairing_reject,
+    ]);
+    let app = builder
         .build(tauri::generate_context!())
         .expect("error al construir la aplicación");
 
@@ -132,11 +169,21 @@ pub fn run() {
             // después `Exit`), un último intento acotado de borrar la
             // contraseña pendiente: si Windows no deja comprobarlo, no se borra.
             RunEvent::Exit => {
-                // Primero el servidor, para que ya no llegue ninguna contraseña
-                // nueva mientras se vacía el portapapeles.
+                // Primero el emparejamiento (cancela la sesión y su código) y
+                // el servidor, para que ya no llegue ninguna contraseña nueva
+                // mientras se vacía el portapapeles.
                 #[cfg(windows)]
-                if let Some(server) = app.try_state::<server::ServerSupervisor>() {
-                    server.stop();
+                {
+                    if let Some(controller) =
+                        app.try_state::<std::sync::Arc<pairing::PairingController>>()
+                    {
+                        controller.shutdown();
+                    }
+                    if let Some(server) =
+                        app.try_state::<std::sync::Arc<server::ServerSupervisor>>()
+                    {
+                        server.stop();
+                    }
                 }
                 if let Some(clipboard) = app.try_state::<ClipboardManager>() {
                     clipboard.shutdown(Duration::from_secs(2));

@@ -1,0 +1,148 @@
+/* Ventana «Emparejar celular» (#101, docs/DESIGN.md §8). Solo variables de
+   tokens.css: ningún color ni tamaño literal aquí. */
+
+.pairing {
+  box-sizing: border-box;
+  min-height: 100vh;
+  padding: var(--space-24);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-16);
+  background: var(--bg-base);
+  color: var(--text-primary);
+  font-family: var(--font-ui);
+  user-select: none;
+}
+
+.pairing--compact {
+  justify-content: center;
+  gap: var(--space-14);
+}
+
+.pairing__title {
+  margin: 0;
+  max-width: 100%;
+  font-size: var(--text-size-18);
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  text-align: center;
+}
+
+/* El nombre del celular lo da un tercero: se recorta con elipsis y el texto
+   completo queda en el atributo title. */
+.pairing__title--name .name {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pairing__text {
+  margin: 0;
+  max-width: 100%;
+  font-size: var(--text-size-13);
+  line-height: 1.5;
+  color: var(--text-body);
+  text-align: center;
+  overflow-wrap: anywhere;
+}
+
+/* `secret`: huella de la llave en JetBrains Mono. */
+.pairing__fingerprint {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: var(--text-size-17);
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  color: var(--text-primary);
+  user-select: text;
+}
+
+/* `metric`: temporizador con números tabulares. */
+.pairing__timer {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: var(--text-size-15);
+  font-weight: 800;
+  letter-spacing: 0.15em;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-secondary);
+}
+
+.pairing__timer--warning {
+  color: var(--warning);
+}
+
+/* El QR es siempre oscuro sobre blanco puro: uno invertido falla en muchos
+   lectores. La zona de silencio ya viene dentro del SVG. */
+.qr-card {
+  padding: var(--space-8);
+  border-radius: var(--radius-card);
+  background: var(--qr-paper);
+  line-height: 0;
+}
+
+.qr-card--faded {
+  opacity: 0.2;
+}
+
+.qr {
+  display: block;
+  width: var(--qr-size);
+  height: var(--qr-size);
+  image-rendering: crisp-edges;
+}
+
+.pairing__actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: var(--space-12);
+  margin-top: auto;
+}
+
+.pairing--compact .pairing__actions {
+  margin-top: 0;
+}
+
+.button {
+  min-width: var(--control-min);
+  min-height: var(--control-min);
+  padding: var(--space-8) var(--space-16);
+  border: 1px solid var(--border-interactive);
+  border-radius: var(--radius-control);
+  background: var(--surface-2);
+  color: var(--text-primary);
+  font-family: var(--font-ui);
+  font-size: var(--text-size-14);
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.button:hover {
+  border-color: var(--border-pressed);
+}
+
+.button--primary {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--on-accent);
+}
+
+/* Foco visible: anillo de 2 px en `accent`. */
+.button:focus-visible {
+  outline: var(--focus-ring) solid var(--accent);
+  outline-offset: var(--space-2);
+}
+
+@media (forced-colors: active) {
+  .button,
+  .qr-card {
+    border: 1px solid ButtonText;
+  }
+
+  .button:focus-visible {
+    outline-color: Highlight;
+  }
+}

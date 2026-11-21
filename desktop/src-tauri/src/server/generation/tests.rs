@@ -16,7 +16,7 @@ const SECOND: Duration = Duration::from_secs(1);
 
 fn start(fixture: &Fixture, config: &Config) -> Generation {
     let ips = BTreeSet::from([LOCAL]);
-    Generation::start(config, &ips, &fixture.deps()).expect("la generación debe subir")
+    Generation::start(config, &ips, &fixture.deps(), 1).expect("la generación debe subir")
 }
 
 fn addr(generation: &Generation) -> SocketAddr {
@@ -318,8 +318,93 @@ fn no_announcement_without_valid_listener() {
     let fixture = Fixture::new();
     // 203.0.113.1 (TEST-NET-3) no está asignada a esta máquina.
     let ips = BTreeSet::from([LOCAL, Ipv4Addr::new(203, 0, 113, 1)]);
-    let result = Generation::start(&config(), &ips, &fixture.deps());
+    let result = Generation::start(&config(), &ips, &fixture.deps(), 1);
     assert!(result.is_err());
     assert_eq!(fixture.announce.calls.load(Ordering::SeqCst), 0);
     assert_eq!(fixture.announce.created.load(Ordering::SeqCst), 0);
+}
+
+// ---- Enrutado por la primera trama (#101) ----------------------------------
+
+/// Conexión que anuncia una primera trama del largo dado y no manda más.
+fn announce_len(generation: &Generation, len: u16) -> TcpStream {
+    use std::io::Write;
+    let mut stream = silent(generation);
+    stream.write_all(&len.to_be_bytes()).expect("encabezado");
+    stream
+}
+
+#[test]
+fn pairing_frame_goes_to_the_handler_with_the_generation_id() {
+    use std::io::Read;
+    let fixture = Fixture::new();
+    let generation = start(&fixture, &config());
+    let _client = announce_len(&generation, 48);
+    assert!(wait_until(
+        || !fixture.pairing.calls.lock().expect("candado").is_empty(),
+        SECOND * 2
+    ));
+    assert_eq!(*fixture.pairing.calls.lock().expect("candado"), [1]);
+    // El manejador recibe el encabezado sin consumir.
+    let mut streams = fixture.pairing.streams.lock().expect("candado");
+    let mut header = [0u8; 2];
+    streams[0]
+        .read_exact(&mut header)
+        .expect("encabezado intacto");
+    assert_eq!(header, 48u16.to_be_bytes());
+    assert!(fixture.sink.received.lock().expect("candado").is_empty());
+}
+
+#[test]
+fn send_frame_never_reaches_the_pairing_handler() {
+    let fixture = Fixture::new();
+    let generation = start(&fixture, &config());
+    assert_eq!(fixture.send(addr(&generation)), Ok(AckOutcome::Copied));
+    assert!(fixture.pairing.calls.lock().expect("candado").is_empty());
+}
+
+#[test]
+fn garbage_frame_is_closed_without_touching_either_path() {
+    for len in [0u16, 47, 49, 95, 97, 0xFFFF] {
+        let fixture = Fixture::new();
+        let generation = start(&fixture, &config());
+        let stream = announce_len(&generation, len);
+        assert!(closed_without_data(stream), "largo {len}");
+        assert!(fixture.pairing.calls.lock().expect("candado").is_empty());
+        assert!(fixture.sink.received.lock().expect("candado").is_empty());
+    }
+}
+
+#[test]
+fn pairing_connection_uses_one_of_the_four_slots() {
+    let fixture = Fixture::new();
+    fixture.pairing.hold.store(true, Ordering::SeqCst);
+    let generation = start(&fixture, &config());
+    let _held: Vec<TcpStream> = (0..4).map(|_| announce_len(&generation, 48)).collect();
+    assert!(wait_until(
+        || generation.active_connections() == 4,
+        SECOND * 2
+    ));
+    // La quinta se cierra sin leer ni escribir, también si es de emparejamiento.
+    assert!(closed_without_data(announce_len(&generation, 48)));
+    fixture.pairing.hold.store(false, Ordering::SeqCst);
+    assert!(wait_until(
+        || generation.active_connections() == 0,
+        SECOND * 2
+    ));
+}
+
+#[test]
+fn slot_is_released_when_the_pairing_handler_returns() {
+    let fixture = Fixture::new();
+    let generation = start(&fixture, &config());
+    let _client = announce_len(&generation, 48);
+    assert!(wait_until(
+        || fixture.pairing.calls.lock().expect("candado").len() == 1,
+        SECOND * 2
+    ));
+    assert!(wait_until(
+        || generation.active_connections() == 0,
+        SECOND * 2
+    ));
 }

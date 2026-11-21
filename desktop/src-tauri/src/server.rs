@@ -5,12 +5,14 @@
 
 mod bind;
 mod generation;
+mod route;
 mod supervisor;
 mod tauri_sink;
 
 #[cfg(test)]
 pub(crate) mod test_support;
 
+use std::net::TcpStream;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -18,16 +20,49 @@ use secrecy::SecretString;
 use vault_core::protocol::{KeyPair, SendTimeouts};
 
 use crate::announce::AnnouncerFactory;
+use crate::network::Candidate;
 use crate::paired_devices::PairedDeviceStore;
 
 pub use supervisor::ServerSupervisor;
 pub use tauri_sink::TauriSink;
+
+/// Lo que el servidor escucha ahora, para quien necesita saber a qué dirección
+/// puede conectarse el celular (#101). No contiene secretos.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NetworkSnapshot {
+    /// Número de la generación vigente; cambia cada vez que el servidor se
+    /// reconstruye (otro conjunto de IP, otro puerto o un listener caído).
+    pub generation: u64,
+    /// El único puerto de la generación.
+    pub port: u16,
+    /// Las IPv4 que se escuchan, con lo necesario para elegir la del QR.
+    pub candidates: Vec<Candidate>,
+}
+
+/// Quién puede decir qué escucha el servidor ahora. Es un trait para probar sin
+/// servidor real.
+pub trait NetworkView: Send + Sync + 'static {
+    /// `None` si no hay servidor (sin red privada).
+    fn snapshot(&self) -> Option<NetworkSnapshot>;
+}
 
 /// Dónde acaba una contraseña recibida. El servidor no sabe de portapapeles ni
 /// de avisos: la app le pasa una implementación (y las pruebas, un doble).
 pub trait PasswordSink: Send + Sync + 'static {
     /// Entrega la contraseña. `Ok` solo si quedó escrita en el portapapeles.
     fn deliver(&self, password: &SecretString) -> Result<(), DeliverFailed>;
+}
+
+/// Quién atiende las conexiones de emparejamiento (#101).
+///
+/// El servidor enruta por la primera trama (ver `route`): una de 48 bytes es un
+/// emparejamiento y llega aquí, con el encabezado de largo **sin consumir**. El
+/// manejador es dueño de la conexión y la cierra al soltarla; `serve` corre en
+/// el hilo del trabajador (con su ranura ocupada) y puede bloquearse mientras
+/// espera la decisión del usuario. `generation` es el número de la generación
+/// que aceptó la conexión (`NetworkSnapshot::generation`).
+pub trait PairingHandler: Send + Sync + 'static {
+    fn serve(&self, stream: TcpStream, generation: u64);
 }
 
 /// No se pudo escribir la contraseña. Sin datos.
@@ -81,6 +116,8 @@ pub struct Deps {
     pub paired: Arc<Mutex<PairedDeviceStore>>,
     /// Destino de las contraseñas recibidas.
     pub sink: Arc<dyn PasswordSink>,
+    /// Quién atiende las conexiones de emparejamiento.
+    pub pairing: Arc<dyn PairingHandler>,
     /// Fábrica del anunciante mDNS (uno por generación).
     pub announcer: AnnouncerFactory,
 }

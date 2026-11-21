@@ -8,6 +8,8 @@ El servidor escucha y se anuncia por mDNS **solo** en las direcciones IPv4 de re
 
 El Firewall es una segunda capa. El instalador (NSIS, instalación por usuario) crea dos reglas de entrada limitadas al perfil **Privado**: TCP para la app y UDP 5353 (mDNS) para la app. Pide permiso de administrador (UAC) solo para ese comando; si se rechaza, la app funciona igual, pero las reglas no existen. Al desinstalar se borran.
 
+El emparejamiento (#101) usa **el mismo puerto y las mismas reglas**: el servidor distingue un emparejamiento de un envío por el largo de la primera trama, así que no hay otro puerto ni otra regla de Firewall. «Emparejar celular» solo ofrece una dirección que el servidor esté escuchando en una interfaz activa y de hardware (no virtual); sin una red privada así, la ventana lo explica y no muestra QR.
+
 ### Desarrollo (`bun run tauri dev`)
 
 `tauri dev` **no** crea las reglas. Si Windows pregunta por el acceso, o para que el celular alcance la PC en una red privada, créalas a mano desde una consola con permisos de administrador (ajusta la ruta del ejecutable de desarrollo):

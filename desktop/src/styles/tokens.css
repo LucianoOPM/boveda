@@ -1,3 +1,36 @@
+/* §3 Fuentes empaquetadas (OFL 1.1, licencias junto a los archivos): nunca se
+   descargan en tiempo de ejecución. Los mismos archivos que la app de Android. */
+@font-face {
+  font-family: "Plus Jakarta Sans";
+  font-weight: 400;
+  src: url("../assets/fonts/PlusJakartaSans-Regular.ttf") format("truetype");
+}
+@font-face {
+  font-family: "Plus Jakarta Sans";
+  font-weight: 700;
+  src: url("../assets/fonts/PlusJakartaSans-Bold.ttf") format("truetype");
+}
+@font-face {
+  font-family: "Plus Jakarta Sans";
+  font-weight: 800;
+  src: url("../assets/fonts/PlusJakartaSans-ExtraBold.ttf") format("truetype");
+}
+@font-face {
+  font-family: "JetBrains Mono";
+  font-weight: 500;
+  src: url("../assets/fonts/JetBrainsMono-Medium.ttf") format("truetype");
+}
+@font-face {
+  font-family: "JetBrains Mono";
+  font-weight: 700;
+  src: url("../assets/fonts/JetBrainsMono-Bold.ttf") format("truetype");
+}
+@font-face {
+  font-family: "JetBrains Mono";
+  font-weight: 800;
+  src: url("../assets/fonts/JetBrainsMono-ExtraBold.ttf") format("truetype");
+}
+
 /*
  * Tokens de diseño de la app de Windows. Vienen de docs/DESIGN.md, con los
  * mismos nombres en kebab-case (bgBase -> --bg-base). La PC usa Cyber Lime
@@ -53,8 +86,8 @@
   --syntax-symbol: #ec4899;
   --syntax-space: #a1a1aa;
 
-  /* §3 Tipografía: las fuentes se empaquetan con la primera ventana (#101);
-     mientras tanto, caen a las del sistema. */
+  /* §3 Tipografía: las fuentes van empaquetadas (ver @font-face arriba); si
+     faltan, caen a las del sistema. */
   --font-ui: "Plus Jakarta Sans", "Segoe UI", system-ui, sans-serif;
   --font-mono: "JetBrains Mono", "Cascadia Mono", Consolas, monospace;
   --text-size-10: 0.625rem;
@@ -69,6 +102,7 @@
   --text-size-22: 1.375rem;
 
   /* §4.1 Espaciado */
+  --space-2: 2px;
   --space-4: 4px;
   --space-8: 8px;
   --space-10: 10px;
@@ -78,6 +112,13 @@
   --space-24: 24px;
   --space-32: 32px;
   --space-48: 48px;
+
+  /* §8 Ventana «Emparejar celular»: papel blanco puro del QR (nunca invertido),
+     lado del QR (con su zona de silencio), objetivo mínimo de clic y anillo de foco. */
+  --qr-paper: #ffffff;
+  --qr-size: 240px;
+  --control-min: 32px;
+  --focus-ring: 2px;
 
   /* §4.2 Radios */
   --radius-card: 16px;
