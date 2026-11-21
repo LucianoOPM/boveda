@@ -4,7 +4,10 @@
 //! «Verificación de `mdns-sd`» en el diseño): se deshabilitan todas las
 //! interfaces y solo se habilitan las IPv4 privadas del servicio, que son
 //! además las únicas direcciones que se publican. Limitación conocida: la crate
-//! abre sus sockets UDP 5353 en `0.0.0.0` y `[::]` y no deja cambiarlo.
+//! abre sus sockets UDP 5353 en `0.0.0.0` y `[::]` y no deja cambiarlo, y al
+//! crear el daemon se une unos milisegundos a los grupos de todas las interfaces
+//! hasta procesar la deshabilitación (aún sin servicio registrado). Aceptado el
+//! 2026-11-20; ver «Servidor de la PC» en `docs/especificacion.md`.
 
 use std::net::IpAddr;
 use std::time::Duration;
