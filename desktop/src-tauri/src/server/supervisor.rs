@@ -12,8 +12,6 @@ use std::sync::{Arc, Mutex, PoisonError};
 use std::thread::{self, JoinHandle};
 use std::time::Instant;
 
-use vault_core::protocol::CancelToken;
-
 use super::generation::Generation;
 use super::{Config, Deps};
 use crate::backoff::Backoff;
@@ -111,6 +109,7 @@ impl Supervisor {
     }
 
     /// Generaciones que se han subido desde el principio.
+    #[cfg(test)]
     pub(crate) fn generations_started(&self) -> u32 {
         self.started
     }
@@ -121,7 +120,8 @@ impl Supervisor {
     }
 
     /// El token de la generación vigente, si la hay.
-    pub(crate) fn current_token(&self) -> Option<CancelToken> {
+    #[cfg(test)]
+    pub(crate) fn current_token(&self) -> Option<vault_core::protocol::CancelToken> {
         self.generation
             .as_ref()
             .map(|generation| generation.token().clone())

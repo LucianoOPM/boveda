@@ -129,6 +129,7 @@ impl AnnounceSlot {
         }
     }
 
+    #[cfg(test)]
     pub(crate) fn is_announced(&self) -> bool {
         self.announced
     }

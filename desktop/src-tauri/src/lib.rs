@@ -45,6 +45,55 @@ fn ensure_identity(app: &tauri::App) {
     }
 }
 
+/// Arranca el servidor de red local (#100). No arranca si la identidad o la lista
+/// de emparejados no se pueden leer, y nunca regenera la identidad (ver
+/// `ensure_identity`). El servidor solo escucha en redes privadas; ver
+/// `server::supervisor`.
+#[cfg(windows)]
+fn start_server(app: &tauri::App) {
+    use std::sync::{Arc, Mutex};
+
+    use announce::MdnsAnnouncer;
+    use network::NlmProbe;
+    use server::{Config, Deps, ServerSupervisor, TauriSink};
+
+    let Ok(dir) = app.path().app_data_dir() else {
+        eprintln!("servidor: no se encontró la carpeta de datos de la app");
+        return;
+    };
+    let identity = match identity::IdentityStore::new(dir.join("identity.bin")).load() {
+        Ok(Some(identity)) => identity,
+        Ok(None) => {
+            eprintln!("servidor: no hay identidad de la PC; no se arranca");
+            return;
+        }
+        Err(err) => {
+            eprintln!("servidor: identidad no disponible: {err}; no se arranca");
+            return;
+        }
+    };
+    let paired = match paired_devices::PairedDeviceStore::open(dir.join("paired-devices.bin")) {
+        Ok(store) => Arc::new(Mutex::new(store)),
+        Err(err) => {
+            eprintln!("servidor: lista de emparejados no disponible: {err}; no se arranca");
+            return;
+        }
+    };
+    // La misma lista la usará el emparejamiento (#101).
+    app.manage(Arc::clone(&paired));
+    let deps = Deps {
+        identity: Arc::new(identity),
+        paired,
+        sink: Arc::new(TauriSink::new(app.handle().clone())),
+        announcer: Arc::new(|| Box::new(MdnsAnnouncer::new())),
+    };
+    app.manage(ServerSupervisor::start(
+        NlmProbe::new(),
+        deps,
+        Config::default(),
+    ));
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let app = tauri::Builder::default()
@@ -61,9 +110,11 @@ pub fn run() {
         .setup(|app| {
             tray::setup(app)?;
             // El gestor del portapapeles vive toda la sesión; el servidor de
-            // red (#100) lo usará al recibir una contraseña.
+            // red (#100) lo usa al recibir una contraseña.
             app.manage(ClipboardManager::start());
             ensure_identity(app);
+            #[cfg(windows)]
+            start_server(app);
             Ok(())
         })
         .build(tauri::generate_context!())
@@ -81,6 +132,12 @@ pub fn run() {
             // después `Exit`), un último intento acotado de borrar la
             // contraseña pendiente: si Windows no deja comprobarlo, no se borra.
             RunEvent::Exit => {
+                // Primero el servidor, para que ya no llegue ninguna contraseña
+                // nueva mientras se vacía el portapapeles.
+                #[cfg(windows)]
+                if let Some(server) = app.try_state::<server::ServerSupervisor>() {
+                    server.stop();
+                }
                 if let Some(clipboard) = app.try_state::<ClipboardManager>() {
                     clipboard.shutdown(Duration::from_secs(2));
                 }

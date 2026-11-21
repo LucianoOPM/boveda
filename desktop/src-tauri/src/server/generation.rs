@@ -51,6 +51,7 @@ impl Slots {
         Some(SlotGuard(Arc::clone(self)))
     }
 
+    #[cfg(test)]
     fn active(&self) -> usize {
         *self.active.lock().unwrap_or_else(PoisonError::into_inner)
     }
@@ -165,16 +166,19 @@ impl Generation {
     }
 
     /// ¿Está anunciada ahora?
+    #[cfg(test)]
     pub(crate) fn is_announced(&self) -> bool {
         self.announce.is_announced()
     }
 
     /// Conexiones que se están atendiendo ahora.
+    #[cfg(test)]
     pub(crate) fn active_connections(&self) -> usize {
         self.shared.slots.active()
     }
 
     /// El token propio de esta generación.
+    #[cfg(test)]
     pub(crate) fn token(&self) -> &CancelToken {
         &self.token
     }

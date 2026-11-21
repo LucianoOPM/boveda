@@ -6,6 +6,8 @@
 mod bind;
 mod generation;
 mod supervisor;
+mod tauri_sink;
+
 #[cfg(test)]
 pub(crate) mod test_support;
 
@@ -17,6 +19,9 @@ use vault_core::protocol::{KeyPair, SendTimeouts};
 
 use crate::announce::AnnouncerFactory;
 use crate::paired_devices::PairedDeviceStore;
+
+pub use supervisor::ServerSupervisor;
+pub use tauri_sink::TauriSink;
 
 /// Dónde acaba una contraseña recibida. El servidor no sabe de portapapeles ni
 /// de avisos: la app le pasa una implementación (y las pruebas, un doble).

@@ -49,10 +49,10 @@ impl MdnsAnnouncer {
     /// Descarta el daemon y el registro.
     fn teardown(&mut self) {
         if let Some(daemon) = self.daemon.take() {
-            if let Some(fullname) = self.fullname.take() {
-                if let Ok(status) = daemon.unregister(&fullname) {
-                    let _ = status.recv_timeout(WITHDRAW_WAIT);
-                }
+            if let Some(fullname) = self.fullname.take()
+                && let Ok(status) = daemon.unregister(&fullname)
+            {
+                let _ = status.recv_timeout(WITHDRAW_WAIT);
             }
             shut_down(&daemon);
         }
