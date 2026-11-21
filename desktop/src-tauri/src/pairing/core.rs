@@ -13,7 +13,8 @@ use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use secrecy::SecretBox;
 use vault_core::protocol::{
-    CancelToken, PAIRING_CODE_TTL, PairingCode, PairingError, PairingOffer, PairingSession, Refusal,
+    CancelToken, MAX_FAILED_ATTEMPTS, PAIRING_CODE_TTL, PairingCode, PairingError, PairingOffer,
+    PairingSession, Refusal,
 };
 use zeroize::Zeroizing;
 
@@ -64,15 +65,24 @@ struct Live {
     port: u16,
     ip: Ipv4Addr,
     expires_at: Instant,
+    /// Tramas 1 malas que ya contó el núcleo contra el código (lo agota a las
+    /// `MAX_FAILED_ATTEMPTS`, sin avisar: aquí se lleva la misma cuenta).
+    failed: u32,
 }
 
 impl Live {
-    /// Invalida el código y corta lo que esté en curso.
-    fn shutdown(&self) {
+    /// Invalida el código (un código ya gastado sigue gastado).
+    fn invalidate_code(&self) {
         self.session
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .cancel();
+    }
+
+    /// Invalida el código y corta lo que esté en curso, también las lecturas y
+    /// escrituras bloqueadas de la conexión.
+    fn shutdown(&self) {
+        self.invalidate_code();
         self.cancel.cancel();
     }
 }
@@ -318,7 +328,7 @@ impl PairingCore {
     /// los rechazos que dejan el código intacto, la sesión termina y el usuario
     /// genera otro. Un id que no es el vigente se ignora.
     pub(crate) fn connection_failed(&mut self, id: SessionId, error: PairingError) {
-        let Phase::Waiting { live, .. } = &self.phase else {
+        let Phase::Waiting { live, .. } = &mut self.phase else {
             return;
         };
         if live.id != id {
@@ -327,6 +337,15 @@ impl PairingCore {
         let reason = match error {
             PairingError::Refused(Refusal::TooManyAttempts) => EndReason::TooManyAttempts,
             PairingError::Refused(Refusal::Expired) => EndReason::Expired,
+            // Una trama 1 mala: el núcleo la cuenta y al tercer intento agota el
+            // código sin avisar, así que aquí se lleva la misma cuenta.
+            PairingError::Refused(Refusal::WrongCode | Refusal::Malformed) => {
+                live.failed += 1;
+                if live.failed < u32::from(MAX_FAILED_ATTEMPTS) {
+                    return;
+                }
+                EndReason::TooManyAttempts
+            }
             // El código sigue sirviendo (o ya lo cancelamos nosotros).
             PairingError::Refused(_) | PairingError::Cancelled => return,
             _ => EndReason::PhoneDisconnected,
@@ -426,9 +445,11 @@ impl PairingCore {
         match std::mem::replace(&mut self.phase, next) {
             Phase::Waiting { live, .. } | Phase::Saving { live, .. } => live.shutdown(),
             Phase::Confirming { live, decide, .. } => {
-                // Si el hilo ya no escucha, no hay a quién avisar.
+                // Si el hilo ya no escucha, no hay a quién avisar. El token de la
+                // conexión **no** se cancela: el hilo no está leyendo, espera la
+                // decisión, y necesita escribir el rechazo al celular.
                 let _ = decide.send(decision);
-                live.shutdown();
+                live.invalidate_code();
             }
             Phase::Closed | Phase::NoNetwork | Phase::Done { .. } | Phase::Ended(_) => {}
         }
@@ -482,6 +503,7 @@ impl PairingCore {
             port: net.port,
             ip,
             expires_at: now + PAIRING_CODE_TTL,
+            failed: 0,
         };
         Ok((live, svg, text))
     }

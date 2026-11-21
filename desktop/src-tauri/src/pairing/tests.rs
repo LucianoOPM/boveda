@@ -673,7 +673,10 @@ fn cancel_during_confirmation_sends_cancel_and_saves_nothing() {
     assert_eq!(next_decision(&p), Some(UserDecision::Cancel));
     assert_eq!(rig.core.view(p.t0), PairingView::Closed);
     assert_eq!(list_len(&rig), 0);
-    assert!(p.ticket.cancel.is_cancelled());
+    assert!(
+        !p.ticket.cancel.is_cancelled(),
+        "el hilo necesita escribir el rechazo al celular"
+    );
 }
 
 #[test]
@@ -837,4 +840,35 @@ fn late_confirmed_of_an_old_session_does_not_touch_a_new_session_that_is_saving(
     rig.core
         .confirmed(ticket.id, Ok(device(7, "Otro celular")), t0);
     assert_eq!(list_len(&rig), 1);
+}
+
+#[test]
+fn the_third_bad_frame_ends_the_session_like_the_core_exhausts_the_code() {
+    let mut rig = rig();
+    let t0 = Instant::now();
+    rig.core.open(Some(&net(1, 40000)), t0);
+    let ticket = rig.core.begin_connection(1, t0).expect("ticket");
+    for refusal in [Refusal::WrongCode, Refusal::Malformed] {
+        rig.core
+            .connection_failed(ticket.id, PairingError::Refused(refusal));
+        assert!(matches!(rig.core.view(t0), PairingView::Waiting { .. }));
+    }
+    rig.core
+        .connection_failed(ticket.id, PairingError::Refused(Refusal::WrongCode));
+    assert_eq!(ended(rig.core.view(t0)), EndReason::TooManyAttempts);
+    assert!(ticket.cancel.is_cancelled());
+}
+
+#[test]
+fn bad_frames_of_an_old_session_do_not_count_for_the_new_one() {
+    let mut rig = rig();
+    let t0 = Instant::now();
+    rig.core.open(Some(&net(1, 40000)), t0);
+    let old = rig.core.begin_connection(1, t0).expect("ticket");
+    rig.core.regenerate(Some(&net(1, 40000)), t0);
+    for _ in 0..5 {
+        rig.core
+            .connection_failed(old.id, PairingError::Refused(Refusal::WrongCode));
+    }
+    assert!(matches!(rig.core.view(t0), PairingView::Waiting { .. }));
 }
