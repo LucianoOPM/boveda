@@ -33,6 +33,9 @@ vault-core = { path = "../../core" }
 # features que `core/`; no son criptografía ni red y no suman crates al lock.
 serde = { version = "1", default-features = false, features = ["derive"] }
 postcard = { version = "1", default-features = false, features = ["alloc"] }
+# QR de la ventana de emparejamiento (#101). Sin la crate `image` (solo SVG):
+# Rust dibuja el QR y el webview solo muestra la imagen.
+qrcode = { version = "0.14", default-features = false, features = ["svg"] }
 
 # Borrado condicional del portapapeles bajo una sola apertura (#98). Es la misma
 # crate que `arboard` usa en Windows, así que no agrega otra versión.
