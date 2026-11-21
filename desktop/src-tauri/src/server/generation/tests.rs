@@ -16,7 +16,7 @@ const SECOND: Duration = Duration::from_secs(1);
 
 fn start(fixture: &Fixture, config: &Config) -> Generation {
     let ips = BTreeSet::from([LOCAL]);
-    Generation::start(config, &ips, &fixture.deps()).expect("la generación debe subir")
+    Generation::start(config, &ips, &fixture.deps(), 1).expect("la generación debe subir")
 }
 
 fn addr(generation: &Generation) -> SocketAddr {
@@ -318,7 +318,7 @@ fn no_announcement_without_valid_listener() {
     let fixture = Fixture::new();
     // 203.0.113.1 (TEST-NET-3) no está asignada a esta máquina.
     let ips = BTreeSet::from([LOCAL, Ipv4Addr::new(203, 0, 113, 1)]);
-    let result = Generation::start(&config(), &ips, &fixture.deps());
+    let result = Generation::start(&config(), &ips, &fixture.deps(), 1);
     assert!(result.is_err());
     assert_eq!(fixture.announce.calls.load(Ordering::SeqCst), 0);
     assert_eq!(fixture.announce.created.load(Ordering::SeqCst), 0);

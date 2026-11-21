@@ -269,3 +269,134 @@ fn server_supervisor_follows_the_network_while_running() {
     ));
     server.stop();
 }
+
+fn candidate(
+    ip: Ipv4Addr,
+    eligible: bool,
+    has_gateway: bool,
+    metric: u32,
+) -> crate::network::Candidate {
+    crate::network::Candidate {
+        ip,
+        eligible,
+        has_gateway,
+        metric,
+    }
+}
+
+#[test]
+fn snapshot_is_none_without_private_network() {
+    let fixture = Fixture::new();
+    let probe = FakeProbe::new();
+    let mut supervisor = supervisor(&fixture, &probe);
+    supervisor.tick(Instant::now());
+    assert_eq!(supervisor.snapshot(), None);
+}
+
+#[test]
+fn snapshot_reports_generation_port_and_candidates() {
+    let fixture = Fixture::new();
+    let probe = FakeProbe::new();
+    let both = vec![candidate(A, true, true, 10), candidate(B, false, false, 50)];
+    probe.set_candidates(Ok(both.clone()));
+    let mut supervisor = supervisor(&fixture, &probe);
+    supervisor.tick(Instant::now());
+    let snapshot = supervisor.snapshot().expect("instantánea");
+    assert_eq!(snapshot.generation, 1);
+    assert_eq!(Some(snapshot.port), supervisor.current_port());
+    assert_eq!(snapshot.candidates, both);
+    supervisor.shutdown();
+}
+
+#[test]
+fn generation_id_changes_when_the_set_changes() {
+    let fixture = Fixture::new();
+    let probe = FakeProbe::new();
+    probe.set(set(&[A]));
+    let mut supervisor = supervisor(&fixture, &probe);
+    let t0 = Instant::now();
+    supervisor.tick(t0);
+    assert_eq!(supervisor.snapshot().expect("1").generation, 1);
+    probe.set(set(&[A, B]));
+    supervisor.tick(t0);
+    assert_eq!(supervisor.snapshot().expect("2").generation, 2);
+    probe.set(set(&[]));
+    supervisor.tick(t0);
+    assert_eq!(supervisor.snapshot(), None);
+    probe.set(set(&[A]));
+    supervisor.tick(t0);
+    assert_eq!(supervisor.snapshot().expect("3").generation, 3);
+    supervisor.shutdown();
+}
+
+#[test]
+fn generation_id_is_unchanged_across_ticks_with_the_same_set() {
+    let fixture = Fixture::new();
+    let probe = FakeProbe::new();
+    probe.set(set(&[A]));
+    let mut supervisor = supervisor(&fixture, &probe);
+    let t0 = Instant::now();
+    supervisor.tick(t0);
+    let first = supervisor.snapshot().expect("instantánea");
+    for step in 1..4 {
+        supervisor.tick(t0 + Duration::from_secs(step));
+    }
+    let after = supervisor.snapshot().expect("instantánea");
+    assert_eq!(
+        (first.generation, first.port),
+        (after.generation, after.port)
+    );
+    supervisor.shutdown();
+}
+
+#[test]
+fn metric_change_with_the_same_set_updates_candidates_but_not_the_generation() {
+    let fixture = Fixture::new();
+    let probe = FakeProbe::new();
+    probe.set_candidates(Ok(vec![candidate(A, true, true, 10)]));
+    let mut supervisor = supervisor(&fixture, &probe);
+    let t0 = Instant::now();
+    supervisor.tick(t0);
+    probe.set_candidates(Ok(vec![candidate(A, true, true, 99)]));
+    supervisor.tick(t0);
+    let snapshot = supervisor.snapshot().expect("instantánea");
+    assert_eq!(snapshot.generation, 1);
+    assert_eq!(snapshot.candidates, vec![candidate(A, true, true, 99)]);
+    supervisor.shutdown();
+}
+
+#[test]
+fn rebuilt_listener_gets_a_new_id() {
+    let fixture = Fixture::new();
+    let probe = FakeProbe::new();
+    probe.set(set(&[A]));
+    let mut supervisor = supervisor(&fixture, &probe);
+    let t0 = Instant::now();
+    supervisor.tick(t0);
+    supervisor.current_token().expect("token").cancel();
+    assert!(wait_until(
+        || !supervisor.current_is_alive(),
+        Duration::from_secs(2)
+    ));
+    supervisor.tick(t0);
+    assert_eq!(supervisor.snapshot(), None, "caída: no hay instantánea");
+    supervisor.tick(t0 + Duration::from_millis(11));
+    assert_eq!(supervisor.snapshot().expect("reconstruida").generation, 2);
+    supervisor.shutdown();
+}
+
+#[test]
+fn server_supervisor_publishes_the_snapshot_and_clears_it_on_stop() {
+    use crate::server::NetworkView;
+    let fixture = Fixture::new();
+    let probe = FakeProbe::new();
+    probe.set(set(&[A]));
+    let running = ServerSupervisor::start(probe, fixture.deps(), config());
+    assert!(wait_until(
+        || running.snapshot().is_some(),
+        Duration::from_secs(2)
+    ));
+    assert_eq!(running.snapshot().expect("instantánea").generation, 1);
+    running.stop();
+    assert_eq!(running.snapshot(), None);
+}

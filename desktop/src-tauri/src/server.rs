@@ -18,10 +18,31 @@ use secrecy::SecretString;
 use vault_core::protocol::{KeyPair, SendTimeouts};
 
 use crate::announce::AnnouncerFactory;
+use crate::network::Candidate;
 use crate::paired_devices::PairedDeviceStore;
 
 pub use supervisor::ServerSupervisor;
 pub use tauri_sink::TauriSink;
+
+/// Lo que el servidor escucha ahora, para quien necesita saber a qué dirección
+/// puede conectarse el celular (#101). No contiene secretos.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NetworkSnapshot {
+    /// Número de la generación vigente; cambia cada vez que el servidor se
+    /// reconstruye (otro conjunto de IP, otro puerto o un listener caído).
+    pub generation: u64,
+    /// El único puerto de la generación.
+    pub port: u16,
+    /// Las IPv4 que se escuchan, con lo necesario para elegir la del QR.
+    pub candidates: Vec<Candidate>,
+}
+
+/// Quién puede decir qué escucha el servidor ahora. Es un trait para probar sin
+/// servidor real.
+pub trait NetworkView: Send + Sync + 'static {
+    /// `None` si no hay servidor (sin red privada).
+    fn snapshot(&self) -> Option<NetworkSnapshot>;
+}
 
 /// Dónde acaba una contraseña recibida. El servidor no sabe de portapapeles ni
 /// de avisos: la app le pasa una implementación (y las pruebas, un doble).

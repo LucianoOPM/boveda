@@ -13,9 +13,9 @@ use std::thread::{self, JoinHandle};
 use std::time::Instant;
 
 use super::generation::Generation;
-use super::{Config, Deps};
+use super::{Config, Deps, NetworkSnapshot, NetworkView};
 use crate::backoff::Backoff;
-use crate::network::NetworkProbe;
+use crate::network::{Candidate, NetworkProbe};
 
 #[cfg(test)]
 mod tests;
@@ -27,6 +27,9 @@ pub(crate) struct Supervisor {
     config: Config,
     /// El conjunto de IPv4 privadas para el que hay (o debería haber) servidor.
     current: BTreeSet<Ipv4Addr>,
+    /// Los candidatos de la última consulta: lo que sabe el supervisor de cada
+    /// interfaz, que puede cambiar (por ejemplo la métrica) sin cambiar `current`.
+    candidates: Vec<Candidate>,
     generation: Option<Generation>,
     started: u32,
     /// Espera para volver a subir tras un bind fallido o un listener caído.
@@ -41,6 +44,7 @@ impl Supervisor {
             deps,
             config,
             current: BTreeSet::new(),
+            candidates: Vec::new(),
             generation: None,
             started: 0,
             retry,
@@ -50,13 +54,15 @@ impl Supervisor {
     /// Una revisión. Cualquier error o duda del detector es «ninguna red
     /// privada»: se baja todo (falla cerrando).
     pub(crate) fn tick(&mut self, now: Instant) {
-        let wanted = match self.probe.private_addresses() {
-            Ok(addresses) => addresses,
+        let candidates = match self.probe.private_candidates() {
+            Ok(candidates) => candidates,
             Err(error) => {
                 eprintln!("servidor: {error}; se trata como red no privada");
-                BTreeSet::new()
+                Vec::new()
             }
         };
+        let wanted: BTreeSet<Ipv4Addr> = candidates.iter().map(|candidate| candidate.ip).collect();
+        self.candidates = candidates;
         if wanted != self.current {
             self.stop_generation();
             self.current = wanted;
@@ -83,7 +89,8 @@ impl Supervisor {
     }
 
     fn start_generation(&mut self, now: Instant) {
-        match Generation::start(&self.config, &self.current, &self.deps) {
+        let id = u64::from(self.started) + 1;
+        match Generation::start(&self.config, &self.current, &self.deps, id) {
             Ok(generation) => {
                 self.generation = Some(generation);
                 self.started += 1;
@@ -115,8 +122,24 @@ impl Supervisor {
     }
 
     /// El puerto de la generación vigente, si la hay.
+    #[cfg(test)]
     pub(crate) fn current_port(&self) -> Option<u16> {
         self.generation.as_ref().map(Generation::port)
+    }
+
+    /// Lo que se escucha ahora: la generación, su puerto y los candidatos de las
+    /// IP que escucha. `None` si no hay generación.
+    pub(crate) fn snapshot(&self) -> Option<NetworkSnapshot> {
+        self.generation.as_ref().map(|generation| NetworkSnapshot {
+            generation: generation.id(),
+            port: generation.port(),
+            candidates: self
+                .candidates
+                .iter()
+                .filter(|candidate| self.current.contains(&candidate.ip))
+                .copied()
+                .collect(),
+        })
     }
 
     /// El token de la generación vigente, si la hay.
@@ -136,7 +159,7 @@ impl Supervisor {
 
 /// El supervisor corriendo en su propio hilo. Estado de la app de Tauri.
 pub struct ServerSupervisor {
-    port: Arc<Mutex<Option<u16>>>,
+    snapshot: Arc<Mutex<Option<NetworkSnapshot>>>,
     stop: Mutex<Option<Sender<()>>>,
     handle: Mutex<Option<JoinHandle<()>>>,
 }
@@ -146,29 +169,32 @@ impl ServerSupervisor {
     /// inicializa en ese hilo). Revisa de inmediato y luego cada
     /// `config.check_interval`.
     pub fn start(probe: impl NetworkProbe, deps: Deps, config: Config) -> Self {
-        let port = Arc::new(Mutex::new(None));
+        let snapshot = Arc::new(Mutex::new(None));
         let (stop, signal) = mpsc::channel::<()>();
         let interval = config.check_interval;
-        let shared_port = Arc::clone(&port);
+        let shared_snapshot = Arc::clone(&snapshot);
         let handle = thread::Builder::new()
             .name("boveda-server".to_owned())
             .spawn(move || {
                 let mut supervisor = Supervisor::new(Box::new(probe), deps, config);
                 loop {
                     supervisor.tick(Instant::now());
-                    *shared_port.lock().unwrap_or_else(PoisonError::into_inner) =
-                        supervisor.current_port();
+                    *shared_snapshot
+                        .lock()
+                        .unwrap_or_else(PoisonError::into_inner) = supervisor.snapshot();
                     match signal.recv_timeout(interval) {
                         Err(RecvTimeoutError::Timeout) => {}
                         Ok(()) | Err(RecvTimeoutError::Disconnected) => break,
                     }
                 }
                 supervisor.shutdown();
-                *shared_port.lock().unwrap_or_else(PoisonError::into_inner) = None;
+                *shared_snapshot
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner) = None;
             })
             .ok();
         Self {
-            port,
+            snapshot,
             stop: Mutex::new(Some(stop)),
             handle: Mutex::new(handle),
         }
@@ -176,7 +202,7 @@ impl ServerSupervisor {
 
     /// El puerto de la generación vigente; `None` si no hay servidor.
     pub fn local_port(&self) -> Option<u16> {
-        *self.port.lock().unwrap_or_else(PoisonError::into_inner)
+        self.snapshot().map(|snapshot| snapshot.port)
     }
 
     /// Detiene el servidor y espera a que baje. Se puede llamar varias veces.
@@ -197,6 +223,15 @@ impl ServerSupervisor {
         {
             let _ = handle.join();
         }
+    }
+}
+
+impl NetworkView for ServerSupervisor {
+    fn snapshot(&self) -> Option<NetworkSnapshot> {
+        self.snapshot
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
     }
 }
 

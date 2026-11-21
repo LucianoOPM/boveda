@@ -87,6 +87,7 @@ struct Shared {
 
 /// Servidor de un conjunto de IPv4 privadas, con un único puerto.
 pub(crate) struct Generation {
+    id: u64,
     port: u16,
     token: CancelToken,
     alive: Arc<AtomicBool>,
@@ -104,6 +105,7 @@ impl Generation {
         config: &Config,
         ips: &BTreeSet<Ipv4Addr>,
         deps: &Deps,
+        id: u64,
     ) -> Result<Self, BindError> {
         let bound = bind_all(ips, config.preferred_port, config.bind_attempts)?;
         let token = CancelToken::new();
@@ -139,6 +141,7 @@ impl Generation {
         );
         announce.poll(Instant::now());
         Ok(Self {
+            id,
             port: bound.port,
             token,
             alive,
@@ -148,6 +151,11 @@ impl Generation {
             announce,
             stopped: false,
         })
+    }
+
+    /// El número de esta generación.
+    pub(crate) fn id(&self) -> u64 {
+        self.id
     }
 
     /// El único puerto de esta generación.
