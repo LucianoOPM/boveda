@@ -1,12 +1,13 @@
 use std::net::{Ipv4Addr, SocketAddr};
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc::{Receiver, channel};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use secrecy::SecretBox;
-use vault_core::protocol::{KeyPair, PairingOffer, Refusal};
+use vault_core::protocol::{KeyPair, PairingError, PairingOffer, Refusal};
 
-use super::core::PairingCore;
+use super::core::{NewDevice, PairingCore, SessionId, Ticket, UserDecision};
 use super::{EndReason, IdentitySource, IdentityUnavailable, PairingView};
 use crate::network::Candidate;
 use crate::paired_devices::PairedDeviceStore;
@@ -52,6 +53,7 @@ fn net(generation: u64, port: u16) -> NetworkSnapshot {
 struct Rig {
     core: PairingCore,
     identity: Arc<FakeIdentity>,
+    paired: Arc<Mutex<PairedDeviceStore>>,
     _dir: tempfile::TempDir,
 }
 
@@ -63,10 +65,11 @@ fn rig() -> Rig {
     let identity = Arc::new(FakeIdentity {
         fail: AtomicBool::new(false),
     });
-    let core = PairingCore::new(identity.clone(), paired);
+    let core = PairingCore::new(identity.clone(), paired.clone());
     Rig {
         core,
         identity,
+        paired,
         _dir: dir,
     }
 }
@@ -388,4 +391,450 @@ fn ticket_carries_the_id_of_the_live_session() {
         rig.core.begin_connection(2, t0).is_none(),
         "otra generación"
     );
+}
+
+// ---- Conexión, confirmación, guardado y carreras ---------------------------
+
+const CONFIRMATION: Duration = Duration::from_secs(60);
+const NAME: &str = "Pixel de Ana";
+const FINGERPRINT: &str = "A1B2-C3D4-E5F6-0718";
+
+fn device(seed: u8, name: &str) -> NewDevice {
+    NewDevice {
+        name: name.to_owned(),
+        public_key: [seed; 32],
+    }
+}
+
+/// Una sesión abierta con un celular esperando la decisión del usuario.
+struct Pending {
+    id: SessionId,
+    ticket: Ticket,
+    decisions: Receiver<UserDecision>,
+    t0: Instant,
+}
+
+fn pending(rig: &mut Rig) -> Pending {
+    let t0 = Instant::now();
+    rig.core.set_clock(|| 1234);
+    rig.core.open(Some(&net(1, 40000)), t0);
+    let ticket = rig.core.begin_connection(1, t0).expect("ticket");
+    let (tx, decisions) = channel();
+    assert!(rig.core.offer_pending(
+        ticket.id,
+        NAME,
+        FINGERPRINT.to_owned(),
+        t0 + CONFIRMATION,
+        tx,
+        t0
+    ));
+    Pending {
+        id: ticket.id,
+        ticket,
+        decisions,
+        t0,
+    }
+}
+
+fn list_len(rig: &Rig) -> usize {
+    rig.paired.lock().expect("candado").list().len()
+}
+
+fn next_decision(pending: &Pending) -> Option<UserDecision> {
+    pending.decisions.try_recv().ok()
+}
+
+#[test]
+fn pending_shows_name_and_fingerprint_with_the_remaining_time() {
+    let mut rig = rig();
+    let p = pending(&mut rig);
+    assert_eq!(
+        rig.core.view(p.t0 + Duration::from_secs(10)),
+        PairingView::Confirming {
+            name: NAME.to_owned(),
+            fingerprint: FINGERPRINT.to_owned(),
+            remaining_ms: 50_000,
+        }
+    );
+}
+
+#[test]
+fn no_ticket_after_expiry_and_the_view_says_expired() {
+    let mut rig = rig();
+    let t0 = Instant::now();
+    rig.core.open(Some(&net(1, 40000)), t0);
+    assert!(rig.core.begin_connection(1, t0 + TTL).is_none());
+    assert_eq!(ended(rig.core.view(t0 + TTL)), EndReason::Expired);
+}
+
+#[test]
+fn accept_sends_the_decision_and_moves_to_saving() {
+    let mut rig = rig();
+    let p = pending(&mut rig);
+    rig.core.accept(p.t0 + Duration::from_secs(5));
+    assert_eq!(next_decision(&p), Some(UserDecision::Accept));
+    assert_eq!(
+        rig.core.view(p.t0),
+        PairingView::Saving {
+            name: NAME.to_owned()
+        }
+    );
+    assert_eq!(list_len(&rig), 0, "todavía no se guarda nada");
+}
+
+#[test]
+fn accept_after_the_deadline_is_ignored_even_if_the_view_still_says_confirming() {
+    let mut rig = rig();
+    let p = pending(&mut rig);
+    let almost = p.t0 + CONFIRMATION - Duration::from_millis(1);
+    assert!(matches!(
+        rig.core.view(almost),
+        PairingView::Confirming { .. }
+    ));
+    rig.core
+        .accept(p.t0 + CONFIRMATION + Duration::from_millis(1));
+    assert_eq!(next_decision(&p), Some(UserDecision::Cancel));
+    assert_eq!(ended(rig.core.view(p.t0)), EndReason::ConfirmationTimeout);
+    assert_eq!(list_len(&rig), 0);
+}
+
+#[test]
+fn reject_sends_reject_and_ends_with_rejected() {
+    let mut rig = rig();
+    let p = pending(&mut rig);
+    rig.core.reject();
+    assert_eq!(next_decision(&p), Some(UserDecision::Reject));
+    assert_eq!(ended(rig.core.view(p.t0)), EndReason::Rejected);
+    assert_eq!(list_len(&rig), 0);
+}
+
+#[test]
+fn confirmation_timeout_ends_the_session_and_sends_cancel() {
+    let mut rig = rig();
+    let p = pending(&mut rig);
+    rig.core.tick(Some(&net(1, 40000)), p.t0 + CONFIRMATION);
+    assert_eq!(next_decision(&p), Some(UserDecision::Cancel));
+    assert_eq!(ended(rig.core.view(p.t0)), EndReason::ConfirmationTimeout);
+}
+
+#[test]
+fn saves_only_after_confirmed_ok_and_with_paired_at_in_ms() {
+    let mut rig = rig();
+    let p = pending(&mut rig);
+    rig.core.accept(p.t0);
+    assert_eq!(list_len(&rig), 0);
+    rig.core.confirmed(p.id, Ok(device(9, NAME)), p.t0);
+    assert_eq!(
+        rig.core.view(p.t0),
+        PairingView::Done {
+            name: NAME.to_owned()
+        }
+    );
+    let store = rig.paired.lock().expect("candado");
+    assert_eq!(store.list().len(), 1);
+    assert_eq!(store.list()[0].name, NAME);
+    assert_eq!(store.list()[0].public_key, [9u8; 32]);
+    assert_eq!(store.list()[0].paired_at, 1234);
+    assert!(
+        p.ticket.cancel.is_cancelled(),
+        "la sesión terminada se cancela"
+    );
+}
+
+#[test]
+fn already_paired_is_success_and_keeps_the_existing_name_without_duplicates() {
+    let mut rig = rig();
+    rig.paired
+        .lock()
+        .expect("candado")
+        .add(crate::paired_devices::PairedDevice {
+            name: "Viejo".to_owned(),
+            public_key: [9u8; 32],
+            paired_at: 1,
+        })
+        .expect("emparejar antes");
+    let p = pending(&mut rig);
+    rig.core.accept(p.t0);
+    rig.core.confirmed(p.id, Ok(device(9, "Nuevo")), p.t0);
+    assert!(matches!(rig.core.view(p.t0), PairingView::Done { .. }));
+    let store = rig.paired.lock().expect("candado");
+    assert_eq!(store.list().len(), 1);
+    assert_eq!(store.list()[0].name, "Viejo");
+}
+
+#[test]
+fn a_full_list_ends_with_save_failed_and_stays_unchanged() {
+    let mut rig = rig();
+    {
+        let mut store = rig.paired.lock().expect("candado");
+        for seed in 0..64u8 {
+            store
+                .add(crate::paired_devices::PairedDevice {
+                    name: format!("Celular {seed}"),
+                    public_key: [seed; 32],
+                    paired_at: 1,
+                })
+                .expect("llenar la lista");
+        }
+    }
+    let p = pending(&mut rig);
+    rig.core.accept(p.t0);
+    rig.core.confirmed(p.id, Ok(device(200, NAME)), p.t0);
+    assert_eq!(ended(rig.core.view(p.t0)), EndReason::SaveFailed);
+    assert_eq!(list_len(&rig), 64);
+}
+
+#[test]
+fn a_poisoned_list_ends_with_save_failed() {
+    let mut rig = rig();
+    let poisoned = rig.paired.clone();
+    let _ = std::thread::spawn(move || {
+        let _guard = poisoned.lock().expect("candado");
+        panic!("envenenar el candado");
+    })
+    .join();
+    let p = pending(&mut rig);
+    rig.core.accept(p.t0);
+    rig.core.confirmed(p.id, Ok(device(9, NAME)), p.t0);
+    assert_eq!(ended(rig.core.view(p.t0)), EndReason::SaveFailed);
+}
+
+#[test]
+fn a_failed_confirm_saves_nothing() {
+    for (error, reason) in [
+        (PairingError::Closed, EndReason::PhoneDisconnected),
+        (PairingError::Timeout, EndReason::PhoneDisconnected),
+        (
+            PairingError::ConfirmationTimeout,
+            EndReason::ConfirmationTimeout,
+        ),
+    ] {
+        let mut rig = rig();
+        let p = pending(&mut rig);
+        rig.core.accept(p.t0);
+        rig.core.confirmed(p.id, Err(error), p.t0);
+        assert_eq!(ended(rig.core.view(p.t0)), reason);
+        assert_eq!(list_len(&rig), 0);
+    }
+}
+
+#[test]
+fn confirmed_without_the_user_having_accepted_is_ignored() {
+    let mut rig = rig();
+    let p = pending(&mut rig);
+    rig.core.confirmed(p.id, Ok(device(9, NAME)), p.t0);
+    assert!(matches!(
+        rig.core.view(p.t0),
+        PairingView::Confirming { .. }
+    ));
+    assert_eq!(list_len(&rig), 0);
+}
+
+#[test]
+fn connection_arrives_at_the_expiry_instant_no_dialog_no_save() {
+    let mut rig = rig();
+    let t0 = Instant::now();
+    rig.core.open(Some(&net(1, 40000)), t0);
+    let ticket = rig.core.begin_connection(1, t0).expect("ticket");
+    let (tx, decisions) = channel();
+    assert!(!rig.core.offer_pending(
+        ticket.id,
+        NAME,
+        FINGERPRINT.to_owned(),
+        t0 + TTL + CONFIRMATION,
+        tx,
+        t0 + TTL
+    ));
+    assert_eq!(ended(rig.core.view(t0 + TTL)), EndReason::Expired);
+    assert_eq!(list_len(&rig), 0);
+    assert!(
+        decisions.try_recv().is_err(),
+        "nadie decide sobre una sesión caducada"
+    );
+}
+
+#[test]
+fn second_connection_with_the_right_code_while_one_is_pending_does_not_replace_it() {
+    let mut rig = rig();
+    let p = pending(&mut rig);
+    assert!(rig.core.begin_connection(1, p.t0).is_none());
+    assert!(matches!(
+        rig.core.view(p.t0),
+        PairingView::Confirming { .. }
+    ));
+    assert_eq!(next_decision(&p), None);
+}
+
+#[test]
+fn cancel_during_confirmation_sends_cancel_and_saves_nothing() {
+    let mut rig = rig();
+    let p = pending(&mut rig);
+    rig.core.cancel();
+    assert_eq!(next_decision(&p), Some(UserDecision::Cancel));
+    assert_eq!(rig.core.view(p.t0), PairingView::Closed);
+    assert_eq!(list_len(&rig), 0);
+    assert!(p.ticket.cancel.is_cancelled());
+}
+
+#[test]
+fn cancel_and_regenerate_while_saving_are_ignored_and_the_save_completes() {
+    let mut rig = rig();
+    let p = pending(&mut rig);
+    rig.core.accept(p.t0);
+    rig.core.cancel();
+    rig.core.regenerate(Some(&net(1, 40000)), p.t0);
+    assert!(matches!(rig.core.view(p.t0), PairingView::Saving { .. }));
+    rig.core.confirmed(p.id, Ok(device(9, NAME)), p.t0);
+    assert!(matches!(rig.core.view(p.t0), PairingView::Done { .. }));
+    assert_eq!(list_len(&rig), 1);
+}
+
+#[test]
+fn network_change_during_confirmation_cancels_and_saves_nothing() {
+    let mut rig = rig();
+    let p = pending(&mut rig);
+    rig.core
+        .tick(Some(&net(2, 40000)), p.t0 + Duration::from_secs(1));
+    assert_eq!(next_decision(&p), Some(UserDecision::Cancel));
+    assert_eq!(ended(rig.core.view(p.t0)), EndReason::NetworkChanged);
+    assert_eq!(list_len(&rig), 0);
+}
+
+#[test]
+fn regenerate_with_a_pending_connection_of_the_old_session_cancels_it() {
+    let mut rig = rig();
+    let p = pending(&mut rig);
+    rig.core.regenerate(Some(&net(1, 40000)), p.t0);
+    assert_eq!(next_decision(&p), Some(UserDecision::Cancel));
+    assert!(matches!(rig.core.view(p.t0), PairingView::Waiting { .. }));
+    assert_ne!(rig.core.session_id(), Some(p.id));
+}
+
+#[test]
+fn late_confirmed_of_an_old_session_never_saves_or_changes_the_new_session() {
+    let mut rig = rig();
+    let p = pending(&mut rig);
+    rig.core.regenerate(Some(&net(1, 40000)), p.t0);
+    let before = rig.core.view(p.t0);
+    rig.core.confirmed(p.id, Ok(device(9, NAME)), p.t0);
+    assert_eq!(rig.core.view(p.t0), before);
+    assert_eq!(list_len(&rig), 0);
+}
+
+#[test]
+fn late_offer_pending_of_an_old_session_returns_false() {
+    let mut rig = rig();
+    let t0 = Instant::now();
+    rig.core.open(Some(&net(1, 40000)), t0);
+    let old = rig.core.begin_connection(1, t0).expect("ticket");
+    rig.core.regenerate(Some(&net(1, 40000)), t0);
+    let before = rig.core.view(t0);
+    let (tx, _rx) = channel();
+    assert!(!rig.core.offer_pending(
+        old.id,
+        NAME,
+        FINGERPRINT.to_owned(),
+        t0 + CONFIRMATION,
+        tx,
+        t0
+    ));
+    assert_eq!(rig.core.view(t0), before);
+}
+
+#[test]
+fn accept_arriving_after_regenerate_is_ignored_by_the_new_session() {
+    let mut rig = rig();
+    let p = pending(&mut rig);
+    rig.core.regenerate(Some(&net(1, 40000)), p.t0);
+    let before = rig.core.view(p.t0);
+    rig.core.accept(p.t0);
+    rig.core.reject();
+    assert_eq!(rig.core.view(p.t0), before);
+    assert_eq!(next_decision(&p), Some(UserDecision::Cancel));
+    assert_eq!(
+        next_decision(&p),
+        None,
+        "ni Accept ni Reject llegan al hilo viejo"
+    );
+}
+
+#[test]
+fn stale_ids_and_commands_without_a_session_are_noops() {
+    let mut rig = rig();
+    let p = pending(&mut rig);
+    rig.core.cancel();
+    rig.core.accept(p.t0);
+    rig.core.reject();
+    rig.core.confirmed(p.id, Ok(device(9, NAME)), p.t0);
+    rig.core.connection_failed(p.id, PairingError::Closed);
+    assert_eq!(rig.core.view(p.t0), PairingView::Closed);
+    assert_eq!(list_len(&rig), 0);
+}
+
+#[test]
+fn connection_failures_only_end_the_session_when_the_code_may_be_gone() {
+    let keeps = [
+        PairingError::Refused(Refusal::WrongCode),
+        PairingError::Refused(Refusal::Malformed),
+        PairingError::Refused(Refusal::AlreadyUsed),
+        PairingError::Refused(Refusal::Cancelled),
+        PairingError::Cancelled,
+    ];
+    for error in keeps {
+        let mut rig = rig();
+        let t0 = Instant::now();
+        rig.core.open(Some(&net(1, 40000)), t0);
+        let ticket = rig.core.begin_connection(1, t0).expect("ticket");
+        rig.core.connection_failed(ticket.id, error);
+        assert!(
+            matches!(rig.core.view(t0), PairingView::Waiting { .. }),
+            "{error:?} no debe terminar la sesión"
+        );
+    }
+    let ends = [
+        (
+            PairingError::Refused(Refusal::TooManyAttempts),
+            EndReason::TooManyAttempts,
+        ),
+        (PairingError::Refused(Refusal::Expired), EndReason::Expired),
+        (PairingError::Closed, EndReason::PhoneDisconnected),
+        (PairingError::Handshake, EndReason::PhoneDisconnected),
+        (PairingError::Timeout, EndReason::PhoneDisconnected),
+    ];
+    for (error, reason) in ends {
+        let mut rig = rig();
+        let t0 = Instant::now();
+        rig.core.open(Some(&net(1, 40000)), t0);
+        let ticket = rig.core.begin_connection(1, t0).expect("ticket");
+        rig.core.connection_failed(ticket.id, error);
+        assert_eq!(ended(rig.core.view(t0)), reason, "{error:?}");
+    }
+}
+
+#[test]
+fn late_confirmed_of_an_old_session_does_not_touch_a_new_session_that_is_saving() {
+    let mut rig = rig();
+    let old = pending(&mut rig);
+    rig.core.cancel();
+    // Sesión nueva, ya aceptada por el usuario y guardando.
+    let t0 = Instant::now();
+    rig.core.open(Some(&net(1, 40000)), t0);
+    let ticket = rig.core.begin_connection(1, t0).expect("ticket");
+    let (tx, _rx) = channel();
+    assert!(rig.core.offer_pending(
+        ticket.id,
+        "Otro celular",
+        FINGERPRINT.to_owned(),
+        t0 + CONFIRMATION,
+        tx,
+        t0
+    ));
+    rig.core.accept(t0);
+    // La respuesta tardía de la sesión vieja no guarda nada ni cierra la nueva.
+    rig.core.confirmed(old.id, Ok(device(9, NAME)), t0);
+    assert!(matches!(rig.core.view(t0), PairingView::Saving { .. }));
+    assert_eq!(list_len(&rig), 0);
+    rig.core
+        .confirmed(ticket.id, Ok(device(7, "Otro celular")), t0);
+    assert_eq!(list_len(&rig), 1);
 }
