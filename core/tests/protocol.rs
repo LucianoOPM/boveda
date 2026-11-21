@@ -1416,3 +1416,52 @@ fn password_never_appears_in_debug_or_errors() {
         assert!(!format!("{error} {error:?}").contains(secret));
     }
 }
+
+// ---- Texto del QR (#102) ----
+
+/// Codificador de prueba, igual al de `desktop/src-tauri/src/qr.rs`.
+fn qr_text_of(offer: &PairingOffer) -> String {
+    const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+    let bytes = offer.encode().unwrap();
+    let mut text = String::new();
+    for chunk in bytes.chunks(3) {
+        let n =
+            chunk.iter().fold(0u32, |acc, b| (acc << 8) | u32::from(*b)) << (8 * (3 - chunk.len()));
+        for i in 0..=chunk.len() {
+            text.push(char::from(ALPHABET[((n >> (18 - 6 * i)) & 63) as usize]));
+        }
+    }
+    text
+}
+
+#[test]
+fn qr_text_roundtrip_through_public_api() {
+    for address in [
+        ADDRESS,
+        SocketAddr::new(
+            IpAddr::V6(Ipv6Addr::new(0xfd00, 0, 0, 0, 0, 0, 0, 1)),
+            65535,
+        ),
+    ] {
+        let original = offer(address);
+        let decoded = PairingOffer::decode_qr_text(&qr_text_of(&original)).unwrap();
+        assert_eq!(decoded.public_key(), original.public_key());
+        assert_eq!(decoded.address(), address);
+        assert_eq!(
+            decoded.code().expose_bytes(),
+            original.code().expose_bytes()
+        );
+    }
+}
+
+proptest! {
+    #[test]
+    fn qr_text_never_panics_on_arbitrary_input(text in ".{0,200}") {
+        let _ = PairingOffer::decode_qr_text(&text);
+    }
+
+    #[test]
+    fn qr_text_never_panics_on_alphabet_input(text in "[A-Za-z0-9_-]{0,130}") {
+        let _ = PairingOffer::decode_qr_text(&text);
+    }
+}

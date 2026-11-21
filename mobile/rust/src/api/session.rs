@@ -22,12 +22,16 @@ const VAULT_KEY_LEN: usize = 32;
 
 use super::entries::entry_id_to_hex;
 use super::error::{FacadeResult, VaultError};
+use super::net::NetState;
 
 /// Sesión sobre la bóveda de una ruta fija. Empieza sin bóveda.
 #[frb(opaque)]
 pub struct VaultSession {
     path: PathBuf,
-    vault: Mutex<Option<Vault>>,
+    pub(crate) vault: Mutex<Option<Vault>>,
+    /// Época y operación de red en curso (ver `net.rs`). Orden de candados:
+    /// `vault` y después `net`.
+    pub(crate) net: Mutex<NetState>,
 }
 
 /// Resultado de desbloquear o importar, sin texto plano.
@@ -58,6 +62,7 @@ impl VaultSession {
         Self {
             path: PathBuf::from(path),
             vault: Mutex::new(None),
+            net: Mutex::new(NetState::new()),
         }
     }
 
@@ -121,17 +126,23 @@ impl VaultSession {
             .map(UnlockReport::from)
     }
 
-    /// Bloquea. Sin bóveda, o con la bóveda ya bloqueada, no hace nada.
+    /// Bloquea. Sin bóveda, o con la bóveda ya bloqueada, no hace nada con la
+    /// bóveda; siempre invalida las operaciones de red en curso.
     ///
-    /// Nunca falla: con el `Mutex` envenenado por un pánico anterior,
-    /// bloquea igual, porque bloquear solo suelta la llave y es seguro sobre
-    /// cualquier estado (#39). El envenenamiento se conserva: el resto de las
-    /// operaciones siguen dando `SessionPoisoned`.
+    /// Toma `vault` y, sin soltarlo, `net`: con los dos tomados bloquea la
+    /// bóveda (borra su llave), sube la época, cancela el token vigente y
+    /// libera el estado «ocupado». No espera a ninguna conexión: la red nunca
+    /// corre con esos candados. Nunca falla: con un candado envenenado por un
+    /// pánico anterior, bloquea igual, porque bloquear solo suelta la llave y
+    /// es seguro sobre cualquier estado (#39). El envenenamiento se conserva:
+    /// el resto de las operaciones siguen dando `SessionPoisoned`.
     pub fn lock(&self) -> FacadeResult<()> {
         let mut slot = self.vault.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut net = self.net();
         if let Some(vault) = slot.as_mut() {
             vault.lock();
         }
+        net.invalidate();
         Ok(())
     }
 

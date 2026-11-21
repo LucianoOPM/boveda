@@ -9,6 +9,9 @@ import 'error.dart';
 
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
+import 'pcs.dart';
+import 'sending.dart';
+
 // These functions are ignored because they are not marked as `pub`: `path`, `secret_from`, `slot`, `with_vault`
 // These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `clone`, `eq`, `fmt`, `from`
 
@@ -33,6 +36,11 @@ abstract class VaultSession implements RustOpaqueInterface {
     String? newPassword,
     String? newNotes,
   });
+
+  /// La identidad del celular; la crea si todavía no hay ninguna. Una
+  /// identidad que existe pero no se puede leer da `CorruptIdentity` y no
+  /// se sobrescribe (las PCs emparejadas conocen esa llave).
+  Future<IdentityInfo> ensureIdentity();
 
   /// Datos de búsqueda y fechas de una entrada, desde la caché del núcleo:
   /// no toca el disco ni el secreto. Un id que no está en la lista da
@@ -68,12 +76,16 @@ abstract class VaultSession implements RustOpaqueInterface {
   /// `true` también sin bóveda.
   Future<bool> isLocked();
 
-  /// Bloquea. Sin bóveda, o con la bóveda ya bloqueada, no hace nada.
+  /// Bloquea. Sin bóveda, o con la bóveda ya bloqueada, no hace nada con la
+  /// bóveda; siempre invalida las operaciones de red en curso.
   ///
-  /// Nunca falla: con el `Mutex` envenenado por un pánico anterior,
-  /// bloquea igual, porque bloquear solo suelta la llave y es seguro sobre
-  /// cualquier estado (#39). El envenenamiento se conserva: el resto de las
-  /// operaciones siguen dando `SessionPoisoned`.
+  /// Toma `vault` y, sin soltarlo, `net`: con los dos tomados bloquea la
+  /// bóveda (borra su llave), sube la época, cancela el token vigente y
+  /// libera el estado «ocupado». No espera a ninguna conexión: la red nunca
+  /// corre con esos candados. Nunca falla: con un candado envenenado por un
+  /// pánico anterior, bloquea igual, porque bloquear solo suelta la llave y
+  /// es seguro sobre cualquier estado (#39). El envenenamiento se conserva:
+  /// el resto de las operaciones siguen dando `SessionPoisoned`.
   Future<void> lock();
 
   /// Crea una sesión sin bóveda sobre `path`. No toca el disco: el núcleo
@@ -83,6 +95,32 @@ abstract class VaultSession implements RustOpaqueInterface {
 
   /// Abre la bóveda existente; queda bloqueada.
   Future<void> open();
+
+  /// Empareja con la PC del QR y la guarda en la bóveda.
+  ///
+  /// `offer_text` es el texto del QR tal cual (base64url sin relleno; no se
+  /// recorta nada). `device_name` es el nombre que verá la PC. La PC se
+  /// guarda con un nombre provisional derivado de su llave; si ya estaba en
+  /// la lista, conserva su id, nombre y fecha y solo actualiza la IP.
+  ///
+  /// Una sola operación de red a la vez (`Busy`). Un bloqueo de la bóveda
+  /// mientras corre la cancela (`Cancelled`) y, si llega justo después de
+  /// la aceptación y antes de guardar, da `Locked` y no guarda nada.
+  ///
+  /// **`Cancelled` no implica «no guardado»**: si el bloqueo cae después de
+  /// guardar y antes de devolver, la PC ya está en la lista aunque Dart
+  /// reciba `Cancelled`. Tras un bloqueo, la pantalla vuelve a leer
+  /// `paired_pcs()` al desbloquear.
+  Future<PairedPcSummary> pair({
+    required String offerText,
+    required String deviceName,
+  });
+
+  /// Las PCs emparejadas.
+  Future<PairedPcList> pairedPcs();
+
+  /// Quita una PC emparejada, también una fila dañada.
+  Future<void> removePairedPc({required String id});
 
   /// Notas de una entrada, para mostrarlas. La contraseña se descarta sin
   /// salir del núcleo.
@@ -95,6 +133,20 @@ abstract class VaultSession implements RustOpaqueInterface {
   /// Entradas que coinciden con `query`, la mejor primero. Sin texto,
   /// todas: las usadas más recientemente primero.
   Future<List<EntrySummary>> search({required String query});
+
+  /// Envía la contraseña de la entrada `entry_id` a la PC `pc_id`, que
+  /// escucha en `address` (`ip:puerto`).
+  ///
+  /// Una sola operación de red a la vez (`Busy`). Un bloqueo de la bóveda
+  /// mientras corre la cancela (`Cancelled`; en ese caso la contraseña pudo
+  /// haber llegado ya a la PC). Revelar la entrada actualiza su
+  /// `last_used_at`, como cualquier revelado. Cómo se obtiene la dirección
+  /// (última IP, mDNS, IP manual) lo decide la #104.
+  Future<SendOutcome> sendToPc({
+    required String pcId,
+    required String entryId,
+    required String address,
+  });
 
   Future<UnlockReport> unlock({required String password});
 

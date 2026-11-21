@@ -26,10 +26,13 @@ impl VaultSession {
     pub fn import_backup(&self, backup: String, password: String) -> FacadeResult<UnlockReport> {
         let password = secret_from(password);
         let mut slot = self.slot()?;
+        // Antes de soltar la `Vault`: ninguna operación de red anterior puede
+        // actuar sobre la bóveda restaurada, aunque la importación falle.
+        self.invalidate_net();
         // La especificación exige soltar la `Vault` sobre la ruta antes de
         // importar; se borra de memoria al soltarse.
         drop(slot.take());
-        match Vault::import(Path::new(&backup), self.path(), &password) {
+        let result = match Vault::import(Path::new(&backup), self.path(), &password) {
             Ok((vault, report)) => {
                 *slot = Some(vault);
                 Ok(report.into())
@@ -38,7 +41,13 @@ impl VaultSession {
                 *slot = Vault::open(self.path()).ok();
                 Err(error.into())
             }
-        }
+        };
+        // Otra vez al terminar, ya con la bóveda final en su sitio: una
+        // operación que empezó durante la importación capturó la época de la
+        // primera subida y también queda invalidada. Ningún camino sale sin
+        // pasar por aquí (el `?` de arriba ocurre antes de empezar).
+        self.invalidate_net();
+        result
     }
 }
 

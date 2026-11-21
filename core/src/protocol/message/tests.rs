@@ -882,3 +882,124 @@ fn pairing_request_rejects_noncanonical_varint() {
         Some(ProtocolError::Malformed)
     );
 }
+
+// ---- Texto del QR (#102) ----
+
+const QR_ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+
+/// Codificador de prueba: el mismo de `desktop/src-tauri/src/qr.rs`.
+fn base64url(bytes: &[u8]) -> String {
+    let mut text = String::new();
+    for chunk in bytes.chunks(3) {
+        let n =
+            chunk.iter().fold(0u32, |acc, b| (acc << 8) | u32::from(*b)) << (8 * (3 - chunk.len()));
+        for i in 0..=chunk.len() {
+            text.push(char::from(QR_ALPHABET[((n >> (18 - 6 * i)) & 63) as usize]));
+        }
+    }
+    text
+}
+
+fn sample_offer(address: SocketAddr) -> PairingOffer {
+    PairingOffer::new(
+        PublicKey::from_bytes([5; 32]),
+        address,
+        PairingCode::from_bytes(SecretBox::new(Box::new([9; 32]))),
+    )
+    .unwrap()
+}
+
+fn v4_offer() -> PairingOffer {
+    sample_offer("192.168.1.20:50000".parse().unwrap())
+}
+
+fn qr_text(offer: &PairingOffer) -> String {
+    base64url(&offer.encode().unwrap())
+}
+
+#[test]
+fn qr_text_roundtrip() {
+    for address in ["192.168.1.20:50000", "[fd00::1]:65535"] {
+        let original = sample_offer(address.parse().unwrap());
+        let decoded = PairingOffer::decode_qr_text(&qr_text(&original)).unwrap();
+        assert_eq!(decoded.public_key(), original.public_key());
+        assert_eq!(decoded.address(), original.address());
+        assert_eq!(
+            decoded.code().expose_bytes(),
+            original.code().expose_bytes()
+        );
+    }
+}
+
+#[test]
+fn qr_text_rejects_padding_whitespace_and_foreign_characters() {
+    let text = qr_text(&v4_offer());
+    for extra in ["=", "\n", " ", "+", "/", "é"] {
+        assert_eq!(
+            PairingOffer::decode_qr_text(&format!("{text}{extra}")).unwrap_err(),
+            ProtocolError::Malformed,
+            "sobrante {extra:?}"
+        );
+    }
+    assert_eq!(
+        PairingOffer::decode_qr_text(&format!(" {text}")).unwrap_err(),
+        ProtocolError::Malformed
+    );
+}
+
+#[test]
+fn qr_text_rejects_length_mod_4_equal_1() {
+    assert_eq!(
+        PairingOffer::decode_qr_text("AAAAA").unwrap_err(),
+        ProtocolError::Malformed
+    );
+}
+
+#[test]
+fn qr_text_rejects_non_canonical_trailing_bits() {
+    let mut text = qr_text(&v4_offer());
+    assert_ne!(text.len() % 4, 0, "la prueba necesita bits sobrantes");
+    let last = text.pop().unwrap();
+    let value = QR_ALPHABET
+        .iter()
+        .position(|c| char::from(*c) == last)
+        .unwrap();
+    assert_eq!(
+        value & 3,
+        0,
+        "el codificador deja los bits sobrantes en cero"
+    );
+    text.push(char::from(QR_ALPHABET[value | 1]));
+    assert_eq!(
+        PairingOffer::decode_qr_text(&text).unwrap_err(),
+        ProtocolError::Malformed
+    );
+}
+
+#[test]
+fn qr_text_too_long_is_rejected_before_decoding() {
+    let limit = (MAX_PAIRING_OFFER_LEN * 4).div_ceil(3);
+    assert_eq!(
+        PairingOffer::decode_qr_text(&"A".repeat(limit + 1)).unwrap_err(),
+        ProtocolError::TooLarge
+    );
+    // En el tope exacto ya no es `TooLarge`: falla después, al leer el mensaje.
+    assert_ne!(
+        PairingOffer::decode_qr_text(&"A".repeat(limit)).unwrap_err(),
+        ProtocolError::TooLarge
+    );
+}
+
+#[test]
+fn qr_text_of_other_message_kind_is_unexpected_kind() {
+    let ack = base64url(&Ack::new(AckOutcome::Copied).encode().unwrap());
+    assert_eq!(
+        PairingOffer::decode_qr_text(&ack).unwrap_err(),
+        ProtocolError::UnexpectedKind(3)
+    );
+}
+
+#[test]
+fn qr_text_empty_does_not_panic() {
+    assert!(PairingOffer::decode_qr_text("").is_err());
+}

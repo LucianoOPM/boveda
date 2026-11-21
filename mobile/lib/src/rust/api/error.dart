@@ -7,7 +7,7 @@ import '../frb_generated.dart';
 
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `eq`, `fmt`, `from`, `from`, `from`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `eq`, `fmt`, `from`, `from`, `from`, `from`, `from`, `from`
 
 /// Error que reciben las funciones de Dart.
 ///
@@ -73,4 +73,71 @@ enum VaultError {
 
   /// Una operación anterior hizo panic con el candado de la sesión tomado.
   sessionPoisoned,
+
+  /// Ya hay una operación de red en curso (emparejar o enviar).
+  busy,
+
+  /// La operación de red se canceló: la bóveda se bloqueó (o se importó un
+  /// respaldo) mientras corría.
+  cancelled,
+
+  /// El texto del QR no es una oferta de emparejamiento válida.
+  invalidPairingOffer,
+
+  /// El nombre del celular no es válido (vacío, largo o con caracteres de
+  /// control).
+  invalidDeviceName,
+
+  /// La dirección de la PC no es `ip:puerto`.
+  invalidAddress,
+
+  /// El id de la PC no tiene exactamente 32 caracteres hexadecimales en
+  /// minúsculas.
+  invalidPairedPcId,
+
+  /// La identidad del celular existe pero no se puede leer.
+  corruptIdentity,
+
+  /// La fila de la PC emparejada no se puede leer.
+  corruptPairedPc,
+  pairedPcNotFound,
+
+  /// Esa llave pública ya está en la lista de PCs.
+  pairedPcExists,
+  invalidPairedPcNameEmpty,
+  invalidPairedPcNameTooLong,
+
+  /// Campos que el núcleo agregue en el futuro (`InvalidPairedPcField` es
+  /// `#[non_exhaustive]`).
+  invalidPairedPcOther,
+
+  /// No se pudo abrir la conexión con la PC (rechazada, inalcanzable o sin
+  /// respuesta en el plazo).
+  connectFailed,
+
+  /// Se agotó el tiempo de un paso del protocolo.
+  networkTimeout,
+
+  /// La PC cerró la conexión. No distingue un corte de red de «la PC no
+  /// reconoce al celular»: por diseño se ven igual.
+  connectionClosed,
+
+  /// Error de entrada o salida de la red.
+  networkIo,
+
+  /// La respuesta de la PC no se autentica: no es la PC esperada.
+  peerNotAuthentic,
+
+  /// El usuario rechazó el emparejamiento en la PC.
+  pairingRejected,
+
+  /// El usuario no decidió a tiempo en la PC.
+  pairingConfirmationTimeout,
+
+  /// La PC consideró caducado el envío.
+  sendExpired,
+
+  /// El mensaje no cumple el protocolo, falló el apretón de manos o el
+  /// núcleo agregó un error que la fachada aún no distingue.
+  protocolFailure,
 }
