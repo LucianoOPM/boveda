@@ -15,6 +15,7 @@ use std::time::{Duration, Instant};
 use vault_core::protocol::{CancelToken, PublicKey, SendTimeouts, receive_send};
 
 use super::bind::{BindError, bind_all};
+use super::route::{Route, classify};
 use super::{Config, Deps};
 use crate::announce::{AnnounceSlot, Service};
 use crate::backoff::Backoff;
@@ -79,6 +80,8 @@ impl Drop for SlotGuard {
 
 /// Lo que comparten el hilo de `accept` y los trabajadores.
 struct Shared {
+    /// Número de esta generación (ver `NetworkSnapshot::generation`).
+    id: u64,
     deps: Deps,
     timeouts: SendTimeouts,
     token: CancelToken,
@@ -110,6 +113,7 @@ impl Generation {
         let bound = bind_all(ips, config.preferred_port, config.bind_attempts)?;
         let token = CancelToken::new();
         let shared = Arc::new(Shared {
+            id,
             deps: deps.clone(),
             timeouts: config.timeouts,
             token: token.clone(),
@@ -278,9 +282,20 @@ fn handle(stream: TcpStream, shared: &Arc<Shared>) {
     }
 }
 
-/// Atiende una conexión: `receive_send` autentica y autoriza; con un envío
-/// válido se entrega la contraseña y se confirma según el resultado.
+/// Atiende una conexión según su primera trama: un emparejamiento va al
+/// manejador de la app, un envío a `receive_send` y cualquier otra cosa se
+/// cierra sin leer más ni escribir. Antes de #101 toda conexión era un envío.
 fn run_connection(stream: TcpStream, shared: &Shared) {
+    match classify(&stream, &shared.token, shared.timeouts.step) {
+        Route::Send => run_send(stream, shared),
+        Route::Pairing => shared.deps.pairing.serve(stream, shared.id),
+        Route::Reject => {}
+    }
+}
+
+/// Atiende un envío: `receive_send` autentica y autoriza; con un envío válido
+/// se entrega la contraseña y se confirma según el resultado.
+fn run_send(stream: TcpStream, shared: &Shared) {
     let deps = &shared.deps;
     let result = receive_send(
         stream,

@@ -5,12 +5,14 @@
 
 mod bind;
 mod generation;
+mod route;
 mod supervisor;
 mod tauri_sink;
 
 #[cfg(test)]
 pub(crate) mod test_support;
 
+use std::net::TcpStream;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -49,6 +51,28 @@ pub trait NetworkView: Send + Sync + 'static {
 pub trait PasswordSink: Send + Sync + 'static {
     /// Entrega la contraseña. `Ok` solo si quedó escrita en el portapapeles.
     fn deliver(&self, password: &SecretString) -> Result<(), DeliverFailed>;
+}
+
+/// Quién atiende las conexiones de emparejamiento (#101).
+///
+/// El servidor enruta por la primera trama (ver `route`): una de 48 bytes es un
+/// emparejamiento y llega aquí, con el encabezado de largo **sin consumir**. El
+/// manejador es dueño de la conexión y la cierra al soltarla; `serve` corre en
+/// el hilo del trabajador (con su ranura ocupada) y puede bloquearse mientras
+/// espera la decisión del usuario. `generation` es el número de la generación
+/// que aceptó la conexión (`NetworkSnapshot::generation`).
+pub trait PairingHandler: Send + Sync + 'static {
+    fn serve(&self, stream: TcpStream, generation: u64);
+}
+
+/// Manejador que cierra todo: para cuando no hay quien empareje.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct RefusePairing;
+
+impl PairingHandler for RefusePairing {
+    fn serve(&self, stream: TcpStream, _generation: u64) {
+        drop(stream);
+    }
 }
 
 /// No se pudo escribir la contraseña. Sin datos.
@@ -102,6 +126,8 @@ pub struct Deps {
     pub paired: Arc<Mutex<PairedDeviceStore>>,
     /// Destino de las contraseñas recibidas.
     pub sink: Arc<dyn PasswordSink>,
+    /// Quién atiende las conexiones de emparejamiento.
+    pub pairing: Arc<dyn PairingHandler>,
     /// Fábrica del anunciante mDNS (uno por generación).
     pub announcer: AnnouncerFactory,
 }

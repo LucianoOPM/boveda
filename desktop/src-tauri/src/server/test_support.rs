@@ -11,7 +11,7 @@ use vault_core::protocol::{
     AckOutcome, CancelToken, KeyPair, SendError, SendMessage, SendTimeouts, send_to_pc,
 };
 
-use super::{Config, DeliverFailed, Deps, PasswordSink};
+use super::{Config, DeliverFailed, Deps, PairingHandler, PasswordSink};
 use crate::announce::{AnnounceError, Announcer, AnnouncerFactory, Service};
 use crate::paired_devices::{PairedDevice, PairedDeviceStore};
 
@@ -53,12 +53,33 @@ impl PasswordSink for TestSink {
     }
 }
 
+/// Manejador de emparejamiento de pruebas: anota la generación de cada conexión
+/// que recibe y conserva el `TcpStream` (para que los tests lo lean o vean que
+/// sigue abierto). Con `hold` en `true`, `serve` espera.
+#[derive(Default)]
+pub(crate) struct RecordingPairing {
+    pub(crate) calls: Mutex<Vec<u64>>,
+    pub(crate) streams: Mutex<Vec<TcpStream>>,
+    pub(crate) hold: AtomicBool,
+}
+
+impl PairingHandler for RecordingPairing {
+    fn serve(&self, stream: TcpStream, generation: u64) {
+        self.calls.lock().expect("candado").push(generation);
+        self.streams.lock().expect("candado").push(stream);
+        while self.hold.load(Ordering::SeqCst) {
+            thread::sleep(Duration::from_millis(10));
+        }
+    }
+}
+
 /// Una PC de prueba con un celular ya emparejado.
 pub(crate) struct Fixture {
     pub(crate) identity: Arc<KeyPair>,
     pub(crate) phone: KeyPair,
     pub(crate) paired: Arc<Mutex<PairedDeviceStore>>,
     pub(crate) sink: Arc<TestSink>,
+    pub(crate) pairing: Arc<RecordingPairing>,
     pub(crate) announce: Arc<AnnounceLog>,
     _dir: tempfile::TempDir,
 }
@@ -81,6 +102,7 @@ impl Fixture {
             phone,
             paired: Arc::new(Mutex::new(store)),
             sink: Arc::new(TestSink::default()),
+            pairing: Arc::new(RecordingPairing::default()),
             announce: Arc::new(AnnounceLog::default()),
             _dir: dir,
         }
@@ -91,6 +113,7 @@ impl Fixture {
             identity: Arc::clone(&self.identity),
             paired: Arc::clone(&self.paired),
             sink: Arc::clone(&self.sink) as Arc<dyn PasswordSink>,
+            pairing: Arc::clone(&self.pairing) as Arc<dyn PairingHandler>,
             announcer: announcer_factory(&self.announce),
         }
     }

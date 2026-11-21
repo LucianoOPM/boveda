@@ -88,6 +88,8 @@ fn start_server(app: &tauri::App) {
         identity: Arc::new(identity),
         paired,
         sink: Arc::new(TauriSink::new(app.handle().clone())),
+        // Provisional: la ventana del QR (#101) lo reemplaza por el controlador.
+        pairing: Arc::new(server::RefusePairing),
         announcer: Arc::new(|| Box::new(MdnsAnnouncer::new())),
     };
     app.manage(ServerSupervisor::start(
