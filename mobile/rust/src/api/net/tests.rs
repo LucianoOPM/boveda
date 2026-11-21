@@ -73,11 +73,21 @@ fn lock_takes_vault_first_then_net() {
         let locker = scope.spawn(|| session.lock().unwrap());
         // Mientras `vault` sigue tomado por nosotros, `lock()` no debe haber
         // cambiado nada: ni la época, ni el token, ni la operación activa.
-        thread::sleep(Duration::from_millis(300));
-        assert_eq!(session.net_epoch(), epoch);
-        assert!(!op.token().is_cancelled());
-        assert_eq!(active(&session), op_id);
-        assert!(slot.as_ref().is_some_and(|v| !v.is_locked()));
+        // `try_lock` y no `net_epoch()`: si `lock()` tomara `net` antes que
+        // `vault`, esperaría a `vault` con `net` tomado y la prueba debe
+        // **fallar**, no colgarse.
+        for _ in 0..30 {
+            thread::sleep(Duration::from_millis(10));
+            let net = session
+                .net
+                .try_lock()
+                .expect("lock() retiene `net` mientras espera `vault`");
+            assert_eq!(net.epoch, epoch);
+            assert_eq!(net.active, op_id);
+            assert!(!op.token().is_cancelled());
+            drop(net);
+            assert!(slot.as_ref().is_some_and(|v| !v.is_locked()));
+        }
         drop(slot);
         locker.join().unwrap();
     });
@@ -85,6 +95,40 @@ fn lock_takes_vault_first_then_net() {
     assert_eq!(session.net_epoch(), epoch + 1);
     assert!(op.token().is_cancelled());
     assert_eq!(active(&session), None);
+    assert_eq!(session.is_locked(), Ok(true));
+}
+
+#[test]
+fn lock_keeps_vault_while_it_waits_for_net() {
+    // `lock()` no puede soltar `vault` antes de tener `net`: si lo hiciera
+    // (los dos candados en orden pero sin anidar), una operación vieja podría
+    // ver la bóveda desbloqueada por otro hilo con la época todavía vigente y
+    // guardar (el hueco que el diseño prohíbe).
+    let (_dir, session) = unlocked();
+    thread::scope(|scope| {
+        let net = session.net();
+        let locker = scope.spawn(|| session.lock().unwrap());
+        // Con `net` tomado por nosotros, `lock()` toma `vault` y se queda
+        // esperando `net`: `vault` tiene que seguir tomado.
+        let started = Instant::now();
+        while session.vault.try_lock().is_ok() {
+            assert!(
+                started.elapsed() < Duration::from_secs(3),
+                "lock() no llegó a tomar `vault`"
+            );
+            thread::sleep(Duration::from_millis(5));
+        }
+        // Y se mantiene tomado mientras `net` sigue ocupado.
+        for _ in 0..30 {
+            thread::sleep(Duration::from_millis(10));
+            assert!(
+                session.vault.try_lock().is_err(),
+                "lock() soltó `vault` antes de tomar `net`"
+            );
+        }
+        drop(net);
+        locker.join().unwrap();
+    });
     assert_eq!(session.is_locked(), Ok(true));
 }
 

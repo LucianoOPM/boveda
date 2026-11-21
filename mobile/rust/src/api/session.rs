@@ -28,7 +28,7 @@ use super::net::NetState;
 #[frb(opaque)]
 pub struct VaultSession {
     path: PathBuf,
-    vault: Mutex<Option<Vault>>,
+    pub(crate) vault: Mutex<Option<Vault>>,
     /// Época y operación de red en curso (ver `net.rs`). Orden de candados:
     /// `vault` y después `net`.
     pub(crate) net: Mutex<NetState>,

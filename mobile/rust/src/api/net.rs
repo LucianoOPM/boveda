@@ -33,7 +33,7 @@ pub(crate) const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// Época, token y operación activa de la sesión.
 pub(crate) struct NetState {
-    epoch: u64,
+    pub(crate) epoch: u64,
     token: CancelToken,
     /// Id de la operación de red en curso.
     pub(crate) active: Option<u64>,
@@ -66,7 +66,7 @@ impl NetState {
 pub(crate) struct OpGuard<'a> {
     session: &'a VaultSession,
     op: u64,
-    epoch: u64,
+    pub(crate) epoch: u64,
     token: CancelToken,
 }
 
