@@ -1624,12 +1624,16 @@ class VaultSessionImpl extends RustOpaque implements VaultSession {
   Future<bool> isLocked() =>
       RustLib.instance.api.crateApiSessionVaultSessionIsLocked(that: this);
 
-  /// Bloquea. Sin bóveda, o con la bóveda ya bloqueada, no hace nada.
+  /// Bloquea. Sin bóveda, o con la bóveda ya bloqueada, no hace nada con la
+  /// bóveda; siempre invalida las operaciones de red en curso.
   ///
-  /// Nunca falla: con el `Mutex` envenenado por un pánico anterior,
-  /// bloquea igual, porque bloquear solo suelta la llave y es seguro sobre
-  /// cualquier estado (#39). El envenenamiento se conserva: el resto de las
-  /// operaciones siguen dando `SessionPoisoned`.
+  /// Toma `vault` y, sin soltarlo, `net`: con los dos tomados bloquea la
+  /// bóveda (borra su llave), sube la época, cancela el token vigente y
+  /// libera el estado «ocupado». No espera a ninguna conexión: la red nunca
+  /// corre con esos candados. Nunca falla: con un candado envenenado por un
+  /// pánico anterior, bloquea igual, porque bloquear solo suelta la llave y
+  /// es seguro sobre cualquier estado (#39). El envenenamiento se conserva:
+  /// el resto de las operaciones siguen dando `SessionPoisoned`.
   Future<void> lock() =>
       RustLib.instance.api.crateApiSessionVaultSessionLock(that: this);
 
