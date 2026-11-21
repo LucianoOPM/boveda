@@ -225,6 +225,12 @@ class FakeVaultSession implements VaultSession {
   Future<PairedPcList> pairedPcs() => throw UnimplementedError();
 
   @override
+  Future<PairedPcSummary> pair({
+    required String offerText,
+    required String deviceName,
+  }) => throw UnimplementedError();
+
+  @override
   Future<void> removePairedPc({required String id}) =>
       throw UnimplementedError();
 

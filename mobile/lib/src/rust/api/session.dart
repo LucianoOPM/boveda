@@ -95,6 +95,21 @@ abstract class VaultSession implements RustOpaqueInterface {
   /// Abre la bóveda existente; queda bloqueada.
   Future<void> open();
 
+  /// Empareja con la PC del QR y la guarda en la bóveda.
+  ///
+  /// `offer_text` es el texto del QR tal cual (base64url sin relleno; no se
+  /// recorta nada). `device_name` es el nombre que verá la PC. La PC se
+  /// guarda con un nombre provisional derivado de su llave; si ya estaba en
+  /// la lista, conserva su id, nombre y fecha y solo actualiza la IP.
+  ///
+  /// Una sola operación de red a la vez (`Busy`). Un bloqueo de la bóveda
+  /// mientras corre la cancela (`Cancelled`) y, si llega justo después de
+  /// la aceptación y antes de guardar, da `Locked` y no guarda nada.
+  Future<PairedPcSummary> pair({
+    required String offerText,
+    required String deviceName,
+  });
+
   /// Las PCs emparejadas.
   Future<PairedPcList> pairedPcs();
 

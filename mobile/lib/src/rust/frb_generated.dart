@@ -73,7 +73,7 @@ class RustLib extends BaseEntrypoint<RustLibApi, RustLibApiImpl, RustLibWire> {
   String get codegenVersion => '2.13.0';
 
   @override
-  int get rustContentHash => 1064257922;
+  int get rustContentHash => 49761574;
 
   static const kDefaultExternalLibraryLoaderConfig =
       ExternalLibraryLoaderConfig(
@@ -142,6 +142,12 @@ abstract class RustLibApi extends BaseApi {
   VaultSession crateApiSessionVaultSessionNew({required String path});
 
   Future<void> crateApiSessionVaultSessionOpen({required VaultSession that});
+
+  Future<PairedPcSummary> crateApiSessionVaultSessionPair({
+    required VaultSession that,
+    required String offerText,
+    required String deviceName,
+  });
 
   Future<PairedPcList> crateApiSessionVaultSessionPairedPcs({
     required VaultSession that,
@@ -669,6 +675,46 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       const TaskConstMeta(debugName: "VaultSession_open", argNames: ["that"]);
 
   @override
+  Future<PairedPcSummary> crateApiSessionVaultSessionPair({
+    required VaultSession that,
+    required String offerText,
+    required String deviceName,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerVaultSession(
+            that,
+            serializer,
+          );
+          sse_encode_String(offerText, serializer);
+          sse_encode_String(deviceName, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 14,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_paired_pc_summary,
+          decodeErrorData: sse_decode_vault_error,
+        ),
+        constMeta: kCrateApiSessionVaultSessionPairConstMeta,
+        argValues: [that, offerText, deviceName],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiSessionVaultSessionPairConstMeta =>
+      const TaskConstMeta(
+        debugName: "VaultSession_pair",
+        argNames: ["that", "offerText", "deviceName"],
+      );
+
+  @override
   Future<PairedPcList> crateApiSessionVaultSessionPairedPcs({
     required VaultSession that,
   }) {
@@ -683,7 +729,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 14,
+            funcId: 15,
             port: port_,
           );
         },
@@ -721,7 +767,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 15,
+            funcId: 16,
             port: port_,
           );
         },
@@ -759,7 +805,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 16,
+            funcId: 17,
             port: port_,
           );
         },
@@ -797,7 +843,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 17,
+            funcId: 18,
             port: port_,
           );
         },
@@ -835,7 +881,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 18,
+            funcId: 19,
             port: port_,
           );
         },
@@ -873,7 +919,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 19,
+            funcId: 20,
             port: port_,
           );
         },
@@ -911,7 +957,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 20,
+            funcId: 21,
             port: port_,
           );
         },
@@ -941,7 +987,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 21,
+            funcId: 22,
             port: port_,
           );
         },
@@ -968,7 +1014,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         callFfi: () {
           final serializer = SseSerializer(generalizedFrbRustBinding);
           sse_encode_String(password, serializer);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 22)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 23)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_password_strength,
@@ -1907,6 +1953,25 @@ class VaultSessionImpl extends RustOpaque implements VaultSession {
   /// Abre la bóveda existente; queda bloqueada.
   Future<void> open() =>
       RustLib.instance.api.crateApiSessionVaultSessionOpen(that: this);
+
+  /// Empareja con la PC del QR y la guarda en la bóveda.
+  ///
+  /// `offer_text` es el texto del QR tal cual (base64url sin relleno; no se
+  /// recorta nada). `device_name` es el nombre que verá la PC. La PC se
+  /// guarda con un nombre provisional derivado de su llave; si ya estaba en
+  /// la lista, conserva su id, nombre y fecha y solo actualiza la IP.
+  ///
+  /// Una sola operación de red a la vez (`Busy`). Un bloqueo de la bóveda
+  /// mientras corre la cancela (`Cancelled`) y, si llega justo después de
+  /// la aceptación y antes de guardar, da `Locked` y no guarda nada.
+  Future<PairedPcSummary> pair({
+    required String offerText,
+    required String deviceName,
+  }) => RustLib.instance.api.crateApiSessionVaultSessionPair(
+    that: this,
+    offerText: offerText,
+    deviceName: deviceName,
+  );
 
   /// Las PCs emparejadas.
   Future<PairedPcList> pairedPcs() =>

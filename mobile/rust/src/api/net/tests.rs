@@ -4,7 +4,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use super::*;
-use crate::test_support::{fixture_copy, path_string, FIXTURE_PASSWORD};
+use crate::test_support::{backup_and_target, fixture_copy, path_string, FIXTURE_PASSWORD};
 
 fn unlocked() -> (tempfile::TempDir, VaultSession) {
     let (dir, path) = fixture_copy();
@@ -109,22 +109,9 @@ fn extraction_never_sees_new_epoch_with_unlocked_vault() {
     assert!(matches!(op.check(), Err(VaultError::Cancelled)));
 }
 
-/// Un respaldo exportado de la bóveda de ejemplo y una sesión desbloqueada
-/// sobre otra copia, donde importarlo.
-fn backup_and_target() -> (tempfile::TempDir, std::path::PathBuf, VaultSession) {
-    let (_source_dir, source) = unlocked();
-    let dir = tempfile::tempdir().unwrap();
-    let backup = dir.path().join("respaldo.db");
-    source.export_backup(path_string(&backup)).unwrap();
-    let (target_dir, target) = unlocked();
-    // La copia del destino debe vivir tanto como el respaldo.
-    std::mem::forget(target_dir);
-    (dir, backup, target)
-}
-
 #[test]
 fn import_backup_invalidates_on_success_and_on_failure() {
-    let (_dir, backup, target) = backup_and_target();
+    let (backup, target) = backup_and_target();
     let backup = path_string(&backup);
 
     let op = target.begin_op().unwrap();
@@ -152,7 +139,7 @@ fn import_backup_invalidates_at_start_and_at_end() {
     // (capturaría la época de la primera subida). No se prueba con un gancho
     // en el código de producción; la mutación que quita la segunda subida
     // hace fallar esta prueba (ver el plan, Tarea 3).
-    let (_dir, backup, target) = backup_and_target();
+    let (backup, target) = backup_and_target();
     let backup = path_string(&backup);
     let before = target.net_epoch();
     let _ = target.import_backup(backup.clone(), "incorrecta".into());

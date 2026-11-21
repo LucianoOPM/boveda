@@ -6,7 +6,8 @@
 
 use std::fmt;
 
-use vault_core::protocol::PublicKey;
+use secrecy::{ExposeSecret, ExposeSecretMut, SecretBox};
+use vault_core::protocol::{KeyPair, PublicKey};
 use vault_core::vault::{self, PairedPcId};
 
 use super::entries::{bytes16_to_hex, hex_to_bytes16};
@@ -115,3 +116,14 @@ pub(crate) fn pc_id_from_hex(hex: &str) -> FacadeResult<PairedPcId> {
 
 #[cfg(test)]
 mod tests;
+
+/// Copia la llave privada de la identidad a un `KeyPair` de vida corta. Se
+/// copia directamente dentro del `SecretBox` (sin pasar por la pila), como
+/// `unlock_with_key`; `snow` no borra sus copias internas (excepción (5) de
+/// `ARCHITECTURE.md`).
+pub(crate) fn key_pair_from(private: &SecretBox<[u8; 32]>) -> KeyPair {
+    let mut copy = SecretBox::<[u8; 32]>::default();
+    copy.expose_secret_mut()
+        .copy_from_slice(private.expose_secret());
+    KeyPair::from_private(copy)
+}

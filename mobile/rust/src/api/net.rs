@@ -39,7 +39,7 @@ pub(crate) struct NetState {
     epoch: u64,
     token: CancelToken,
     /// Id de la operación de red en curso.
-    active: Option<u64>,
+    pub(crate) active: Option<u64>,
     next_op: u64,
 }
 
